@@ -1234,7 +1234,9 @@ class _Toolbar extends StatelessWidget {
           );
         }
         final options = _options(context);
-        final main = _bar(context, [
+        // Every tool is visible at once: the row wraps to a second line on
+        // narrow screens instead of hiding tools off to the side.
+        final main = _bar(context, wrap: true, [
           _icon(context, Icons.undo, 'تراجع', document.canUndo ? document.undo : null),
           _icon(context, Icons.redo, 'إعادة', document.canRedo ? document.redo : null),
           const SizedBox(height: 24, child: VerticalDivider()),
@@ -1255,16 +1257,25 @@ class _Toolbar extends StatelessWidget {
   }
 
   /// A compact bar that scrolls sideways when it does not fit the screen.
-  Widget _bar(BuildContext context, List<Widget> children) {
+  /// A compact bar. Option bars scroll sideways; the main bar wraps.
+  Widget _bar(BuildContext context, List<Widget> children, {bool wrap = false}) {
     return Material(
       elevation: 4,
       color: Theme.of(context).colorScheme.surfaceContainerHigh.withValues(alpha: 0.96),
       borderRadius: BorderRadius.circular(22),
       clipBehavior: Clip.antiAlias,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
+      child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        child: Row(mainAxisSize: MainAxisSize.min, children: children),
+        child: wrap
+            ? Wrap(
+                alignment: WrapAlignment.center,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: children,
+              )
+            : SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(mainAxisSize: MainAxisSize.min, children: children),
+              ),
       ),
     );
   }
