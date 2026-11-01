@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import 'note_items.dart';
@@ -31,6 +33,15 @@ double textHeightPt(NoteItem it) {
 Rect itemHitRect(NoteItem it) => it.hitRect(
     measuredHeight: it.kind == ItemKind.text ? textHeightPt(it) : 0);
 
+/// Whether a touch at [p] (PDF points) lands on [it]. Marks react only on
+/// their own line rectangles, not on the box around all their lines.
+bool itemContains(NoteItem it, Offset p) {
+  if (it.kind == ItemKind.mark && it.rects.isNotEmpty) {
+    return it.rects.any((r) => r.inflate(2).contains(p));
+  }
+  return itemHitRect(it).contains(p);
+}
+
 /// Paints text boxes, pins and tape of one page. [preview] stands in for the
 /// stored item with the same id while the user moves or resizes it.
 class ItemsPainter extends CustomPainter {
@@ -60,8 +71,57 @@ class ItemsPainter extends CustomPainter {
           _paintPin(canvas, it);
         case ItemKind.tape:
           _paintTape(canvas, it);
+        case ItemKind.mark:
+          _paintMark(canvas, it);
       }
       canvas.restore();
+    }
+  }
+
+  Rect _px(Rect r) => Rect.fromLTRB(
+      r.left * scale, r.top * scale, r.right * scale, r.bottom * scale);
+
+  void _paintMark(Canvas canvas, NoteItem it) {
+    final color = Color(it.color);
+    final line = Paint()
+      ..color = color
+      ..strokeWidth = 1.4 * scale
+      ..strokeCap = StrokeCap.round;
+    for (final r in it.rects.map(_px)) {
+      switch (it.style) {
+        case MarkStyle.highlight:
+          canvas.drawRRect(
+            RRect.fromRectAndRadius(r.inflate(0.5 * scale), Radius.circular(2 * scale)),
+            Paint()..color = color.withValues(alpha: 0.35),
+          );
+        case MarkStyle.underline:
+          canvas.drawLine(r.bottomLeft, r.bottomRight, line);
+        case MarkStyle.strike:
+          canvas.drawLine(r.centerLeft, r.centerRight, line);
+        case MarkStyle.comment:
+          // Dotted underline, so the commented words stay readable.
+          final y = r.bottom;
+          final step = 3 * scale;
+          for (var x = r.left; x < r.right; x += step * 2) {
+            canvas.drawLine(Offset(x, y), Offset(math.min(x + step, r.right), y), line);
+          }
+      }
+    }
+    // A comment bubble at the start of the marked words (their right end:
+    // the books are Arabic) whenever the mark carries a comment.
+    if (it.text.isNotEmpty || it.style == MarkStyle.comment) {
+      final first = _px(it.rects.isEmpty ? Rect.fromLTWH(it.x, it.y, it.w, it.h) : it.rects.first);
+      final c = Offset(first.right + 3 * scale, first.top - 2 * scale);
+      final rr = 4.5 * scale;
+      canvas.drawCircle(c, rr, Paint()..color = const Color(0xFFEF6C00));
+      canvas.drawCircle(
+        c,
+        rr,
+        Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1 * scale,
+      );
     }
   }
 

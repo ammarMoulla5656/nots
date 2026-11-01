@@ -223,35 +223,37 @@ class SelectionPainter extends CustomPainter {
       Rect toPx(Rect r) => Rect.fromLTRB(
           r.left * scale, r.top * scale, r.right * scale, r.bottom * scale);
       final r = toPx(geo.frame);
-      canvas.drawRect(r, Paint()..color = _blue.withValues(alpha: 0.08));
+      // Thin frame and small controls: they must not hide the writing.
+      canvas.drawRect(r, Paint()..color = _blue.withValues(alpha: 0.05));
       canvas.drawRect(
         r,
         Paint()
-          ..color = _blue
+          ..color = _blue.withValues(alpha: 0.8)
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5 * px,
+          ..strokeWidth = 1 * px,
       );
       if (canResize()) {
         for (final c in geo.corners) {
           final h = Rect.fromCenter(
-              center: c * scale, width: 11 * px, height: 11 * px);
+              center: c * scale, width: 7 * px, height: 7 * px);
           canvas.drawRect(h, Paint()..color = Colors.white);
           canvas.drawRect(
             h,
             Paint()
               ..color = _blue
               ..style = PaintingStyle.stroke
-              ..strokeWidth = 1.5 * px,
+              ..strokeWidth = 1.2 * px,
           );
         }
       }
+      const rr = SelectionGeometry.buttonRadiusPx;
       final close = geo.closeCenter * scale;
-      canvas.drawCircle(close, 13 * px, Paint()..color = const Color(0xFFD32F2F));
-      _icon(canvas, Icons.close, close, 18 * px, Colors.white);
+      canvas.drawCircle(close, rr * px, Paint()..color = const Color(0xFFD32F2F));
+      _icon(canvas, Icons.close, close, 13 * px, Colors.white);
       if (canEdit()) {
         final edit = geo.editCenter * scale;
-        canvas.drawCircle(edit, 13 * px, Paint()..color = _blue);
-        _icon(canvas, Icons.edit, edit, 16 * px, Colors.white);
+        canvas.drawCircle(edit, rr * px, Paint()..color = _blue);
+        _icon(canvas, Icons.edit, edit, 12 * px, Colors.white);
       }
     }
 

@@ -47,12 +47,15 @@ class SelectionGeometry {
   final bool canEdit;
   final bool canResize;
 
-  Rect get frame => bounds.inflate(4 * unit);
+  Rect get frame => bounds.inflate(3 * unit);
+
+  /// Small round buttons just above the frame's top-right corner.
+  static const buttonRadiusPx = 10.0;
 
   Offset get closeCenter =>
-      Offset(frame.right - 12 * unit, frame.top - 20 * unit);
+      Offset(frame.right - 6 * unit, frame.top - 15 * unit);
   Offset get editCenter =>
-      Offset(frame.right - 42 * unit, frame.top - 20 * unit);
+      Offset(frame.right - 30 * unit, frame.top - 15 * unit);
 
   /// Frame corners: top-left, top-right, bottom-right, bottom-left.
   List<Offset> get corners =>
@@ -66,14 +69,16 @@ class SelectionGeometry {
         bounds.bottomLeft,
       ][(i + 2) % 4];
 
-  bool hitClose(Offset p) => (p - closeCenter).distance <= 16 * unit;
-  bool hitEdit(Offset p) => canEdit && (p - editCenter).distance <= 16 * unit;
+  // Touch targets are larger than what is drawn, so the small buttons and
+  // handles stay easy to hit with a finger.
+  bool hitClose(Offset p) => (p - closeCenter).distance <= 13 * unit;
+  bool hitEdit(Offset p) => canEdit && (p - editCenter).distance <= 13 * unit;
 
   int? hitHandle(Offset p) {
     if (!canResize) return null;
     final c = corners;
     for (var i = 0; i < 4; i++) {
-      if ((p - c[i]).distance <= 14 * unit) return i;
+      if ((p - c[i]).distance <= 12 * unit) return i;
     }
     return null;
   }

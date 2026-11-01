@@ -121,7 +121,8 @@ class Stroke {
 class StrokeCodec {
   static const _magic = [0x4E, 0x4F, 0x54, 0x53]; // "NOTS"
   // Version 1: strokes only. Version 2 appends text boxes, pins and tape.
-  static const _version = 2;
+  // Version 3 adds marks on PDF words (style, line rectangles, quote).
+  static const _version = 3;
   static const _scale = 100.0;
 
   static Uint8List encodeDocument(
@@ -168,7 +169,7 @@ class StrokeCodec {
       if (r.byte() != b) throw const FormatException('Not a NOTS ink file');
     }
     final version = r.byte();
-    if (version != 1 && version != _version) {
+    if (version < 1 || version > _version) {
       throw FormatException('Unsupported ink file version $version');
     }
     final nextId = r.varint();
@@ -185,7 +186,9 @@ class StrokeCodec {
       for (var i = 0; i < itemPages; i++) {
         final pageNumber = r.varint();
         final count = r.varint();
-        items[pageNumber] = [for (var j = 0; j < count; j++) _readItem(r)];
+        items[pageNumber] = [
+          for (var j = 0; j < count; j++) _readItem(r, version),
+        ];
       }
     }
     return (pages: pages, nextStrokeId: nextId, items: items);
@@ -204,11 +207,30 @@ class StrokeCodec {
     final text = utf8.encode(it.text);
     w.varint(text.length);
     w.bytes(text);
+    // Version 3 fields.
+    w.byte(it.style.index);
+    w.varint(it.rects.length);
+    for (final r in it.rects) {
+      w.zigzag((r.left * _scale).round());
+      w.zigzag((r.top * _scale).round());
+      w.varint((r.width * _scale).round());
+      w.varint((r.height * _scale).round());
+    }
+    final quote = utf8.encode(it.quote);
+    w.varint(quote.length);
+    w.bytes(quote);
   }
 
-  static NoteItem _readItem(_Reader r) {
+  static T _enumAt<T>(List<T> values, int index, String what) {
+    if (index < 0 || index >= values.length) {
+      throw FormatException('Unknown $what $index (file from a newer app?)');
+    }
+    return values[index];
+  }
+
+  static NoteItem _readItem(_Reader r, int version) {
     final id = r.varint();
-    final kind = ItemKind.values[r.byte()];
+    final kind = _enumAt(ItemKind.values, r.byte(), 'item kind');
     final x = r.zigzag() / _scale;
     final y = r.zigzag() / _scale;
     final w = r.varint() / _scale;
@@ -217,7 +239,23 @@ class StrokeCodec {
     final fontSize = r.varint() / _scale;
     final revealed = r.byte() == 1;
     final text = utf8.decode(r.bytes(r.varint()));
+    var style = MarkStyle.highlight;
+    var rects = const <ui.Rect>[];
+    var quote = '';
+    if (version >= 3) {
+      style = _enumAt(MarkStyle.values, r.byte(), 'mark style');
+      final n = r.varint();
+      rects = [
+        for (var i = 0; i < n; i++)
+          ui.Rect.fromLTWH(r.zigzag() / _scale, r.zigzag() / _scale,
+              r.varint() / _scale, r.varint() / _scale),
+      ];
+      quote = utf8.decode(r.bytes(r.varint()));
+    }
     return NoteItem(
+      style: style,
+      rects: rects,
+      quote: quote,
       id: id,
       kind: kind,
       x: x,
@@ -253,7 +291,7 @@ class StrokeCodec {
 
   static Stroke _readStroke(_Reader r) {
     final id = r.varint();
-    final tool = InkTool.values[r.byte()];
+    final tool = _enumAt(InkTool.values, r.byte(), 'ink tool');
     final color = r.uint32();
     final width = r.varint() / _scale;
     final count = r.varint();

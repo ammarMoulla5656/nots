@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -11,10 +12,15 @@ import 'shapes.dart';
 import 'stroke.dart';
 import 'stroke_painter.dart';
 import 'tool_controller.dart';
+import 'words.dart';
 
 typedef CreateItemCallback = Future<void> Function(
     int page, ItemKind kind, Offset pointPt);
 typedef EditItemCallback = Future<void> Function(int page, NoteItem item);
+
+/// Called with a ready mark on PDF words; the screen adds it (asking for the
+/// comment first when the style is "comment").
+typedef CreateMarkCallback = Future<void> Function(int page, NoteItem draft);
 
 /// Ink layer drawn above one PDF page. It fills the page rectangle; all
 /// coordinates are stored in PDF points of that page.
@@ -31,6 +37,8 @@ class PageInkOverlay extends StatefulWidget {
     required this.viewChanged,
     required this.onCreateItem,
     required this.onEditItem,
+    this.onCreateMark,
+    this.loadWords,
   });
 
   final InkDocument document;
@@ -47,6 +55,11 @@ class PageInkOverlay extends StatefulWidget {
   final Listenable viewChanged;
   final CreateItemCallback onCreateItem;
   final EditItemCallback onEditItem;
+  final CreateMarkCallback? onCreateMark;
+
+  /// Words of this page's PDF text layer (for the word tool), or null when
+  /// the page has no text layer support.
+  final Future<List<WordBox>> Function()? loadWords;
 
   @override
   State<PageInkOverlay> createState() => _PageInkOverlayState();
@@ -57,7 +70,6 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
   Stroke? _current;
   int? _activePointer;
   int _strokeStartMs = 0;
-  bool _sawStylus = false;
 
   // Hold-still-to-snap for pen and highlighter strokes.
   Timer? _snapTimer;
@@ -98,8 +110,14 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
   Rect? _tapeRect;
   NoteItem? _tapeHit;
 
-  // Two fingers mean pinch-zoom: drop what the first finger started and
-  // ignore input until every finger is lifted.
+  // Word tool: the page's words and the range being marked.
+  List<WordBox>? _words;
+  Future<void>? _wordsLoading;
+  int? _wordA;
+  int? _wordB;
+
+  // Several fingers: the page is being moved or zoomed, nothing draws until
+  // every finger is lifted.
   int _downCount = 0;
   bool _multiTouch = false;
 
@@ -117,22 +135,62 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
       widget.selection.active && widget.selection.page == widget.pageNumber;
 
   @override
+  void initState() {
+    super.initState();
+    widget.tools.addListener(_onTools);
+    if (widget.tools.mode == ToolMode.word) _ensureWords();
+  }
+
+  @override
+  void didUpdateWidget(PageInkOverlay old) {
+    super.didUpdateWidget(old);
+    if (old.tools != widget.tools) {
+      old.tools.removeListener(_onTools);
+      widget.tools.addListener(_onTools);
+    }
+  }
+
+  @override
   void dispose() {
+    widget.tools.removeListener(_onTools);
     _snapTimer?.cancel();
     _live.dispose();
     super.dispose();
+  }
+
+  void _onTools() {
+    final t = widget.tools;
+    if (t.multiTouch && !_multiTouch) {
+      // Another finger landed somewhere on the viewer: drop what this page
+      // started and wait until all fingers are up.
+      _multiTouch = true;
+      if (_activePointer != null) _cancelGesture();
+    } else if (!t.multiTouch && _downCount == 0) {
+      _multiTouch = false;
+    }
+    if (t.mode == ToolMode.word) _ensureWords();
+  }
+
+  void _ensureWords() {
+    final load = widget.loadWords;
+    if (_words != null || _wordsLoading != null || load == null) return;
+    _wordsLoading = load().then((w) {
+      _words = w;
+    }).catchError((Object _) {
+      _words = const [];
+    });
   }
 
   bool _accepts(PointerDownEvent e) {
     if (_activePointer != null) return false;
     if (e.kind == PointerDeviceKind.stylus ||
         e.kind == PointerDeviceKind.invertedStylus) {
-      _sawStylus = true;
+      widget.tools.markStylusSeen();
       return true;
     }
-    if (e.kind == PointerDeviceKind.touch &&
-        _sawStylus &&
-        !widget.tools.fingerDraws) {
+    // A finger while a pen does the drawing: it scrolls the page instead
+    // (handled by the viewer-wide touch navigator).
+    if (e.kind == PointerDeviceKind.touch && widget.tools.fingerScrolls) {
       return false;
     }
     return true;
@@ -167,22 +225,22 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     final items = widget.document.itemsOf(widget.pageNumber);
     for (var i = items.length - 1; i >= 0; i--) {
       final it = items[i];
-      if (kinds.contains(it.kind) && itemHitRect(it).contains(p)) return it;
+      if (kinds.contains(it.kind) && itemContains(it, p)) return it;
     }
     return null;
   }
+
+  static bool _editable(NoteItem? it) => it != null && it.kind != ItemKind.tape;
+  static bool _resizable(NoteItem? it) =>
+      it == null || (it.kind != ItemKind.pin && it.kind != ItemKind.mark);
 
   SelectionGeometry? _geometry() {
     if (!_selectionHere) return null;
     final b = widget.selection.bounds;
     if (b == null) return null;
     final it = widget.selection.item;
-    return SelectionGeometry(
-      b,
-      _unit,
-      canEdit: it != null && it.kind != ItemKind.tape,
-      canResize: it == null || it.kind != ItemKind.pin,
-    );
+    return SelectionGeometry(b, _unit,
+        canEdit: _editable(it), canResize: _resizable(it));
   }
 
   /// Bounds of the selection as it looks right now (mid move or resize).
@@ -208,6 +266,16 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     return SelectionTransform(offset: _dragOffset);
   }
 
+  List<Rect> _previewRects() {
+    final t = _tapeRect;
+    if (t != null) return [t];
+    final ws = _words, a = _wordA, b = _wordB;
+    if (ws != null && a != null && b != null) {
+      return lineRects(ws.sublist(math.min(a, b), math.max(a, b) + 1));
+    }
+    return const [];
+  }
+
   void _resetGesture() {
     _snapTimer?.cancel();
     _snapped = false;
@@ -229,6 +297,8 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     _tapeStart = null;
     _tapeRect = null;
     _tapeHit = null;
+    _wordA = null;
+    _wordB = null;
     _lastErase = null;
   }
 
@@ -244,19 +314,14 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
 
   void _down(PointerDownEvent e) {
     _downCount++;
+    // A fresh touch after every finger was lifted: drawing is allowed again.
+    if (_downCount == 1 && !widget.tools.multiTouch) _multiTouch = false;
     if (_downCount > 1) {
-      // Two fingers: pinch-zoom or two-finger scroll belongs to the viewer.
       _multiTouch = true;
-      widget.tools.setAllowPan(true);
       _cancelGesture();
       return;
     }
-    if (_multiTouch) return;
-    if (!_accepts(e)) {
-      // A finger while the pen draws (palm rejection): let it scroll the page.
-      if (e.kind == PointerDeviceKind.touch) widget.tools.setAllowPan(true);
-      return;
-    }
+    if (_multiTouch || widget.tools.multiTouch || !_accepts(e)) return;
     _activePointer = e.pointer;
     _strokeStartMs = e.timeStamp.inMilliseconds;
     final tools = widget.tools;
@@ -284,6 +349,22 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
         } else {
           widget.selection.clear();
           _tapPoint = p;
+        }
+      case ToolMode.word:
+        final mark = _hitItem(p, {ItemKind.mark});
+        if (mark != null) {
+          _itemDrag = mark;
+          _itemFrom = p;
+          _itemWasSelected = false;
+        } else {
+          widget.selection.clear();
+          _ensureWords();
+          final ws = _words;
+          final i = ws == null ? null : wordAt(ws, p, tolerance: 3 * _unit);
+          if (i != null) {
+            _wordA = i;
+            _wordB = i;
+          }
         }
       case ToolMode.tape:
         _tapeStart = p;
@@ -401,9 +482,14 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
       _dragOffset = p - _dragFrom!;
     } else if (_lasso.isNotEmpty) {
       _lasso.add(p);
+    } else if (_wordA != null) {
+      final i = wordAt(_words!, p, tolerance: 3 * _unit);
+      if (i != null) _wordB = i;
     } else if (_itemDrag != null) {
       _itemOffset = p - _itemFrom;
-      if (_itemOffset.distance >= 4 * _unit) {
+      // Marks belong to the PDF words: they never move.
+      if (_itemDrag!.kind != ItemKind.mark &&
+          _itemOffset.distance >= 4 * _unit) {
         _itemPreview = _itemDrag!.copyWith(
           x: _itemDrag!.x + _itemOffset.dx,
           y: _itemDrag!.y + _itemOffset.dy,
@@ -418,8 +504,11 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
       if (_snapped) return; // keep the clean shape while the pen is down
       _current!.points.add(_point(e));
       _armSnap();
-    } else {
+    } else if (widget.tools.mode == ToolMode.eraser ||
+        e.kind == PointerDeviceKind.invertedStylus) {
       _erase(e);
+      return;
+    } else {
       return;
     }
     _live.value++;
@@ -492,10 +581,6 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
 
   void _up(PointerEvent e) {
     if (_downCount > 0) _downCount--;
-    if (_downCount == 0) {
-      _multiTouch = false;
-      widget.tools.setAllowPan(false);
-    }
     if (e.pointer != _activePointer) return;
     _activePointer = null;
     _snapTimer?.cancel();
@@ -527,6 +612,23 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
       } else {
         widget.selection
             .select(page, strokesInLasso(doc.strokesOf(page), _lasso));
+      }
+    } else if (_wordA != null) {
+      final ws = _words!;
+      final a = math.min(_wordA!, _wordB!), b = math.max(_wordA!, _wordB!);
+      final picked = ws.sublist(a, b + 1);
+      final draft = NoteItem.mark(
+        id: doc.takeStrokeId(),
+        lineRects: lineRects(picked),
+        style: tools.markStyle,
+        color: tools.color,
+        quote: picked.map((w) => w.text).join(' '),
+      );
+      final create = widget.onCreateMark;
+      if (create != null) {
+        unawaited(create(page, draft));
+      } else {
+        doc.addItem(page, draft);
       }
     } else if (_itemDrag != null) {
       final item = _itemDrag!;
@@ -634,14 +736,8 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
               transform: _strokeTransform,
               frame: _liveFrame,
               unit: () => _unit,
-              canEdit: () {
-                final it = sel.item;
-                return it != null && it.kind != ItemKind.tape;
-              },
-              canResize: () {
-                final it = sel.item;
-                return it == null || it.kind != ItemKind.pin;
-              },
+              canEdit: () => _editable(sel.item),
+              canResize: () => _resizable(sel.item),
               lasso: () => _lasso,
               scale: scale,
               repaint: Listenable.merge([_live, sel, widget.viewChanged]),
@@ -650,8 +746,8 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
         ),
         IgnorePointer(
           child: CustomPaint(
-            painter: _RectPreviewPainter(
-              rect: () => _tapeRect,
+            painter: _RectsPreviewPainter(
+              rects: _previewRects,
               color: () => Color(widget.tools.color),
               scale: scale,
               repaint: _live,
@@ -677,28 +773,31 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
   }
 }
 
-/// Outline of the tape strip while it is being dragged out.
-class _RectPreviewPainter extends CustomPainter {
-  _RectPreviewPainter({
-    required this.rect,
+/// Tape strip being dragged out, or the words being marked.
+class _RectsPreviewPainter extends CustomPainter {
+  _RectsPreviewPainter({
+    required this.rects,
     required this.color,
     required this.scale,
     required Listenable repaint,
   }) : super(repaint: repaint);
 
-  final Rect? Function() rect;
+  final List<Rect> Function() rects;
   final Color Function() color;
   final double scale;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final r = rect();
-    if (r == null) return;
-    final scaled = Rect.fromLTRB(
-        r.left * scale, r.top * scale, r.right * scale, r.bottom * scale);
-    canvas.drawRect(scaled, Paint()..color = color().withValues(alpha: 0.5));
+    final paint = Paint()..color = color().withValues(alpha: 0.4);
+    for (final r in rects()) {
+      canvas.drawRect(
+        Rect.fromLTRB(
+            r.left * scale, r.top * scale, r.right * scale, r.bottom * scale),
+        paint,
+      );
+    }
   }
 
   @override
-  bool shouldRepaint(_RectPreviewPainter old) => old.scale != scale;
+  bool shouldRepaint(_RectsPreviewPainter old) => old.scale != scale;
 }

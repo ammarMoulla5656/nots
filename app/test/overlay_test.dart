@@ -8,6 +8,7 @@ import 'package:nots/ink/selection.dart';
 import 'package:nots/ink/shapes.dart';
 import 'package:nots/ink/stroke.dart';
 import 'package:nots/ink/tool_controller.dart';
+import 'package:nots/ink/words.dart';
 
 class _Harness {
   _Harness(this.tester) {
@@ -21,6 +22,7 @@ class _Harness {
   late final ToolController tools;
   late final SelectionController selection;
   final viewChanged = ChangeNotifier();
+  List<WordBox> words = const [];
   final created = <(ItemKind, Offset)>[];
   final edited = <NoteItem>[];
 
@@ -42,6 +44,7 @@ class _Harness {
             viewChanged: viewChanged,
             onCreateItem: (page, kind, pt) async => created.add((kind, pt)),
             onEditItem: (page, item) async => edited.add(item),
+            loadWords: () async => words,
           ),
         ),
       ),
@@ -352,7 +355,7 @@ void main() {
     expect(h.doc.strokeCount, 0);
   });
 
-  testWidgets('two fingers allow the page to move, one finger does not',
+  testWidgets('a finger landing on another page cancels the stroke here',
       (tester) async {
     final h = _Harness(tester);
     h.tools.setMode(ToolMode.pen);
@@ -360,16 +363,25 @@ void main() {
     final o = h.origin;
 
     final a = await tester.startGesture(o + const Offset(50, 50));
-    expect(h.tools.allowPan, isFalse);
-    final b = await tester.startGesture(o + const Offset(200, 200));
-    expect(h.tools.allowPan, isTrue);
+    await a.moveTo(o + const Offset(90, 70));
+    // The viewer-wide navigator saw a second finger elsewhere.
+    h.tools.setMultiTouch(true);
+    await a.moveTo(o + const Offset(140, 90));
     await a.up();
-    await b.up();
     await tester.pump();
-    expect(h.tools.allowPan, isFalse);
+    expect(h.doc.strokeCount, 0);
+
+    // While fingers are still down nothing draws...
+    await h.drag(const [Offset(50, 150), Offset(150, 150)]);
+    expect(h.doc.strokeCount, 0);
+    // ...and once they are all lifted drawing works again.
+    h.tools.setMultiTouch(false);
+    await tester.pump();
+    await h.drag(const [Offset(50, 150), Offset(150, 150)]);
+    expect(h.doc.strokeCount, 1);
   });
 
-  testWidgets('with a pen drawing and finger drawing off, a finger scrolls',
+  testWidgets('with a pen in use and finger drawing off, a finger never draws',
       (tester) async {
     final h = _Harness(tester);
     h.tools
@@ -378,22 +390,63 @@ void main() {
     await h.pump();
     final o = h.origin;
 
-    // The pen draws.
+    // A finger draws until a pen has been seen.
+    await h.drag(const [Offset(50, 300), Offset(150, 300)]);
+    expect(h.doc.strokeCount, 1);
+    expect(h.tools.fingerScrolls, isFalse);
+
     final pen = await tester.startGesture(o + const Offset(50, 50),
         kind: PointerDeviceKind.stylus);
     await pen.moveTo(o + const Offset(150, 50));
     await pen.up();
     await tester.pump();
-    expect(h.doc.strokeCount, 1);
+    expect(h.doc.strokeCount, 2);
+    expect(h.tools.fingerScrolls, isTrue);
 
-    // A finger does not draw; it is allowed to pan the page instead.
-    final finger = await tester.startGesture(o + const Offset(50, 200));
-    expect(h.tools.allowPan, isTrue);
-    await finger.moveTo(o + const Offset(150, 200));
-    await finger.up();
-    await tester.pump();
-    expect(h.doc.strokeCount, 1);
-    expect(h.tools.allowPan, isFalse);
+    // Now the finger is left to the navigator (it scrolls the page).
+    await h.drag(const [Offset(50, 200), Offset(150, 200)]);
+    expect(h.doc.strokeCount, 2);
+  });
+
+  testWidgets('word tool: tap marks one word, drag marks a range of words',
+      (tester) async {
+    final h = _Harness(tester);
+    h.words = const [
+      // two words on line 1 (right to left), one on line 2
+      WordBox(0, 4, 'كلمة', Rect.fromLTWH(200, 100, 60, 14)),
+      WordBox(5, 9, 'ثانية', Rect.fromLTWH(120, 100, 70, 14)),
+      WordBox(10, 15, 'ثالثة', Rect.fromLTWH(200, 130, 60, 14)),
+    ];
+    h.tools
+      ..setMode(ToolMode.word)
+      ..setMarkStyle(MarkStyle.underline)
+      ..setColor(0xFFD32F2F);
+    await h.pump();
+    await tester.pump(); // let the word list load
+
+    await h.drag(const [Offset(230, 107)]);
+    final one = h.doc.itemsOf(1).single;
+    expect(one.kind, ItemKind.mark);
+    expect(one.style, MarkStyle.underline);
+    expect(one.color, 0xFFD32F2F);
+    expect(one.quote, 'كلمة');
+    expect(one.rects.single, const Rect.fromLTWH(200, 100, 60, 14));
+
+    // Drag from the second word to the word on the next line.
+    await h.drag(const [Offset(150, 107), Offset(180, 120), Offset(230, 137)]);
+    final range = h.doc.itemsOf(1).last;
+    expect(range.quote, 'ثانية ثالثة');
+    expect(range.rects.length, 2); // one rectangle per line
+
+    // Tapping an already marked word selects its mark instead of marking again.
+    await h.drag(const [Offset(230, 107)]);
+    expect(h.doc.itemsOf(1).length, 2);
+    expect(h.selection.itemId, one.id);
+
+    // Tapping a mark selects it (marks never move).
+    await h.drag(const [Offset(230, 137), Offset(300, 300)]);
+    expect(h.selection.itemId, range.id);
+    expect(h.doc.itemsOf(1).last.x, range.x);
   });
 
   testWidgets('tape: drag adds a strip, tap toggles it, eraser removes it',
