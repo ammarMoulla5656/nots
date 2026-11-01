@@ -31,9 +31,29 @@ jobs:
 
       - run: flutter test
 
-      # Signed with the debug key (Flutter's default): installable on any
-      # phone by sideloading. A Play Store build needs a real keystore.
+      # Every APK is signed with the same key (kept in repository secrets),
+      # so each new build installs over the previous one and the user's
+      # books and writing are kept.
+      - name: Signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.NOTS_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::Secret NOTS_KEYSTORE_BASE64 is missing: the APK would not update an installed copy."
+            exit 1
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/nots.jks"
+          echo "NOTS_KEYSTORE=$RUNNER_TEMP/nots.jks" >> "$GITHUB_ENV"
+
       - run: flutter build apk --release
+        env:
+          NOTS_KEYSTORE_PASSWORD: ${{ secrets.NOTS_KEYSTORE_PASSWORD }}
+          NOTS_KEY_ALIAS: nots
+
+      - name: Check the APK is signed with the fixed key
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort | tail -1)
+          "$APKSIGNER" verify --print-certs build/app/outputs/flutter-apk/app-release.apk | grep -E "Signer #1 certificate DN" | tee /dev/stderr | grep -q "CN=Nots"
 
       - uses: actions/upload-artifact@v4
         with:
