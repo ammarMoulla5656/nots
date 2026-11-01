@@ -253,7 +253,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
         pageNumber: page.pageNumber,
         pageWidthPt: page.width,
         pageWidthPx: pageRect.width,
-        zoom: () => _viewer.isReady ? _viewer.currentZoom : 1.0,
         viewChanged: _viewer,
         onCreateItem: _createItem,
         onEditItem: _editItem,

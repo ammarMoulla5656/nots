@@ -40,7 +40,6 @@ class _Harness {
             pageNumber: 1,
             pageWidthPt: 400,
             pageWidthPx: 400,
-            zoom: () => 1.0,
             viewChanged: viewChanged,
             onCreateItem: (page, kind, pt) async => created.add((kind, pt)),
             onEditItem: (page, item) async => edited.add(item),
@@ -514,5 +513,69 @@ void main() {
     // Tapping empty space clears the selection.
     await h.drag(const [Offset(350, 350)]);
     expect(h.selection.active, isFalse);
+  });
+
+  // pdfrx stacks page overlays ABOVE its pan/zoom area (siblings, not
+  // children). Anything hit-testable in the overlay therefore steals the
+  // touch from the viewer: in the hand tool the page could not be moved or
+  // zoomed inside the page, only outside it.
+  testWidgets('hand tool: touches pass through the overlay to the viewer',
+      (tester) async {
+    final doc = InkDocument();
+    doc.addItem(1, const NoteItem(id: 1, kind: ItemKind.text, x: 10, y: 10, w: 200, text: 'نص'));
+    doc.add(1, Stroke(id: 2, tool: InkTool.pen, color: 0xFF000000, width: 3,
+        points: const [StrokePoint(50, 100, 0.5, 0), StrokePoint(300, 100, 0.5, 9)]));
+    final tools = ToolController();
+    final selection = SelectionController(doc);
+    var viewerDrags = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: Align(
+        alignment: Alignment.topLeft,
+        child: SizedBox(
+          width: 400,
+          height: 400,
+          child: Stack(children: [
+            // stands in for pdfrx's InteractiveViewer
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onPanUpdate: (_) => viewerDrags++,
+                child: const SizedBox.expand(),
+              ),
+            ),
+            Positioned.fill(
+              child: PageInkOverlay(
+                document: doc,
+                tools: tools,
+                selection: selection,
+                pageNumber: 1,
+                pageWidthPt: 400,
+                pageWidthPx: 400,
+                viewChanged: ChangeNotifier(),
+                onCreateItem: (_, _, _) async {},
+                onEditItem: (_, _) async {},
+              ),
+            ),
+          ]),
+        ),
+      ),
+    ));
+
+    // On the text box, on the stroke, and on empty page: the viewer moves.
+    for (final at in const [Offset(30, 20), Offset(150, 100), Offset(200, 300)]) {
+      final before = viewerDrags;
+      await tester.dragFrom(at, const Offset(0, -120));
+      await tester.pump();
+      expect(viewerDrags, greaterThan(before), reason: 'drag at $at');
+    }
+
+    // With a drawing tool the overlay takes the single finger instead.
+    tools.setMode(ToolMode.pen);
+    await tester.pump();
+    final before = viewerDrags;
+    await tester.dragFrom(const Offset(200, 300), const Offset(0, -120));
+    await tester.pump();
+    expect(viewerDrags, before);
+    expect(doc.strokeCount, 2);
   });
 }

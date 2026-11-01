@@ -1,4 +1,7 @@
+import 'dart:math' as math;
+
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
 import '../ink/tool_controller.dart';
@@ -117,10 +120,25 @@ class _TouchNavigatorState extends State<TouchNavigator> {
     }
   }
 
+  /// Mouse wheel while drawing (the page overlay hides the viewer's own
+  /// wheel handling): scroll, or zoom around the cursor with Ctrl.
+  void _wheel(PointerSignalEvent e) {
+    if (!widget.tools.drawing || e is! PointerScrollEvent) return;
+    final m = widget.readView();
+    if (m == null) return;
+    if (HardwareKeyboard.instance.isControlPressed) {
+      final s = math.exp(-e.scrollDelta.dy / 300);
+      widget.writeView(pinchMatrix(m, e.localPosition, 1, e.localPosition, s));
+    } else {
+      widget.writeView(panMatrix(m, -e.scrollDelta));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Listener(
       behavior: HitTestBehavior.translucent,
+      onPointerSignal: _wheel,
       onPointerDown: _down,
       onPointerMove: _move,
       onPointerUp: _up,

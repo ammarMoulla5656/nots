@@ -15,7 +15,10 @@ import 'tool_controller.dart';
 import 'words.dart';
 
 typedef CreateItemCallback = Future<void> Function(
-    int page, ItemKind kind, Offset pointPt);
+  int page,
+  ItemKind kind,
+  Offset pointPt,
+);
 typedef EditItemCallback = Future<void> Function(int page, NoteItem item);
 
 /// Called with a ready mark on PDF words; the screen adds it (asking for the
@@ -33,7 +36,6 @@ class PageInkOverlay extends StatefulWidget {
     required this.pageNumber,
     required this.pageWidthPt,
     required this.pageWidthPx,
-    required this.zoom,
     required this.viewChanged,
     required this.onCreateItem,
     required this.onEditItem,
@@ -47,9 +49,6 @@ class PageInkOverlay extends StatefulWidget {
   final int pageNumber;
   final double pageWidthPt;
   final double pageWidthPx;
-
-  /// Current viewer zoom, so selection buttons keep a constant screen size.
-  final double Function() zoom;
 
   /// Fires when the zoom changes.
   final Listenable viewChanged;
@@ -123,13 +122,13 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
 
   Offset? _lastErase;
 
+  /// Screen pixels per PDF point. The overlay is laid out over the page as
+  /// it appears on screen (already zoomed), so this includes the zoom.
   double get _scale => widget.pageWidthPx / widget.pageWidthPt;
 
-  /// PDF points per screen pixel at the current zoom.
-  double get _unit {
-    final z = widget.zoom();
-    return 1 / (_scale * (z <= 0 ? 1 : z));
-  }
+  /// PDF points per screen pixel: keeps buttons and handles one size on
+  /// screen at any zoom level.
+  double get _unit => 1 / _scale;
 
   bool get _selectionHere =>
       widget.selection.active && widget.selection.page == widget.pageNumber;
@@ -174,11 +173,13 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
   void _ensureWords() {
     final load = widget.loadWords;
     if (_words != null || _wordsLoading != null || load == null) return;
-    _wordsLoading = load().then((w) {
-      _words = w;
-    }).catchError((Object _) {
-      _words = const [];
-    });
+    _wordsLoading = load()
+        .then((w) {
+          _words = w;
+        })
+        .catchError((Object _) {
+          _words = const [];
+        });
   }
 
   bool _accepts(PointerDownEvent e) {
@@ -210,16 +211,16 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
       Offset(e.localPosition.dx / _scale, e.localPosition.dy / _scale);
 
   StrokePoint _point(PointerEvent e) => StrokePoint(
-        e.localPosition.dx / _scale,
-        e.localPosition.dy / _scale,
-        _pressure(e),
-        e.timeStamp.inMilliseconds - _strokeStartMs,
-      );
+    e.localPosition.dx / _scale,
+    e.localPosition.dy / _scale,
+    _pressure(e),
+    e.timeStamp.inMilliseconds - _strokeStartMs,
+  );
 
   List<StrokePoint> _asPoints(List<Offset> pts) => [
-        for (var i = 0; i < pts.length; i++)
-          StrokePoint(pts[i].dx, pts[i].dy, 0.5, i),
-      ];
+    for (var i = 0; i < pts.length; i++)
+      StrokePoint(pts[i].dx, pts[i].dy, 0.5, i),
+  ];
 
   NoteItem? _hitItem(Offset p, Set<ItemKind> kinds) {
     final items = widget.document.itemsOf(widget.pageNumber);
@@ -239,8 +240,12 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     final b = widget.selection.bounds;
     if (b == null) return null;
     final it = widget.selection.item;
-    return SelectionGeometry(b, _unit,
-        canEdit: _editable(it), canResize: _resizable(it));
+    return SelectionGeometry(
+      b,
+      _unit,
+      canEdit: _editable(it),
+      canResize: _resizable(it),
+    );
   }
 
   /// Bounds of the selection as it looks right now (mid move or resize).
@@ -253,7 +258,9 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     if (_resizeHandle != null) {
       final a = _resizeAnchor, f = _resizeFactor;
       return Rect.fromPoints(
-          a + (b.topLeft - a) * f, a + (b.bottomRight - a) * f);
+        a + (b.topLeft - a) * f,
+        a + (b.bottomRight - a) * f,
+      );
     }
     if (_dragFrom != null) return b.shift(_dragOffset);
     return b;
@@ -303,7 +310,8 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
   }
 
   void _cancelGesture() {
-    final erasing = _activePointer != null &&
+    final erasing =
+        _activePointer != null &&
         (widget.tools.mode == ToolMode.eraser) &&
         _current == null;
     if (erasing) widget.document.endErase();
@@ -475,8 +483,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
       _resizeTo(p);
     } else if (_shapeStart != null) {
       _current = _current!.copyWith(
-        points: _asPoints(
-            shapePoints(widget.tools.shapeKind, _shapeStart!, p)),
+        points: _asPoints(shapePoints(widget.tools.shapeKind, _shapeStart!, p)),
       );
     } else if (_dragFrom != null) {
       _dragOffset = p - _dragFrom!;
@@ -522,11 +529,19 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     if (item != null && item.kind == ItemKind.tape) {
       var r = Rect.fromPoints(a, p);
       if (r.width < 6 || r.height < 6) {
-        r = Rect.fromLTWH(r.left, r.top, r.width < 6 ? 6 : r.width,
-            r.height < 6 ? 6 : r.height);
+        r = Rect.fromLTWH(
+          r.left,
+          r.top,
+          r.width < 6 ? 6 : r.width,
+          r.height < 6 ? 6 : r.height,
+        );
       }
-      _itemPreview =
-          item.copyWith(x: r.left, y: r.top, w: r.width, h: r.height);
+      _itemPreview = item.copyWith(
+        x: r.left,
+        y: r.top,
+        w: r.width,
+        h: r.height,
+      );
       return;
     }
     final base = (_resizeGrab - a).distance;
@@ -610,8 +625,10 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
       if (length < 6 * _unit) {
         _pick(_lasso.first);
       } else {
-        widget.selection
-            .select(page, strokesInLasso(doc.strokesOf(page), _lasso));
+        widget.selection.select(
+          page,
+          strokesInLasso(doc.strokesOf(page), _lasso),
+        );
       }
     } else if (_wordA != null) {
       final ws = _words!;
@@ -666,7 +683,9 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
         );
       } else if (_tapeHit != null) {
         doc.replaceItem(
-            page, _tapeHit!.copyWith(revealed: !_tapeHit!.revealed));
+          page,
+          _tapeHit!.copyWith(revealed: !_tapeHit!.revealed),
+        );
       }
     } else if (_shapeStart != null &&
         _current!.bounds.longestSide < _current!.width + 3) {
@@ -698,26 +717,30 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        RepaintBoundary(
-          child: CustomPaint(
-            painter: StrokesPainter(
-              strokes: () {
-                final all = widget.document.strokesOf(widget.pageNumber);
-                if (!_selectionHere || sel.ids.isEmpty) return all;
-                final hidden = sel.ids;
-                return all.where((s) => !hidden.contains(s.id)).toList();
-              },
-              scale: scale,
-              repaint: Listenable.merge([revision, sel]),
+        IgnorePointer(
+          child: RepaintBoundary(
+            child: CustomPaint(
+              painter: StrokesPainter(
+                strokes: () {
+                  final all = widget.document.strokesOf(widget.pageNumber);
+                  if (!_selectionHere || sel.ids.isEmpty) return all;
+                  final hidden = sel.ids;
+                  return all.where((s) => !hidden.contains(s.id)).toList();
+                },
+                scale: scale,
+                repaint: Listenable.merge([revision, sel]),
+              ),
             ),
           ),
         ),
-        CustomPaint(
-          painter: ItemsPainter(
-            items: () => widget.document.itemsOf(widget.pageNumber),
-            preview: () => _itemPreview,
-            scale: scale,
-            repaint: Listenable.merge([revision, _live]),
+        IgnorePointer(
+          child: CustomPaint(
+            painter: ItemsPainter(
+              items: () => widget.document.itemsOf(widget.pageNumber),
+              preview: () => _itemPreview,
+              scale: scale,
+              repaint: Listenable.merge([revision, _live]),
+            ),
           ),
         ),
         IgnorePointer(
@@ -792,7 +815,11 @@ class _RectsPreviewPainter extends CustomPainter {
     for (final r in rects()) {
       canvas.drawRect(
         Rect.fromLTRB(
-            r.left * scale, r.top * scale, r.right * scale, r.bottom * scale),
+          r.left * scale,
+          r.top * scale,
+          r.right * scale,
+          r.bottom * scale,
+        ),
         paint,
       );
     }
