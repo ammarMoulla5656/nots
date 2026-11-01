@@ -122,6 +122,40 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
 
   Offset? _lastErase;
 
+  /// The current stroke erases because of the pen's eraser end or button.
+  bool _stylusErasing = false;
+
+  /// Where a hovering pen points (PDF points), for the preview ring.
+  Offset? _hover;
+  Timer? _hoverTimer;
+
+  static bool _penErases(PointerEvent e) =>
+      e.kind == PointerDeviceKind.invertedStylus ||
+      (e.kind == PointerDeviceKind.stylus &&
+          (e.buttons & (kPrimaryStylusButton | kSecondaryStylusButton)) != 0);
+
+  /// A pen hovering above the screen: show where it will touch.
+  void _onHover(PointerHoverEvent e) {
+    if (e.kind != PointerDeviceKind.stylus &&
+        e.kind != PointerDeviceKind.invertedStylus) {
+      return;
+    }
+    _hover = _pt(e);
+    _live.value++;
+    _hoverTimer?.cancel();
+    _hoverTimer = Timer(const Duration(milliseconds: 700), () {
+      _hover = null;
+      if (mounted) _live.value++;
+    });
+  }
+
+  /// Radius of the hover ring in PDF points.
+  double get _hoverRadius {
+    final t = widget.tools;
+    if (t.mode == ToolMode.eraser) return 6;
+    return (t.width / 2).clamp(1.5, 30.0);
+  }
+
   /// Screen pixels per PDF point. The overlay is laid out over the page as
   /// it appears on screen (already zoomed), so this includes the zoom.
   double get _scale => widget.pageWidthPx / widget.pageWidthPt;
@@ -153,6 +187,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
   void dispose() {
     widget.tools.removeListener(_onTools);
     _snapTimer?.cancel();
+    _hoverTimer?.cancel();
     _live.dispose();
     super.dispose();
   }
@@ -307,6 +342,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     _wordA = null;
     _wordB = null;
     _lastErase = null;
+    _stylusErasing = false;
   }
 
   void _cancelGesture() {
@@ -390,7 +426,8 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
         widget.document.beginErase(widget.pageNumber);
         _erase(e);
       case ToolMode.pen || ToolMode.highlighter:
-        if (e.kind == PointerDeviceKind.invertedStylus) {
+        if (_penErases(e)) {
+          _stylusErasing = true;
           widget.document.beginErase(widget.pageNumber);
           _erase(e);
           // Treated like the eraser tool until the pen lifts.
@@ -511,8 +548,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
       if (_snapped) return; // keep the clean shape while the pen is down
       _current!.points.add(_point(e));
       _armSnap();
-    } else if (widget.tools.mode == ToolMode.eraser ||
-        e.kind == PointerDeviceKind.invertedStylus) {
+    } else if (widget.tools.mode == ToolMode.eraser || _stylusErasing) {
       _erase(e);
       return;
     } else {
@@ -570,8 +606,10 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
       final q = Offset.lerp(from, p, i / steps)!;
       // Eraser radius: 6 PDF points, whatever the zoom.
       widget.document.eraseAt(q.dx, q.dy, 6);
-      final hit = _hitItem(q, ItemKind.values.toSet());
-      if (hit != null) widget.document.removeItem(widget.pageNumber, hit.id);
+      final hit = _hitItem(q, {ItemKind.tape, ItemKind.mark});
+      if (hit != null && hit.text.isEmpty) {
+        widget.document.removeItem(widget.pageNumber, hit.id);
+      }
     }
   }
 
@@ -769,6 +807,17 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
         ),
         IgnorePointer(
           child: CustomPaint(
+            painter: _HoverPainter(
+              at: () => _hover,
+              radius: () => _hoverRadius,
+              color: () => Color(widget.tools.color),
+              scale: scale,
+              repaint: _live,
+            ),
+          ),
+        ),
+        IgnorePointer(
+          child: CustomPaint(
             painter: _RectsPreviewPainter(
               rects: _previewRects,
               color: () => Color(widget.tools.color),
@@ -783,6 +832,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
             if (!widget.tools.drawing) return const SizedBox.shrink();
             return Listener(
               behavior: HitTestBehavior.opaque,
+              onPointerHover: _onHover,
               onPointerDown: _down,
               onPointerMove: _move,
               onPointerUp: _up,
@@ -827,4 +877,40 @@ class _RectsPreviewPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_RectsPreviewPainter old) => old.scale != scale;
+}
+
+/// Ring where a hovering pen will touch, sized like the current tool.
+class _HoverPainter extends CustomPainter {
+  _HoverPainter({
+    required this.at,
+    required this.radius,
+    required this.color,
+    required this.scale,
+    required Listenable repaint,
+  }) : super(repaint: repaint);
+
+  final Offset? Function() at;
+  final double Function() radius;
+  final Color Function() color;
+  final double scale;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = at();
+    if (p == null) return;
+    final c = p * scale;
+    final r = radius() * scale;
+    canvas.drawCircle(c, r, Paint()..color = color().withValues(alpha: 0.25));
+    canvas.drawCircle(
+      c,
+      r,
+      Paint()
+        ..color = color().withValues(alpha: 0.8)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_HoverPainter old) => old.scale != scale;
 }

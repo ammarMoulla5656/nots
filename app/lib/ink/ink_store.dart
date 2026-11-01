@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -138,6 +139,29 @@ class InkStore {
       if (await f.exists() && !await t.exists()) await f.rename(t.path);
     }
     return true;
+  }
+
+  /// Whether the book [bookId] has any writing saved.
+  static Future<bool> hasWriting(String bookId) async {
+    final f = File(p.join((await _dir()).path, '$bookId.nots'));
+    if (!await f.exists()) return false;
+    try {
+      final d = StrokeCodec.decodeDocument(await f.readAsBytes());
+      return d.pages.values.any((l) => l.isNotEmpty) ||
+          d.items.values.any((l) => l.isNotEmpty);
+    } on FormatException {
+      return true; // unreadable: never overwrite it silently
+    }
+  }
+
+  /// Replaces the saved writing of [bookId] with an encoded document
+  /// (validated first).
+  static Future<void> writeRaw(String bookId, Uint8List bytes) async {
+    StrokeCodec.decodeDocument(bytes);
+    final f = File(p.join((await _dir()).path, '$bookId.nots'));
+    final tmp = File('${f.path}.tmp');
+    await tmp.writeAsBytes(bytes, flush: true);
+    await tmp.rename(f.path);
   }
 
   void _scheduleSave() {

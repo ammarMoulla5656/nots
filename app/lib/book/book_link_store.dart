@@ -43,6 +43,20 @@ class BookLinkStore {
     return text;
   }
 
+  /// The saved link of [bookId] as JSON, or null.
+  static Future<String?> rawJson(String bookId) async {
+    final f = await _fileFor(bookId);
+    return await f.exists() ? f.readAsString() : null;
+  }
+
+  /// Saves a link received in a package, unless the book already has one.
+  static Future<void> saveRawIfMissing(String bookId, String json) async {
+    BookText.fromJson(json); // validate
+    final f = await _fileFor(bookId);
+    if (await f.exists()) return;
+    await f.writeAsString(json, flush: true);
+  }
+
   static Future<void> unlink(String bookId) async {
     final f = await _fileFor(bookId);
     if (await f.exists()) await f.delete();

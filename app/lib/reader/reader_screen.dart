@@ -1,13 +1,20 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:pdfrx/pdfrx.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../book/book_link_store.dart';
 import '../book/book_text.dart';
+import '../export/exporter.dart';
+import '../ink/ink_document.dart';
 import '../ink/ink_store.dart';
+import '../ink/item_painter.dart';
 import '../library/library_store.dart';
 import '../ink/note_items.dart';
 import '../ink/page_ink_overlay.dart';
@@ -58,6 +65,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// Last page read and bookmarks of this book.
   ReaderPrefs? _prefs;
   bool _restored = false;
+
+  /// Toolbar at the top of the page (default, like Notability) or bottom.
+  bool _toolbarTop = true;
+
+  /// Word boxes already loaded, per page, for instant taps.
+  final _wordsReady = <int, List<WordBox>>{};
 
   @override
   void initState() {
@@ -239,7 +252,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
           for (final r in text.charRects)
             r.isEmpty ? null : Rect.fromLTRB(r.left, h - r.top, r.right, h - r.bottom),
         ];
-        return splitWords(text.fullText, rects);
+        final words = splitWords(text.fullText, rects);
+        _wordsReady[page.pageNumber] = words;
+        return words;
       });
 
   List<Widget> _overlays(BuildContext context, Rect pageRect, PdfPage page) {
@@ -272,10 +287,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final text = result?.text.trim() ?? '';
     if (result == null || result.delete || text.isEmpty) return;
     final size = result.fontSize ?? _tools.textSize;
-    if (isText && size != _tools.textSize) {
-      // Remember the size for the next text box.
-      final mode = _tools.mode;
-      if (mode == ToolMode.text) _tools.setWidth(size);
+    if (isText && size != _tools.textSize && _tools.mode == ToolMode.text) {
+      _tools.setWidth(size); // remember the size for the next text box
     }
     final doc = _store!.document;
     doc.addItem(
@@ -285,7 +298,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
         kind: kind,
         x: pt.dx,
         y: pt.dy,
-        w: isText ? NoteItem.defaultTextWidth : 0,
+        // A text box is as wide as its text, so its frame fits the words.
+        w: isText ? fitTextWidth(text, size) : 0,
         text: text,
         color: isText ? _tools.color : 0xFFEF6C00,
         fontSize: size,
@@ -299,45 +313,339 @@ class _ReaderScreenState extends State<ReaderScreen> {
       doc.addItem(page, draft);
       return;
     }
-    final result = await _textDialog(title: 'تعليق على «${_short(draft.quote)}»');
+    final result = await _textDialog(title: 'تعليق');
     final text = result?.text.trim() ?? '';
     if (result == null || result.delete || text.isEmpty) return;
     doc.addItem(page, draft.copyWith(text: text));
   }
 
-  static String _short(String s) => s.length <= 40 ? s : '${s.substring(0, 40)}…';
-
+  /// Pins and word comments open as a note to read; text boxes open for
+  /// editing.
   Future<void> _editItem(int page, NoteItem item) async {
+    if (item.kind == ItemKind.pin || item.kind == ItemKind.mark) {
+      return _previewItem(page, item);
+    }
+    return _editText(page, item);
+  }
+
+  Future<void> _editText(int page, NoteItem item) async {
     final isText = item.kind == ItemKind.text;
     final isMark = item.kind == ItemKind.mark;
     final result = await _textDialog(
       title: switch (item.kind) {
-        ItemKind.pin => 'الملاحظة',
-        ItemKind.mark => 'تعليق على «${_short(item.quote)}»',
+        ItemKind.pin => 'تعديل الملاحظة',
+        ItemKind.mark => item.text.isEmpty ? 'إضافة تعليق' : 'تعديل التعليق',
         _ => 'النص',
       },
       initial: item.text,
-      allowDelete: true,
+      allowDelete: !isMark,
       fontSize: isText ? item.fontSize : null,
       color: isText ? item.color : null,
     );
     if (result == null) return;
     final doc = _store!.document;
     final text = result.text.trim();
-    if (result.delete) {
+    if (result.delete || (text.isEmpty && !isMark)) {
       doc.removeItem(page, item.id);
-    } else if (text.isEmpty && !isMark) {
+      return;
+    }
+    final size = result.fontSize ?? item.fontSize;
+    if (text == item.text && size == item.fontSize) return;
+    var next = item.copyWith(text: text, fontSize: size);
+    if (isText) next = next.copyWith(w: fitTextWidth(text, size));
+    if (isMark && item.style == MarkStyle.comment && text.isEmpty) {
+      doc.removeItem(page, item.id); // a comment mark without its comment
+      return;
+    }
+    doc.replaceItem(page, next);
+  }
+
+  /// A note shown for reading, with edit and delete buttons; the keyboard
+  /// opens only when the user chooses to edit.
+  Future<void> _previewItem(int page, NoteItem item) async {
+    final isMark = item.kind == ItemKind.mark;
+    final theme = Theme.of(context);
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(isMark ? 'تعليق' : 'ملاحظة', style: theme.textTheme.titleMedium),
+              const SizedBox(height: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 280),
+                child: SingleChildScrollView(
+                  child: SelectableText(
+                    item.text.isEmpty ? 'لا يوجد تعليق بعد.' : item.text,
+                    style: theme.textTheme.bodyLarge?.copyWith(height: 1.6),
+                  ),
+                ),
+              ),
+              if (isMark) ...[
+                const SizedBox(height: 12),
+                Wrap(spacing: 6, runSpacing: 6, children: [
+                  for (final (style, label) in [
+                    (MarkStyle.highlight, 'تظليل'),
+                    (MarkStyle.underline, 'تسطير'),
+                    (MarkStyle.strike, 'شطب'),
+                    (MarkStyle.comment, 'تعليق فقط'),
+                  ])
+                    ChoiceChip(
+                      label: Text(label),
+                      selected: item.style == style,
+                      onSelected: (_) => Navigator.pop(context, 'style:${style.index}'),
+                    ),
+                ]),
+              ],
+              const SizedBox(height: 16),
+              Row(children: [
+                FilledButton.icon(
+                  onPressed: () => Navigator.pop(context, 'edit'),
+                  icon: const Icon(Icons.edit),
+                  label: Text(item.text.isEmpty ? 'إضافة تعليق' : 'تعديل'),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: () => Navigator.pop(context, 'delete'),
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('حذف'),
+                ),
+                const Spacer(),
+                TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('إغلاق')),
+              ]),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+    final doc = _store!.document;
+    if (action == 'edit') {
+      await _editText(page, item);
+    } else if (action == 'delete') {
       doc.removeItem(page, item.id);
-    } else {
-      final size = result.fontSize ?? item.fontSize;
-      if (text != item.text || size != item.fontSize) {
-        // Keep the text box proportions when its size changes.
-        final w = isText && size != item.fontSize
-            ? item.w * size / item.fontSize
-            : item.w;
-        doc.replaceItem(page, item.copyWith(text: text, fontSize: size, w: w));
+    } else if (action.startsWith('style:')) {
+      final style = MarkStyle.values[int.parse(action.substring(6))];
+      doc.replaceItem(page, item.copyWith(style: style));
+    }
+  }
+
+  // ---- reading mode: tap a word or a note on the page ----
+
+  /// A tap in the hand tool: a note opens its preview, a word opens the
+  /// marking menu. Returns false to leave other taps to the viewer.
+  bool _onGeneralTap(BuildContext context, PdfViewerController c,
+      PdfViewerGeneralTapHandlerDetails d) {
+    if (_tools.drawing || d.type != PdfViewerGeneralTapType.tap) return false;
+    final store = _store;
+    if (store == null) return false;
+    final hit = c.getPdfPageHitTestResult(d.documentPosition,
+        useDocumentLayoutCoordinates: true);
+    if (hit == null) return false;
+    final page = hit.page;
+    final pt = Offset(hit.offset.x, page.height - hit.offset.y);
+    final items = store.document.itemsOf(page.pageNumber);
+    for (var i = items.length - 1; i >= 0; i--) {
+      final it = items[i];
+      if ((it.kind == ItemKind.pin || it.kind == ItemKind.mark) &&
+          itemContains(it, pt)) {
+        _previewItem(page.pageNumber, it);
+        return true;
+      }
+      if (it.kind == ItemKind.tape && itemContains(it, pt)) {
+        store.document.replaceItem(page.pageNumber, it.copyWith(revealed: !it.revealed));
+        return true;
       }
     }
+    final words = _wordsReady[page.pageNumber];
+    if (words == null) {
+      _wordsOf(page); // load now; the next tap is instant
+      return false;
+    }
+    final i = wordAt(words, pt, tolerance: 2);
+    if (i == null) return false;
+    _wordMenu(page.pageNumber, words[i]);
+    return true;
+  }
+
+  /// Highlight, underline, strike or comment the tapped word.
+  Future<void> _wordMenu(int page, WordBox word) async {
+    var color = 0xFFFFEB3B;
+    final picked = await showModalBottomSheet<MarkStyle>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final (style, icon, label) in [
+                      (MarkStyle.highlight, Icons.border_color, 'تظليل'),
+                      (MarkStyle.underline, Icons.format_underline, 'تسطير'),
+                      (MarkStyle.strike, Icons.format_strikethrough, 'شطب'),
+                      (MarkStyle.comment, Icons.comment_outlined, 'تعليق'),
+                    ])
+                      FilledButton.tonalIcon(
+                        onPressed: () => Navigator.pop(context, style),
+                        icon: Icon(icon),
+                        label: Text(label),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Wrap(spacing: 10, children: [
+                  for (final c in const [
+                    0xFFFFEB3B, 0xFF76FF03, 0xFFFF80AB, 0xFF40C4FF,
+                    0xFFD32F2F, 0xFF1565C0, 0xFF1A1A1A,
+                  ])
+                    GestureDetector(
+                      onTap: () => setState(() => color = c),
+                      child: Container(
+                        width: 30,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          color: Color(c),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: color == c ? Colors.black : Colors.black26,
+                            width: color == c ? 3 : 1,
+                          ),
+                        ),
+                      ),
+                    ),
+                ]),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    final doc = _store!.document;
+    final draft = NoteItem.mark(
+      id: doc.takeStrokeId(),
+      lineRects: [word.rect],
+      style: picked,
+      color: picked == MarkStyle.comment ? 0xFFEF6C00 : color,
+      quote: word.text,
+    );
+    await _createMark(page, draft);
+  }
+
+  // ---- export ----
+
+  Future<void> _export() async {
+    final store = _store;
+    if (store == null || !_viewer.isReady) return;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: const Icon(Icons.image_outlined),
+            title: const Text('صورة لهذه الصفحة'),
+            subtitle: const Text('PNG بدقة عالية مع كتابتك'),
+            onTap: () => Navigator.pop(context, 'png'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.picture_as_pdf_outlined),
+            title: const Text('PDF: الصفحات المكتوب عليها'),
+            subtitle: Text('${annotatedPages(store.document).length} صفحة مع كتابتك'),
+            onTap: () => Navigator.pop(context, 'pdf-marked'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.menu_book_outlined),
+            title: const Text('PDF: الكتاب كاملاً مع كتابتك'),
+            onTap: () => Navigator.pop(context, 'pdf-all'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.inventory_2_outlined),
+            title: const Text('ملف نوتس (.nots)'),
+            subtitle: const Text('الكتاب وكتابتك وربط Word والعلامات: يُفتح في نوتس على أي جهاز وتكمل عليه'),
+            onTap: () => Navigator.pop(context, 'nots'),
+          ),
+        ]),
+      ),
+    );
+    if (choice == null || !mounted) return;
+    final progress = ValueNotifier<String>('جارٍ التحضير…');
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        content: Row(children: [
+          const CircularProgressIndicator(),
+          const SizedBox(width: 16),
+          Expanded(child: ValueListenableBuilder(
+            valueListenable: progress,
+            builder: (_, v, _) => Text(v),
+          )),
+        ]),
+      ),
+    );
+    try {
+      final doc = _viewer.document;
+      final title = widget.book.title;
+      final page = _viewer.pageNumber ?? 1;
+      late final Uint8List bytes;
+      late final String name;
+      switch (choice) {
+        case 'png':
+          bytes = await pagePng(doc, store.document, page);
+          name = exportFileName('$title - صفحة $page', 'png');
+        case 'pdf-marked' || 'pdf-all':
+          if (choice == 'pdf-marked' && annotatedPages(store.document).isEmpty) {
+            throw 'لا توجد صفحات مكتوب عليها بعد.';
+          }
+          bytes = await exportPdf(doc, store.document,
+              onlyAnnotated: choice == 'pdf-marked',
+              progress: (d, t) => progress.value = 'صفحة $d من $t…');
+          name = exportFileName(choice == 'pdf-marked' ? '$title - كتابتي' : title, 'pdf');
+        default:
+          bytes = await exportPackage(
+            title: title,
+            bookId: widget.book.id,
+            pdf: File(widget.library.pathOf(widget.book)),
+            ink: store.document,
+            linkJson: await BookLinkStore.rawJson(widget.book.id),
+            bookmarks: _prefs?.bookmarks ?? const [],
+          );
+          name = exportFileName(title, 'nots');
+      }
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/$name');
+      await file.writeAsBytes(bytes, flush: true);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      await SharePlus.instance.share(ShareParams(files: [XFile(file.path)], title: name));
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذّر التصدير: $e')));
+    } finally {
+      progress.dispose();
+    }
+  }
+
+  void _toggleBookmark() {
+    if (!_viewer.isReady) return;
+    _prefs?.toggleBookmark(_viewer.pageNumber ?? 1);
+    setState(() {});
   }
 
   /// Text entry with, for text boxes, a live font size control.
@@ -716,72 +1024,62 @@ class _ReaderScreenState extends State<ReaderScreen> {
           ListenableBuilder(
             listenable: _viewer,
             builder: (context, _) {
-              if (!_viewer.isReady) return const SizedBox.shrink();
-              return TextButton(
-                style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    minimumSize: const Size(40, 40)),
-                onPressed: _askPage,
-                child: Text(
-                    '${(_prefs?.isBookmarked(_viewer.pageNumber ?? 1) ?? false) ? '🔖' : ''}${_viewer.pageNumber ?? 1}/${_viewer.pageCount}\n${(_viewer.currentZoom * 100).round()}%',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 12, height: 1.2)),
+              final marked = _viewer.isReady &&
+                  (_prefs?.isBookmarked(_viewer.pageNumber ?? 1) ?? false);
+              return IconButton(
+                tooltip: marked ? 'إزالة علامة الصفحة' : 'وضع علامة على الصفحة',
+                icon: Icon(marked ? Icons.bookmark : Icons.bookmark_border,
+                    color: marked ? Colors.red : null),
+                onPressed: _toggleBookmark,
               );
             },
           ),
-          if (store != null)
-            ListenableBuilder(
-              listenable: store.document,
-              builder: (context, _) => Row(mainAxisSize: MainAxisSize.min, children: [
-                IconButton(
-                  tooltip: 'تراجع',
-                  visualDensity: VisualDensity.compact,
-                  icon: const Icon(Icons.undo),
-                  onPressed: store.document.canUndo ? store.document.undo : null,
-                ),
-                IconButton(
-                  tooltip: 'إعادة',
-                  visualDensity: VisualDensity.compact,
-                  icon: const Icon(Icons.redo),
-                  onPressed: store.document.canRedo ? store.document.redo : null,
-                ),
-              ]),
-            ),
+          ListenableBuilder(
+            listenable: _viewer,
+            builder: (context, _) {
+              if (!_viewer.isReady) return const SizedBox.shrink();
+              return TextButton(
+                style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    minimumSize: const Size(40, 40)),
+                onPressed: _askPage,
+                child: Text('${_viewer.pageNumber ?? 1}/${_viewer.pageCount}',
+                    style: const TextStyle(fontSize: 13)),
+              );
+            },
+          ),
           ListenableBuilder(
             listenable: _tools,
             builder: (context, _) => PopupMenuButton<String>(
               tooltip: 'المزيد',
               onSelected: (v) {
                 switch (v) {
+                  case 'pages':
+                    _openPages();
+                  case 'export':
+                    _export();
                   case 'finger':
                     _tools.setFingerDraws(!_tools.fingerDraws);
+                  case 'toolbar':
+                    setState(() => _toolbarTop = !_toolbarTop);
                   case 'link':
                     _linkDocx();
                   case 'unlink':
                     _unlinkDocx();
-                  case 'bookmark':
-                    if (_viewer.isReady) {
-                      _prefs?.toggleBookmark(_viewer.pageNumber ?? 1);
-                      setState(() {});
-                    }
-                  case 'pages':
-                    _openPages();
                 }
               },
               itemBuilder: (context) => [
-                PopupMenuItem(
-                  value: 'bookmark',
-                  child: Text(_viewer.isReady &&
-                          (_prefs?.isBookmarked(_viewer.pageNumber ?? 1) ?? false)
-                      ? 'إزالة علامة هذه الصفحة'
-                      : 'وضع علامة على هذه الصفحة'),
-                ),
                 const PopupMenuItem(value: 'pages', child: Text('الصفحات والعلامات')),
+                const PopupMenuItem(value: 'export', child: Text('تصدير ومشاركة')),
                 const PopupMenuDivider(),
                 CheckedPopupMenuItem(
                   value: 'finger',
                   checked: _tools.fingerDraws,
-                  child: const Text('الإصبع يرسم (أطفئه ليحرّك الإصبعُ الصفحةَ عند الكتابة بالقلم)'),
+                  child: const Text('الإصبع يرسم (أطفئه ليكتب القلم وحده ويحرّك الإصبعُ الصفحة)'),
+                ),
+                PopupMenuItem(
+                  value: 'toolbar',
+                  child: Text(_toolbarTop ? 'شريط الأدوات في الأسفل' : 'شريط الأدوات في الأعلى'),
                 ),
                 if (_book == null)
                   const PopupMenuItem(value: 'link', child: Text('ربط ملف Word (docx)'))
@@ -826,12 +1124,40 @@ class _ReaderScreenState extends State<ReaderScreen> {
                                 useAlternativeFitScaleAsMinScale: false,
                               ),
                               pageOverlaysBuilder: _overlays,
+                              onGeneralTap: _onGeneralTap,
+                              // Momentum scrolling: flicks carry on and add up.
+                              scrollPhysics: PdfViewerParams.getScrollPhysics(context),
+                              // Drag the thumb on the side to run through the
+                              // book; it shows the page number.
+                              viewerOverlayBuilder: (context, size, _) => [
+                                PdfViewerScrollThumb(
+                                  controller: _viewer,
+                                  orientation: ScrollbarOrientation.left,
+                                  thumbSize: const Size(46, 30),
+                                  thumbBuilder: (context, size, page, c) => Container(
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(context).colorScheme.primary,
+                                      borderRadius: BorderRadius.circular(15),
+                                      boxShadow: const [BoxShadow(blurRadius: 3, color: Colors.black26)],
+                                    ),
+                                    alignment: Alignment.center,
+                                    child: Text('${page ?? ''}',
+                                        style: const TextStyle(color: Colors.white, fontSize: 12)),
+                                  ),
+                                ),
+                              ],
                               onViewerReady: (doc, _) {
                                 _loadOutline(doc);
                                 _restorePage();
                               },
                               onPageChanged: (n) {
-                                if (n != null) _prefs?.setLastPage(n);
+                                if (n == null) return;
+                                _prefs?.setLastPage(n);
+                                // Ready the page's words for instant taps.
+                                final pages = _viewer.document.pages;
+                                for (final k in [n, n + 1]) {
+                                  if (k <= pages.length) _wordsOf(pages[k - 1]);
+                                }
                               },
                             ),
                           ),
@@ -843,13 +1169,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     Positioned(
                       left: 8,
                       right: 8,
-                      bottom: 10,
+                      top: _toolbarTop ? (_search != null ? 64 : 6) : null,
+                      bottom: _toolbarTop ? null : 10,
                       child: Center(
                         child: _Toolbar(
                           tools: _tools,
-                          viewer: _viewer,
+                          document: store.document,
                           selection: _selection!,
                           open: _toolbarOpen,
+                          atTop: _toolbarTop,
                         ),
                       ),
                     ),
@@ -863,7 +1191,6 @@ const _modeIcons = {
   ToolMode.hand: (Icons.pan_tool_alt_outlined, 'تحريك'),
   ToolMode.pen: (Icons.edit, 'قلم'),
   ToolMode.highlighter: (Icons.border_color, 'تظليل حر'),
-  ToolMode.word: (Icons.highlight_alt, 'على الكلمات: تظليل وتسطير وتعليق'),
   ToolMode.shape: (Icons.category_outlined, 'أشكال'),
   ToolMode.text: (Icons.text_fields, 'نص'),
   ToolMode.pin: (Icons.push_pin_outlined, 'ملاحظة'),
@@ -875,27 +1202,29 @@ const _modeIcons = {
 class _Toolbar extends StatelessWidget {
   const _Toolbar({
     required this.tools,
-    required this.viewer,
+    required this.document,
     required this.selection,
     required this.open,
+    required this.atTop,
   });
 
   final ToolController tools;
-  final PdfViewerController viewer;
+  final InkDocument document;
   final SelectionController selection;
   final ValueNotifier<bool> open;
+  final bool atTop;
 
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: Listenable.merge([tools, selection, open]),
+      listenable: Listenable.merge([tools, selection, open, document]),
       builder: (context, _) {
         if (!open.value) {
           // Tools hidden: one small button shows the current tool and brings
           // the toolbar back.
           final (icon, label) = _modeIcons[tools.mode]!;
           return Align(
-            alignment: AlignmentDirectional.bottomEnd,
+            alignment: atTop ? AlignmentDirectional.topEnd : AlignmentDirectional.bottomEnd,
             child: FloatingActionButton.small(
               heroTag: null,
               tooltip: 'إظهار الأدوات ($label)',
@@ -905,22 +1234,21 @@ class _Toolbar extends StatelessWidget {
           );
         }
         final options = _options(context);
+        final main = _bar(context, [
+          _icon(context, Icons.undo, 'تراجع', document.canUndo ? document.undo : null),
+          _icon(context, Icons.redo, 'إعادة', document.canRedo ? document.redo : null),
+          const SizedBox(height: 24, child: VerticalDivider()),
+          for (final m in _modeIcons.keys) _mode(context, m),
+          const SizedBox(height: 24, child: VerticalDivider()),
+          _icon(context, atTop ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+              'إخفاء الأدوات', () => open.value = false),
+        ]);
+        final opts = options == null ? null : _bar(context, options);
         return Column(
           mainAxisSize: MainAxisSize.min,
-          children: [
-            if (options != null) ...[
-              _bar(context, options),
-              const SizedBox(height: 6),
-            ],
-            _bar(context, [
-              for (final m in _modeIcons.keys) _mode(context, m),
-              const SizedBox(height: 24, child: VerticalDivider()),
-              _icon(context, Icons.zoom_out, 'تصغير', () => viewer.zoomDown()),
-              _icon(context, Icons.zoom_in, 'تكبير', () => viewer.zoomUp()),
-              _icon(context, Icons.keyboard_arrow_down, 'إخفاء الأدوات',
-                  () => open.value = false),
-            ]),
-          ],
+          children: atTop
+              ? [main, if (opts != null) ...[const SizedBox(height: 6), opts]]
+              : [if (opts != null) ...[opts, const SizedBox(height: 6)], main],
         );
       },
     );
@@ -942,7 +1270,7 @@ class _Toolbar extends StatelessWidget {
   }
 
   Widget _icon(BuildContext context, IconData icon, String tooltip,
-      VoidCallback onPressed, {bool selected = false}) {
+      VoidCallback? onPressed, {bool selected = false}) {
     return IconButton(
       tooltip: tooltip,
       isSelected: selected,

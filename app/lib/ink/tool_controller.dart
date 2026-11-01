@@ -61,7 +61,7 @@ class ToolController extends ChangeNotifier {
 
   /// A finger should move the page instead of drawing: a pen is in use and
   /// finger drawing is off (palm rejection).
-  bool get fingerScrolls => _sawStylus && !_fingerDraws;
+  bool get fingerScrolls => !_fingerDraws;
 
   /// Pen family used by the pen tool: ink, pencil or calligraphy.
   InkTool get penKind => _penKind;

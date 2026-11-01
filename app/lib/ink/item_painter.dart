@@ -4,21 +4,31 @@ import 'package:flutter/material.dart';
 
 import 'note_items.dart';
 
-TextPainter _layoutText(NoteItem it, double scale) {
-  final tp = TextPainter(
-    text: TextSpan(
-      text: it.text,
-      style: TextStyle(
-        color: Color(it.color),
-        fontSize: it.fontSize * scale,
-        height: 1.35,
+TextPainter _painterFor(NoteItem it, double scale) => TextPainter(
+      text: TextSpan(
+        text: it.text,
+        style: TextStyle(
+          color: Color(it.color),
+          fontSize: it.fontSize * scale,
+          height: 1.35,
+        ),
       ),
-    ),
-    textDirection: isRtlText(it.text) ? TextDirection.rtl : TextDirection.ltr,
-  );
-  final width = (it.w <= 0 ? NoteItem.defaultTextWidth : it.w) * scale;
-  tp.layout(minWidth: width, maxWidth: width);
-  return tp;
+      textDirection: isRtlText(it.text) ? TextDirection.rtl : TextDirection.ltr,
+    );
+
+/// Width of the text itself: its longest line, wrapping at the item's width
+/// (the wrap limit). The box and its frame hug the words, not the limit.
+double _textWidth(NoteItem it, double scale) {
+  final limit = (it.w <= 0 ? NoteItem.defaultTextWidth : it.w) * scale;
+  final probe = _painterFor(it, scale)..layout(maxWidth: limit);
+  final w = probe.width.ceilToDouble() + 1;
+  probe.dispose();
+  return math.min(w, limit);
+}
+
+TextPainter _layoutText(NoteItem it, double scale) {
+  final width = _textWidth(it, scale);
+  return _painterFor(it, scale)..layout(minWidth: width, maxWidth: width);
 }
 
 /// Height of a text item in PDF points (used for touch hit tests).
@@ -29,9 +39,27 @@ double textHeightPt(NoteItem it) {
   return h;
 }
 
+/// Width (PDF points) a text box needs for [text]: as wide as its longest
+/// line, wrapping at [maxWidth]; so the box and its selection frame fit the
+/// words instead of a fixed width.
+double fitTextWidth(String text, double fontSize, {double maxWidth = 320}) {
+  final tp = TextPainter(
+    text: TextSpan(text: text, style: TextStyle(fontSize: fontSize, height: 1.35)),
+    textDirection: isRtlText(text) ? TextDirection.rtl : TextDirection.ltr,
+  )..layout(maxWidth: maxWidth);
+  final w = tp.width;
+  tp.dispose();
+  return (w + fontSize * 0.3).clamp(fontSize, maxWidth);
+}
+
 /// The area of [it] that reacts to touches, in PDF points.
-Rect itemHitRect(NoteItem it) => it.hitRect(
-    measuredHeight: it.kind == ItemKind.text ? textHeightPt(it) : 0);
+Rect itemHitRect(NoteItem it) {
+  if (it.kind != ItemKind.text) return it.hitRect();
+  final tp = _layoutText(it, 1);
+  final r = Rect.fromLTWH(it.x, it.y, tp.width, tp.height);
+  tp.dispose();
+  return r;
+}
 
 /// Whether a touch at [p] (PDF points) lands on [it]. Marks react only on
 /// their own line rectangles, not on the box around all their lines.

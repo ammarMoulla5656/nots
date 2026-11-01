@@ -38,6 +38,12 @@ class ReaderPrefs extends ChangeNotifier {
     return ReaderPrefs._(f, last, marks);
   }
 
+  void addBookmarks(Iterable<int> pages) {
+    _bookmarks.addAll(pages);
+    notifyListeners();
+    _scheduleSave();
+  }
+
   void setLastPage(int page) {
     if (page == lastPage) return;
     lastPage = page;

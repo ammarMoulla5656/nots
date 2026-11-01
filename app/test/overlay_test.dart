@@ -380,8 +380,7 @@ void main() {
     expect(h.doc.strokeCount, 1);
   });
 
-  testWidgets('with a pen in use and finger drawing off, a finger never draws',
-      (tester) async {
+  testWidgets('with finger drawing off only the pen writes', (tester) async {
     final h = _Harness(tester);
     h.tools
       ..setMode(ToolMode.pen)
@@ -389,22 +388,47 @@ void main() {
     await h.pump();
     final o = h.origin;
 
-    // A finger draws until a pen has been seen.
+    // A finger never writes (it is left to the navigator, which scrolls).
     await h.drag(const [Offset(50, 300), Offset(150, 300)]);
-    expect(h.doc.strokeCount, 1);
-    expect(h.tools.fingerScrolls, isFalse);
+    expect(h.doc.strokeCount, 0);
+    expect(h.tools.fingerScrolls, isTrue);
 
     final pen = await tester.startGesture(o + const Offset(50, 50),
         kind: PointerDeviceKind.stylus);
     await pen.moveTo(o + const Offset(150, 50));
     await pen.up();
     await tester.pump();
-    expect(h.doc.strokeCount, 2);
-    expect(h.tools.fingerScrolls, isTrue);
+    expect(h.doc.strokeCount, 1);
 
-    // Now the finger is left to the navigator (it scrolls the page).
+    await h.drag(const [Offset(50, 200), Offset(150, 200)]);
+    expect(h.doc.strokeCount, 1);
+
+    // Switched back on, the finger writes again.
+    h.tools.setFingerDraws(true);
     await h.drag(const [Offset(50, 200), Offset(150, 200)]);
     expect(h.doc.strokeCount, 2);
+  });
+
+  testWidgets('a pen button erases; notes and commented words survive',
+      (tester) async {
+    final h = _Harness(tester);
+    h.doc.addItem(1, const NoteItem(id: 1, kind: ItemKind.pin, x: 100, y: 100, text: 'n'));
+    h.doc.addItem(1, const NoteItem(id: 2, kind: ItemKind.tape, x: 100, y: 150, w: 100, h: 20));
+    h.doc.addItem(1, NoteItem.mark(
+        id: 3, lineRects: const [Rect.fromLTWH(100, 200, 60, 14)],
+        style: MarkStyle.comment, color: 0xFFEF6C00, comment: 'تعليق'));
+    h.doc.addItem(1, NoteItem.mark(
+        id: 4, lineRects: const [Rect.fromLTWH(100, 250, 60, 14)],
+        style: MarkStyle.highlight, color: 0xFFFFEB3B));
+    h.tools.setMode(ToolMode.eraser);
+    await h.pump();
+    // Swipe the eraser across everything.
+    await h.drag(const [Offset(90, 90), Offset(90, 300), Offset(180, 300),
+        Offset(180, 90)]);
+    await h.drag(const [Offset(95, 105), Offset(210, 105), Offset(210, 160),
+        Offset(95, 160), Offset(95, 210), Offset(170, 210), Offset(170, 258), Offset(95, 258)]);
+    final left = h.doc.itemsOf(1).map((e) => e.id).toSet();
+    expect(left, {1, 3}); // pin and commented word stay; tape and plain mark go
   });
 
   testWidgets('word tool: tap marks one word, drag marks a range of words',

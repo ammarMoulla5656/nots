@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'dart:ui';
 
 /// Non-ink things placed on a page. Append new values only: the index is
@@ -100,7 +99,7 @@ class NoteItem {
         return Rect.fromLTWH(x, y, w, h);
       case ItemKind.text:
         return Rect.fromLTWH(
-            x, y, w, math.max(measuredHeight, fontSize * 1.4));
+            x, y, w, measuredHeight > 0 ? measuredHeight : fontSize * 1.35);
     }
   }
 

@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import '../ink/ink_store.dart';
 import '../reader/reader_screen.dart';
 import 'library_store.dart';
+import 'package_import.dart';
 
 /// The library: books kept in the app, most recently opened first.
 class HomeScreen extends StatefulWidget {
@@ -67,17 +68,33 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _add() async {
+    // Any file: Android does not know the .nots extension, so a filter on it
+    // would hide the packages.
     final files = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['pdf'],
-      dialogTitle: 'اختر ملف PDF',
+      type: FileType.any,
+      dialogTitle: 'اختر كتاب PDF أو ملف نوتس',
     );
     final path = files.isEmpty ? null : files.first.path;
     if (path == null || !mounted) return;
+    final ext = p.extension(files.first.name).toLowerCase();
+    if (ext != '.pdf' && ext != '.nots') {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('اختر ملف PDF أو ملف نوتس (.nots).')));
+      return;
+    }
     setState(() => _busy = true);
     try {
-      final entry = await _library!.importPdf(path,
-          title: p.basenameWithoutExtension(files.first.name));
+      final BookEntry entry;
+      if (ext == '.nots') {
+        entry = await importPackage(
+          _library!,
+          await File(path).readAsBytes(),
+          confirmReplace: _confirmReplace,
+        );
+      } else {
+        entry = await _library!.importPdf(path,
+            title: p.basenameWithoutExtension(files.first.name));
+      }
       if (mounted) await _open(entry);
     } catch (e) {
       if (mounted) {
@@ -87,6 +104,22 @@ class _HomeScreenState extends State<HomeScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<bool> _confirmReplace(String title) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('«$title» عليه كتابة في هذا الجهاز'),
+        content: const Text(
+            'هل تستبدل الكتابة الموجودة هنا بالكتابة التي في الملف؟ إن اخترت «إبقاء» يُضاف الكتاب وتبقى كتابتك الحالية كما هي.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إبقاء كتابتي')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('استبدال')),
+        ],
+      ),
+    );
+    return ok ?? false;
   }
 
   Future<void> _rename(BookEntry b) async {
@@ -151,7 +184,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ? const SizedBox(
                 width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
             : const Icon(Icons.add),
-        label: const Text('إضافة كتاب PDF'),
+        label: const Text('إضافة كتاب'),
       ),
       body: lib == null
           ? const Center(child: CircularProgressIndicator())
