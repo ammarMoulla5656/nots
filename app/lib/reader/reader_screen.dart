@@ -26,6 +26,7 @@ import '../ink/words.dart';
 import '../ui/color_wheel.dart';
 import 'pages_sheet.dart';
 import 'reader_prefs.dart';
+import 'scrub_bar.dart';
 import 'search_page.dart';
 import 'toc_panel.dart';
 import 'touch_navigator.dart';
@@ -627,12 +628,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
           );
           name = exportFileName(title, 'nots');
       }
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/$name');
-      await file.writeAsBytes(bytes, flush: true);
       if (!mounted) return;
       Navigator.of(context).pop();
-      await SharePlus.instance.share(ShareParams(files: [XFile(file.path)], title: name));
+      await _saveOrShare(bytes, name);
     } catch (e) {
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -640,6 +638,133 @@ class _ReaderScreenState extends State<ReaderScreen> {
     } finally {
       progress.dispose();
     }
+  }
+
+  static String _mimeOf(String fileName) {
+    switch (fileName.split('.').last.toLowerCase()) {
+      case 'pdf':
+        return 'application/pdf';
+      case 'png':
+        return 'image/png';
+      default:
+        return 'application/octet-stream';
+    }
+  }
+
+  /// Finished export: save it where the user chooses (the file keeps exactly
+  /// its name and extension), or share it. Sharing needs the file type
+  /// stated, or Android names it ".bin".
+  Future<void> _saveOrShare(Uint8List bytes, String name) async {
+    final mime = _mimeOf(name);
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Text(name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleSmall),
+          ),
+          ListTile(
+            leading: const Icon(Icons.save_alt),
+            title: const Text('حفظ في الجهاز'),
+            subtitle: const Text('اختر المجلد، ويبقى الاسم والامتداد كما هما'),
+            onTap: () => Navigator.pop(context, 'save'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.share),
+            title: const Text('مشاركة'),
+            onTap: () => Navigator.pop(context, 'share'),
+          ),
+        ]),
+      ),
+    );
+    if (action == null || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      if (action == 'save') {
+        final saved = await FilePicker.saveFile(
+          fileName: name,
+          bytes: bytes,
+          mimeType: mime,
+          dialogTitle: 'حفظ $name',
+        );
+        if (saved != null) messenger.showSnackBar(const SnackBar(content: Text('تم الحفظ.')));
+      } else {
+        final dir = await getTemporaryDirectory();
+        final file = File('${dir.path}/$name');
+        await file.writeAsBytes(bytes, flush: true);
+        await SharePlus.instance.share(ShareParams(
+          files: [XFile(file.path, name: name, mimeType: mime)],
+          fileNameOverrides: [name],
+          title: name,
+        ));
+      }
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('تعذّر ذلك: $e')));
+    }
+  }
+
+  // ---- text selection menu: mark the selected words ----
+
+  /// Adds highlight / underline / strike / comment to the menu that appears
+  /// when the user selects text, next to "Select all" and "Copy".
+  void _selectionMenu(PdfViewerContextMenuBuilderParams params,
+      List<ContextMenuButtonItem> items) {
+    final delegate = params.textSelectionDelegate;
+    Future<void> mark(MarkStyle style, int color) async {
+      final ranges = await delegate.getSelectedTextRanges();
+      final doc = _store?.document;
+      if (doc == null || !_viewer.isReady) return;
+      for (final r in ranges) {
+        final page = _viewer.document.pages[r.pageNumber - 1];
+        final h = page.height;
+        final chars = <WordBox>[];
+        for (var i = r.start; i < r.end && i < r.pageText.charRects.length; i++) {
+          final c = r.pageText.charRects[i];
+          if (c.isEmpty) continue;
+          chars.add(WordBox(i, i + 1, '',
+              Rect.fromLTRB(c.left, h - c.top, c.right, h - c.bottom)));
+        }
+        if (chars.isEmpty) continue;
+        final draft = NoteItem.mark(
+          id: doc.takeStrokeId(),
+          lineRects: lineRects(chars),
+          style: style,
+          color: color,
+          quote: r.text.replaceAll(RegExp(r'\s+'), ' ').trim(),
+        );
+        await _createMark(r.pageNumber, draft);
+      }
+      await delegate.clearTextSelection();
+      params.dismissContextMenu();
+    }
+
+    items.insertAll(0, [
+      ContextMenuButtonItem(
+        type: ContextMenuButtonType.custom,
+        label: 'تظليل',
+        onPressed: () => mark(MarkStyle.highlight, 0xFFFFEB3B),
+      ),
+      ContextMenuButtonItem(
+        type: ContextMenuButtonType.custom,
+        label: 'تسطير',
+        onPressed: () => mark(MarkStyle.underline, 0xFFD32F2F),
+      ),
+      ContextMenuButtonItem(
+        type: ContextMenuButtonType.custom,
+        label: 'شطب',
+        onPressed: () => mark(MarkStyle.strike, 0xFFD32F2F),
+      ),
+      ContextMenuButtonItem(
+        type: ContextMenuButtonType.custom,
+        label: 'تعليق',
+        onPressed: () => mark(MarkStyle.comment, 0xFFEF6C00),
+      ),
+    ]);
   }
 
   void _toggleBookmark() {
@@ -1094,95 +1219,87 @@ class _ReaderScreenState extends State<ReaderScreen> {
           ? Center(child: Text('تعذّر فتح ملف الكتابة: $_error'))
           : store == null || _selection == null
               ? const Center(child: CircularProgressIndicator())
-              : Stack(
+              : Column(
                   children: [
-                    Positioned.fill(
-                      child: TouchNavigator(
-                        tools: _tools,
-                        readView: () => _viewer.isReady ? _viewer.value : null,
-                        writeView: (m) {
-                          if (_viewer.isReady) _viewer.value = m;
-                        },
-                        child: ListenableBuilder(
-                          listenable: _tools,
-                          builder: (context, _) => PdfViewer.file(
-                            widget.library.pathOf(widget.book),
-                            controller: _viewer,
-                            params: PdfViewerParams(
-                              // While a drawing tool is active, a finger or the
-                              // pen draws; moving and zooming the page is done
-                              // by [TouchNavigator] (two fingers anywhere, or one
-                              // finger while a pen draws).
-                              panEnabled: !_tools.drawing,
-                              scaleEnabled: !_tools.drawing,
-                              // Zoom out far below "fit width" (5%) and in to
-                              // 1600%; vector ink stays sharp at any level.
-                              sizeDelegateProvider:
-                                  const PdfViewerSizeDelegateProviderLegacy(
-                                minScale: 0.05,
-                                maxScale: 16,
-                                useAlternativeFitScaleAsMinScale: false,
-                              ),
-                              pageOverlaysBuilder: _overlays,
-                              onGeneralTap: _onGeneralTap,
-                              // Momentum scrolling: flicks carry on and add up.
-                              scrollPhysics: PdfViewerParams.getScrollPhysics(context),
-                              // Drag the thumb on the side to run through the
-                              // book; it shows the page number.
-                              viewerOverlayBuilder: (context, size, _) => [
-                                PdfViewerScrollThumb(
-                                  controller: _viewer,
-                                  orientation: ScrollbarOrientation.left,
-                                  thumbSize: const Size(46, 30),
-                                  thumbBuilder: (context, size, page, c) => Container(
-                                    decoration: BoxDecoration(
-                                      color: Theme.of(context).colorScheme.primary,
-                                      borderRadius: BorderRadius.circular(15),
-                                      boxShadow: const [BoxShadow(blurRadius: 3, color: Colors.black26)],
-                                    ),
-                                    alignment: Alignment.center,
-                                    child: Text('${page ?? ''}',
-                                        style: const TextStyle(color: Colors.white, fontSize: 12)),
-                                  ),
-                                ),
-                              ],
-                              onViewerReady: (doc, _) {
-                                _loadOutline(doc);
-                                _restorePage();
-                              },
-                              onPageChanged: (n) {
-                                if (n == null) return;
-                                _prefs?.setLastPage(n);
-                                // Ready the page's words for instant taps.
-                                final pages = _viewer.document.pages;
-                                for (final k in [n, n + 1]) {
-                                  if (k <= pages.length) _wordsOf(pages[k - 1]);
-                                }
-                              },
-                            ),
+                    // The tools sit in their own strip above (or below) the
+                    // page, so they never cover the text.
+                    if (_toolbarTop) _toolbar(store),
+                    Expanded(
+                      child: Stack(
+                        children: [
+                          Positioned.fill(child: _viewerArea()),
+                          if (_search != null && _book != null)
+                            Positioned(top: 0, left: 0, right: 0, child: _searchBanner(context)),
+                          Positioned(
+                            left: 0,
+                            top: 0,
+                            bottom: 0,
+                            width: 60,
+                            child: ScrubBar(controller: _viewer),
                           ),
-                        ),
+                        ],
                       ),
                     ),
-                    if (_search != null && _book != null)
-                      Positioned(top: 0, left: 0, right: 0, child: _searchBanner(context)),
-                    Positioned(
-                      left: 8,
-                      right: 8,
-                      top: _toolbarTop ? (_search != null ? 64 : 6) : null,
-                      bottom: _toolbarTop ? null : 10,
-                      child: Center(
-                        child: _Toolbar(
-                          tools: _tools,
-                          document: store.document,
-                          selection: _selection!,
-                          open: _toolbarOpen,
-                          atTop: _toolbarTop,
-                        ),
-                      ),
-                    ),
+                    if (!_toolbarTop) _toolbar(store),
                   ],
                 ),
+    );
+  }
+
+  Widget _toolbar(InkStore store) => _Toolbar(
+        tools: _tools,
+        document: store.document,
+        selection: _selection!,
+        open: _toolbarOpen,
+        atTop: _toolbarTop,
+      );
+
+  Widget _viewerArea() {
+    return TouchNavigator(
+      tools: _tools,
+      readView: () => _viewer.isReady ? _viewer.value : null,
+      writeView: (m) {
+        if (_viewer.isReady) _viewer.value = m;
+      },
+      child: ListenableBuilder(
+        listenable: _tools,
+        builder: (context, _) => PdfViewer.file(
+          widget.library.pathOf(widget.book),
+          controller: _viewer,
+          params: PdfViewerParams(
+            // While a drawing tool is active, a finger or the pen draws;
+            // moving and zooming the page is done by [TouchNavigator] (two
+            // fingers anywhere, or one finger when finger drawing is off).
+            panEnabled: !_tools.drawing,
+            scaleEnabled: !_tools.drawing,
+            // Zoom out far below "fit width" (5%) and in to 1600%; vector
+            // ink stays sharp at any level.
+            sizeDelegateProvider: const PdfViewerSizeDelegateProviderLegacy(
+              minScale: 0.05,
+              maxScale: 16,
+              useAlternativeFitScaleAsMinScale: false,
+            ),
+            pageOverlaysBuilder: _overlays,
+            onGeneralTap: _onGeneralTap,
+            customizeContextMenuItems: _selectionMenu,
+            // Momentum scrolling: flicks carry on.
+            scrollPhysics: PdfViewerParams.getScrollPhysics(context),
+            onViewerReady: (doc, _) {
+              _loadOutline(doc);
+              _restorePage();
+            },
+            onPageChanged: (n) {
+              if (n == null) return;
+              _prefs?.setLastPage(n);
+              // Ready the page's words for instant taps.
+              final pages = _viewer.document.pages;
+              for (final k in [n, n + 1]) {
+                if (k <= pages.length) _wordsOf(pages[k - 1]);
+              }
+            },
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1220,16 +1337,33 @@ class _Toolbar extends StatelessWidget {
       listenable: Listenable.merge([tools, selection, open, document]),
       builder: (context, _) {
         if (!open.value) {
-          // Tools hidden: one small button shows the current tool and brings
-          // the toolbar back.
+          // Tools hidden: a slim strip shows the current tool and brings the
+          // toolbar back.
           final (icon, label) = _modeIcons[tools.mode]!;
-          return Align(
-            alignment: atTop ? AlignmentDirectional.topEnd : AlignmentDirectional.bottomEnd,
-            child: FloatingActionButton.small(
-              heroTag: null,
-              tooltip: 'إظهار الأدوات ($label)',
-              onPressed: () => open.value = true,
-              child: Icon(icon),
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            child: Material(
+              color: Theme.of(context).colorScheme.surfaceContainerHigh,
+              borderRadius: BorderRadius.circular(16),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: () => open.value = true,
+                child: Tooltip(
+                  message: 'إظهار الأدوات ($label)',
+                  child: SizedBox(
+                    height: 28,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(icon, size: 17),
+                        const SizedBox(width: 6),
+                        Icon(atTop ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_up,
+                            size: 20),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ),
           );
         }
@@ -1246,11 +1380,14 @@ class _Toolbar extends StatelessWidget {
               'إخفاء الأدوات', () => open.value = false),
         ]);
         final opts = options == null ? null : _bar(context, options);
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: atTop
-              ? [main, if (opts != null) ...[const SizedBox(height: 6), opts]]
-              : [if (opts != null) ...[opts, const SizedBox(height: 6)], main],
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(8, 3, 8, 3),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: atTop
+                ? [main, if (opts != null) ...[const SizedBox(height: 4), opts]]
+                : [if (opts != null) ...[opts, const SizedBox(height: 4)], main],
+          ),
         );
       },
     );

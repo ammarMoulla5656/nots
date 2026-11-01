@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nots/ink/words.dart';
+import 'package:nots/reader/scrub_bar.dart';
 import 'package:nots/reader/touch_navigator.dart';
 import 'package:nots/ui/color_wheel.dart';
 
@@ -96,6 +97,21 @@ void main() {
       expect(lines[0].left, 80);
       expect(lines[0].right, 106);
       expect(math.max(lines[0].bottom, 22), lines[0].bottom);
+    });
+  });
+
+  group('pageForTrackY', () {
+    test('maps the finger position on the track to a page', () {
+      expect(pageForTrackY(0, 1000, 544), 1);
+      expect(pageForTrackY(1000, 1000, 544), 544);
+      expect(pageForTrackY(500, 1000, 544), closeTo(272, 1));
+      expect(pageForTrackY(-50, 1000, 544), 1); // above the track
+      expect(pageForTrackY(2000, 1000, 544), 544); // below it
+    });
+
+    test('degenerate tracks and one-page books stay on page 1', () {
+      expect(pageForTrackY(300, 1000, 1), 1);
+      expect(pageForTrackY(300, 0, 544), 1);
     });
   });
 }
