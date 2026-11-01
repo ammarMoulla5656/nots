@@ -16,6 +16,8 @@ import '../ink/stroke.dart';
 import '../ink/tool_controller.dart';
 import '../ink/words.dart';
 import '../ui/color_wheel.dart';
+import 'pages_sheet.dart';
+import 'reader_prefs.dart';
 import 'search_page.dart';
 import 'toc_panel.dart';
 import 'touch_navigator.dart';
@@ -51,10 +53,22 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// The search result being shown, with the whole result list.
   SearchPick? _search;
 
+  /// Last page read and bookmarks of this book.
+  ReaderPrefs? _prefs;
+  bool _restored = false;
+
   @override
   void initState() {
     super.initState();
     _tools.addListener(_onToolChanged);
+    ReaderPrefs.open(widget.pdfPath).then((pr) {
+      if (!mounted) {
+        pr.dispose();
+        return;
+      }
+      _prefs = pr;
+      _restorePage();
+    });
     BookLinkStore.load(widget.pdfPath).then((b) {
       if (mounted && b != null) setState(() => _book = b);
     });
@@ -90,7 +104,50 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _selection?.dispose();
     _tools.dispose();
     _toolbarOpen.dispose();
+    _prefs?.dispose();
     super.dispose();
+  }
+
+  /// Reopen the book on the page last read (once both the viewer and the
+  /// saved position are ready).
+  void _restorePage() {
+    final pr = _prefs;
+    if (_restored || pr == null || !_viewer.isReady) return;
+    _restored = true;
+    if (pr.lastPage > 1 && pr.lastPage <= _viewer.pageCount) {
+      _viewer.goToPage(pageNumber: pr.lastPage, duration: Duration.zero);
+    }
+  }
+
+  Set<int> get _annotatedPages {
+    final doc = _store?.document;
+    if (doc == null) return {};
+    return {
+      for (final e in doc.pages.entries)
+        if (e.value.isNotEmpty) e.key,
+      for (final e in doc.items.entries)
+        if (e.value.isNotEmpty) e.key,
+    };
+  }
+
+  Future<void> _openPages() async {
+    if (!_viewer.isReady) return;
+    final page = await showModalBottomSheet<int>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => FractionallySizedBox(
+        heightFactor: 0.85,
+        child: PagesSheet(
+          document: _viewer.document,
+          pageCount: _viewer.pageCount,
+          currentPage: _viewer.pageNumber ?? 1,
+          bookmarks: _prefs?.bookmarks.toSet() ?? const {},
+          annotated: _annotatedPages,
+        ),
+      ),
+    );
+    if (page != null) await _viewer.goToPage(pageNumber: page);
   }
 
   /// Words of a page from the PDF text layer, converted to PDF points with a
@@ -588,7 +645,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     minimumSize: const Size(40, 40)),
                 onPressed: _askPage,
                 child: Text(
-                    '${_viewer.pageNumber ?? 1}/${_viewer.pageCount}\n${(_viewer.currentZoom * 100).round()}%',
+                    '${(_prefs?.isBookmarked(_viewer.pageNumber ?? 1) ?? false) ? '🔖' : ''}${_viewer.pageNumber ?? 1}/${_viewer.pageCount}\n${(_viewer.currentZoom * 100).round()}%',
                     textAlign: TextAlign.center,
                     style: const TextStyle(fontSize: 12, height: 1.2)),
               );
@@ -624,9 +681,25 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     _linkDocx();
                   case 'unlink':
                     _unlinkDocx();
+                  case 'bookmark':
+                    if (_viewer.isReady) {
+                      _prefs?.toggleBookmark(_viewer.pageNumber ?? 1);
+                      setState(() {});
+                    }
+                  case 'pages':
+                    _openPages();
                 }
               },
               itemBuilder: (context) => [
+                PopupMenuItem(
+                  value: 'bookmark',
+                  child: Text(_viewer.isReady &&
+                          (_prefs?.isBookmarked(_viewer.pageNumber ?? 1) ?? false)
+                      ? 'إزالة علامة هذه الصفحة'
+                      : 'وضع علامة على هذه الصفحة'),
+                ),
+                const PopupMenuItem(value: 'pages', child: Text('الصفحات والعلامات')),
+                const PopupMenuDivider(),
                 CheckedPopupMenuItem(
                   value: 'finger',
                   checked: _tools.fingerDraws,
@@ -675,7 +748,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
                                 useAlternativeFitScaleAsMinScale: false,
                               ),
                               pageOverlaysBuilder: _overlays,
-                              onViewerReady: (doc, _) => _loadOutline(doc),
+                              onViewerReady: (doc, _) {
+                                _loadOutline(doc);
+                                _restorePage();
+                              },
+                              onPageChanged: (n) {
+                                if (n != null) _prefs?.setLastPage(n);
+                              },
                             ),
                           ),
                         ),
