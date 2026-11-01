@@ -8,8 +8,29 @@ import 'package:path_provider/path_provider.dart';
 import 'ink_document.dart';
 import 'stroke.dart';
 
-/// Saves and loads the ink of one PDF next to the app data, never touching
-/// the PDF itself.
+/// Writing saved in the ink folder that no book in the library points to:
+/// left over from versions that keyed writing by file path. Shown so the
+/// user can link it back to its book.
+class OrphanInk {
+  const OrphanInk({
+    required this.key,
+    required this.modified,
+    required this.pages,
+    required this.strokes,
+    required this.items,
+  });
+
+  final String key;
+  final DateTime modified;
+
+  /// Pages that carry writing, in order.
+  final List<int> pages;
+  final int strokes;
+  final int items;
+}
+
+/// Saves and loads the ink of one book in the app's storage, never touching
+/// the PDF itself. Files are named by the book id (content fingerprint).
 class InkStore {
   InkStore._(this._file, this.document) {
     document.addListener(_scheduleSave);
@@ -20,10 +41,18 @@ class InkStore {
   Timer? _timer;
   var _saving = Future<void>.value();
 
-  static Future<InkStore> open(String pdfPath) async {
-    final dir = Directory(p.join((await getApplicationSupportDirectory()).path, 'ink'));
-    await dir.create(recursive: true);
-    final file = File(p.join(dir.path, '${documentKey(pdfPath)}.nots'));
+  /// Folder of the ink files; tests may point it elsewhere.
+  static Future<Directory> Function() dirProvider = () async =>
+      Directory(p.join((await getApplicationSupportDirectory()).path, 'ink'));
+
+  static Future<Directory> _dir() async {
+    final d = await dirProvider();
+    await d.create(recursive: true);
+    return d;
+  }
+
+  static Future<InkStore> open(String bookId) async {
+    final file = File(p.join((await _dir()).path, '$bookId.nots'));
     var doc = InkDocument();
     if (await file.exists()) {
       try {
@@ -35,21 +64,80 @@ class InkStore {
         );
       } on FormatException {
         // Keep the unreadable file for inspection instead of overwriting it.
-        await file.rename('${file.path}.corrupt-${DateTime.now().millisecondsSinceEpoch}');
+        await file.rename(
+            '${file.path}.corrupt-${DateTime.now().millisecondsSinceEpoch}');
       }
     }
     return InkStore._(file, doc);
   }
 
-  /// Stable key for a PDF: FNV-1a over its path and size. Good enough for the
-  /// standalone prototype; library books will use a content hash instead.
-  static String documentKey(String pdfPath) {
+  /// The key older versions used: FNV-1a over the PDF's path and size. Only
+  /// used to find and move writing saved by those versions.
+  static String legacyKey(String pdfPath) {
     final size = File(pdfPath).existsSync() ? File(pdfPath).lengthSync() : 0;
     var h = 0xcbf29ce484222325;
     for (final b in utf8.encode('${p.canonicalize(pdfPath)}|$size')) {
       h = (h ^ b) * 0x100000001b3;
     }
     return h.toUnsigned(64).toRadixString(16).padLeft(16, '0');
+  }
+
+  /// Ink files with writing that belong to no id in [knownIds].
+  static Future<List<OrphanInk>> orphans(Set<String> knownIds) async {
+    final out = <OrphanInk>[];
+    await for (final e in (await _dir()).list()) {
+      if (e is! File || !e.path.endsWith('.nots')) continue;
+      final key = p.basenameWithoutExtension(e.path);
+      if (knownIds.contains(key)) continue;
+      try {
+        final d = StrokeCodec.decodeDocument(await e.readAsBytes());
+        final pages = <int>{
+          for (final x in d.pages.entries)
+            if (x.value.isNotEmpty) x.key,
+          for (final x in d.items.entries)
+            if (x.value.isNotEmpty) x.key,
+        }.toList()
+          ..sort();
+        if (pages.isEmpty) continue;
+        out.add(OrphanInk(
+          key: key,
+          modified: await e.lastModified(),
+          pages: pages,
+          strokes: d.pages.values.fold(0, (n, l) => n + l.length),
+          items: d.items.values.fold(0, (n, l) => n + l.length),
+        ));
+      } on FormatException {
+        // Not readable: not offered.
+      }
+    }
+    out.sort((a, b) => b.modified.compareTo(a.modified));
+    return out;
+  }
+
+  /// Moves the writing saved under [fromKey] to the book [bookId], with the
+  /// linked Word text and reading position saved under the same key. Fails
+  /// (returns false) when the book already has writing of its own.
+  static Future<bool> adopt(String fromKey, String bookId) async {
+    if (fromKey == bookId) return true;
+    final dir = await _dir();
+    final from = File(p.join(dir.path, '$fromKey.nots'));
+    final to = File(p.join(dir.path, '$bookId.nots'));
+    if (!await from.exists()) return false;
+    if (await to.exists()) {
+      final d = StrokeCodec.decodeDocument(await to.readAsBytes());
+      final hasWriting = d.pages.values.any((l) => l.isNotEmpty) ||
+          d.items.values.any((l) => l.isNotEmpty);
+      if (hasWriting) return false;
+      await to.delete();
+    }
+    await from.rename(to.path);
+    final root = dir.parent.path;
+    for (final sub in ['links', 'prefs']) {
+      final f = File(p.join(root, sub, '$fromKey.json'));
+      final t = File(p.join(root, sub, '$bookId.json'));
+      if (await f.exists() && !await t.exists()) await f.rename(t.path);
+    }
+    return true;
   }
 
   void _scheduleSave() {

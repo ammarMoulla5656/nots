@@ -6,8 +6,6 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-import '../ink/ink_store.dart';
-
 /// Per-book reading state: the page last read (to reopen there) and the
 /// bookmarked pages.
 class ReaderPrefs extends ChangeNotifier {
@@ -21,11 +19,11 @@ class ReaderPrefs extends ChangeNotifier {
   List<int> get bookmarks => _bookmarks.toList()..sort();
   bool isBookmarked(int page) => _bookmarks.contains(page);
 
-  static Future<ReaderPrefs> open(String pdfPath) async {
+  static Future<ReaderPrefs> open(String bookId) async {
     final dir = Directory(
         p.join((await getApplicationSupportDirectory()).path, 'prefs'));
     await dir.create(recursive: true);
-    final f = File(p.join(dir.path, '${InkStore.documentKey(pdfPath)}.json'));
+    final f = File(p.join(dir.path, '$bookId.json'));
     var last = 1;
     final marks = <int>{};
     if (await f.exists()) {

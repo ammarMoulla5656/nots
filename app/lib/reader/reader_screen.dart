@@ -1,13 +1,14 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:path/path.dart' as p;
 import 'package:pdfrx/pdfrx.dart';
 
 import '../book/book_link_store.dart';
 import '../book/book_text.dart';
 import '../ink/ink_store.dart';
+import '../library/library_store.dart';
 import '../ink/note_items.dart';
 import '../ink/page_ink_overlay.dart';
 import '../ink/selection.dart';
@@ -23,9 +24,10 @@ import 'toc_panel.dart';
 import 'touch_navigator.dart';
 
 class ReaderScreen extends StatefulWidget {
-  const ReaderScreen({super.key, required this.pdfPath});
+  const ReaderScreen({super.key, required this.library, required this.book});
 
-  final String pdfPath;
+  final LibraryStore library;
+  final BookEntry book;
 
   @override
   State<ReaderScreen> createState() => _ReaderScreenState();
@@ -61,7 +63,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void initState() {
     super.initState();
     _tools.addListener(_onToolChanged);
-    ReaderPrefs.open(widget.pdfPath).then((pr) {
+    ReaderPrefs.open(widget.book.id).then((pr) {
       if (!mounted) {
         pr.dispose();
         return;
@@ -69,10 +71,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _prefs = pr;
       _restorePage();
     });
-    BookLinkStore.load(widget.pdfPath).then((b) {
+    BookLinkStore.load(widget.book.id).then((b) {
       if (mounted && b != null) setState(() => _book = b);
     });
-    InkStore.open(widget.pdfPath).then((s) {
+    _openInk();
+  }
+
+  Future<void> _openInk() async {
+    try {
+      final s = await InkStore.open(widget.book.id);
       if (!mounted) {
         s.dispose();
         return;
@@ -81,9 +88,81 @@ class _ReaderScreenState extends State<ReaderScreen> {
         _store = s;
         _selection = SelectionController(s.document);
       });
-    }).catchError((Object e) {
+      if (s.document.strokeCount == 0 && s.document.items.values.every((l) => l.isEmpty)) {
+        unawaited(_offerOrphans());
+      }
+    } catch (e) {
       if (mounted) setState(() => _error = e);
+    }
+  }
+
+  /// This book has no writing yet, but writing saved by an older version may
+  /// be waiting unlinked: offer to bring it to this book.
+  Future<void> _offerOrphans() async {
+    final orphans = await InkStore.orphans(widget.library.ids);
+    if (orphans.isEmpty || !mounted) return;
+    String pagesText(List<int> pages) =>
+        pages.length <= 8 ? pages.join('، ') : '${pages.take(8).join('، ')} …';
+    final pick = await showDialog<OrphanInk>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('وُجدت كتابة سابقة غير مربوطة'),
+        content: SizedBox(
+          width: 400,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                  'هذه كتابة حُفظت بنسخة سابقة من التطبيق ولم تعد مربوطة بكتابها. إن كانت إحداها لهذا الكتاب فاخترها لتعود إليه:'),
+              const SizedBox(height: 8),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final o in orphans)
+                      Card(
+                        child: ListTile(
+                          leading: const Icon(Icons.history_edu),
+                          title: Text(
+                              '${o.pages.length} صفحة مكتوب عليها · ${o.strokes} خط · ${o.items} عنصر'),
+                          subtitle: Text(
+                              'الصفحات: ${pagesText(o.pages)}\nآخر تعديل: ${o.modified.toLocal().toString().substring(0, 16)}'),
+                          isThreeLine: true,
+                          onTap: () => Navigator.pop(context, o),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('ليست لهذا الكتاب')),
+        ],
+      ),
+    );
+    if (pick == null || !mounted) return;
+    final old = _store;
+    final oldSelection = _selection;
+    setState(() {
+      _store = null;
+      _selection = null;
     });
+    await old?.dispose();
+    oldSelection?.dispose();
+    final ok = await InkStore.adopt(pick.key, widget.book.id);
+    if (!mounted) return;
+    final book = await BookLinkStore.load(widget.book.id);
+    if (mounted && book != null) setState(() => _book = book);
+    await _openInk();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(ok ? 'عادت الكتابة إلى هذا الكتاب.' : 'تعذّر ربط الكتابة.')));
+    }
   }
 
   ToolMode _lastMode = ToolMode.hand;
@@ -428,7 +507,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       ),
     );
     try {
-      final book = await BookLinkStore.link(widget.pdfPath, path);
+      final book = await BookLinkStore.link(widget.book.id, path);
       if (!mounted) return;
       Navigator.of(context).pop();
       setState(() => _book = book);
@@ -460,7 +539,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       ),
     );
     if (ok != true) return;
-    await BookLinkStore.unlink(widget.pdfPath);
+    await BookLinkStore.unlink(widget.book.id);
     if (mounted) {
       setState(() {
         _book = null;
@@ -561,7 +640,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     return ListenableBuilder(
       listenable: _viewer,
       builder: (context, _) {
-        final name = p.basenameWithoutExtension(widget.pdfPath);
+        final name = widget.book.title;
         String? section;
         if (_viewer.isReady) {
           final page = _viewer.pageNumber ?? 1;
@@ -602,7 +681,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       endDrawer: ListenableBuilder(
         listenable: _viewer,
         builder: (context, _) => TocPanel(
-          title: p.basenameWithoutExtension(widget.pdfPath),
+          title: widget.book.title,
           entries: _tocEntries,
           linkedSource: _book?.source,
           currentPdfPage: _viewer.isReady ? (_viewer.pageNumber ?? 1) : 1,
@@ -730,7 +809,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                         child: ListenableBuilder(
                           listenable: _tools,
                           builder: (context, _) => PdfViewer.file(
-                            widget.pdfPath,
+                            widget.library.pathOf(widget.book),
                             controller: _viewer,
                             params: PdfViewerParams(
                               // While a drawing tool is active, a finger or the
