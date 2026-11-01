@@ -28,8 +28,21 @@ class ToolController extends ChangeNotifier {
   bool _fingerDraws = true;
   bool _snapShapes = true;
 
+  bool _allowPan = false;
+
   ToolMode get mode => _mode;
   bool get drawing => _mode != ToolMode.hand;
+
+  /// True while the page may be moved although a drawing tool is active:
+  /// two fingers are down, or a finger touches while a pen does the drawing.
+  /// Set by the page overlays; the viewer reads it to enable panning.
+  bool get allowPan => _allowPan;
+
+  void setAllowPan(bool v) {
+    if (_allowPan == v) return;
+    _allowPan = v;
+    notifyListeners();
+  }
 
   /// Pen family used by the pen tool: ink, pencil or calligraphy.
   InkTool get penKind => _penKind;
@@ -62,7 +75,7 @@ class ToolController extends ChangeNotifier {
   double get textSize => _textSize;
 
   /// Continuous width ranges in PDF points.
-  static const penWidthRange = (min: 0.3, max: 8.0);
+  static const penWidthRange = (min: 0.1, max: 8.0);
   static const highlighterWidthRange = (min: 4.0, max: 40.0);
   static const textSizeRange = (min: 8.0, max: 48.0);
 

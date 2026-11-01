@@ -42,12 +42,29 @@ class Stroke {
   final double width;
   final List<StrokePoint> points;
 
-  Stroke copyWith({int? id, int? color, List<StrokePoint>? points}) => Stroke(
+  Stroke copyWith(
+          {int? id, int? color, double? width, List<StrokePoint>? points}) =>
+      Stroke(
         id: id ?? this.id,
         tool: tool,
         color: color ?? this.color,
-        width: width,
+        width: width ?? this.width,
         points: points ?? this.points,
+      );
+
+  /// Scaled by [factor] around [anchor] (PDF points); the line gets
+  /// proportionally thicker or thinner.
+  Stroke scaled(double factor, ui.Offset anchor) => copyWith(
+        width: math.max(0.05, width * factor),
+        points: [
+          for (final p in points)
+            StrokePoint(
+              anchor.dx + (p.x - anchor.dx) * factor,
+              anchor.dy + (p.y - anchor.dy) * factor,
+              p.pressure,
+              p.t,
+            ),
+        ],
       );
 
   Stroke translated(double dx, double dy) => copyWith(points: [

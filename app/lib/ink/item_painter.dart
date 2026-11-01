@@ -31,27 +31,26 @@ double textHeightPt(NoteItem it) {
 Rect itemHitRect(NoteItem it) => it.hitRect(
     measuredHeight: it.kind == ItemKind.text ? textHeightPt(it) : 0);
 
-/// Paints text boxes, pins and tape of one page. [drag] shifts one item while
-/// the user is moving it.
+/// Paints text boxes, pins and tape of one page. [preview] stands in for the
+/// stored item with the same id while the user moves or resizes it.
 class ItemsPainter extends CustomPainter {
   ItemsPainter({
     required this.items,
     required this.scale,
-    required this.drag,
+    required this.preview,
     required Listenable repaint,
   }) : super(repaint: repaint);
 
   final List<NoteItem> Function() items;
-  final ({int id, Offset offset})? Function() drag;
+  final NoteItem? Function() preview;
   final double scale;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final d = drag();
-    for (final it in items()) {
-      final off = (d != null && d.id == it.id) ? d.offset : Offset.zero;
+    final pv = preview();
+    for (final stored in items()) {
+      final it = (pv != null && pv.id == stored.id) ? pv : stored;
       canvas.save();
-      canvas.translate(off.dx * scale, off.dy * scale);
       switch (it.kind) {
         case ItemKind.text:
           final tp = _layoutText(it, scale);

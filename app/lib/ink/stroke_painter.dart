@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import 'selection.dart';
 import 'stroke.dart';
 
 /// Paints strokes of one page. [scale] converts PDF points to screen pixels,
@@ -135,49 +136,125 @@ class StrokesPainter extends CustomPainter {
   bool shouldRepaint(StrokesPainter old) => old.scale != scale;
 }
 
-/// Selected strokes (shifted by the drag offset), their frame, and the lasso
-/// loop while it is being drawn.
+/// How the selected strokes are shown while being dragged or resized:
+/// scaled by [factor] around [anchor], then shifted by [offset] (PDF points).
+class SelectionTransform {
+  const SelectionTransform({
+    this.offset = Offset.zero,
+    this.factor = 1,
+    this.anchor = Offset.zero,
+  });
+
+  final Offset offset;
+  final double factor;
+  final Offset anchor;
+}
+
+/// Selected strokes (shown with a live transform), the selection frame with
+/// its corner handles and delete/edit buttons, and the lasso loop while it is
+/// being drawn.
 class SelectionPainter extends CustomPainter {
   SelectionPainter({
     required this.selected,
-    required this.offset,
+    required this.transform,
+    required this.frame,
+    required this.unit,
+    required this.canEdit,
+    required this.canResize,
     required this.lasso,
     required this.scale,
     required Listenable repaint,
   }) : super(repaint: repaint);
 
   final List<Stroke> Function() selected;
-  final Offset Function() offset;
+  final SelectionTransform Function() transform;
+
+  /// Bounds of what is selected right now (already moved/resized), or null.
+  final Rect? Function() frame;
+
+  /// PDF points per screen pixel (keeps buttons the same size at any zoom).
+  final double Function() unit;
+  final bool Function() canEdit;
+  final bool Function() canResize;
   final List<Offset> Function() lasso;
   final double scale;
 
   static const _blue = Color(0xFF1E88E5);
 
+  void _icon(Canvas canvas, IconData icon, Offset center, double size, Color c) {
+    final tp = TextPainter(
+      text: TextSpan(
+        text: String.fromCharCode(icon.codePoint),
+        style: TextStyle(
+          fontFamily: icon.fontFamily,
+          package: icon.fontPackage,
+          fontSize: size,
+          color: c,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
+    tp.dispose();
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     final sel = selected();
     if (sel.isNotEmpty) {
-      final off = offset();
+      final t = transform();
       canvas.save();
-      canvas.translate(off.dx * scale, off.dy * scale);
-      Rect? box;
+      canvas.translate(t.offset.dx * scale, t.offset.dy * scale);
+      canvas.translate(t.anchor.dx * scale, t.anchor.dy * scale);
+      canvas.scale(t.factor);
+      canvas.translate(-t.anchor.dx * scale, -t.anchor.dy * scale);
       for (final s in sel) {
         paintStroke(canvas, s, scale);
-        box = box == null ? s.bounds : box.expandToInclude(s.bounds);
       }
-      final r = Rect.fromLTRB(box!.left * scale, box.top * scale,
-              box.right * scale, box.bottom * scale)
-          .inflate(4);
+      canvas.restore();
+    }
+
+    final bounds = frame();
+    if (bounds != null) {
+      final u = unit();
+      final px = u * scale; // layout pixels per screen pixel
+      final geo = SelectionGeometry(bounds, u,
+          canEdit: canEdit(), canResize: canResize());
+      Rect toPx(Rect r) => Rect.fromLTRB(
+          r.left * scale, r.top * scale, r.right * scale, r.bottom * scale);
+      final r = toPx(geo.frame);
       canvas.drawRect(r, Paint()..color = _blue.withValues(alpha: 0.08));
       canvas.drawRect(
         r,
         Paint()
           ..color = _blue
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5,
+          ..strokeWidth = 1.5 * px,
       );
-      canvas.restore();
+      if (canResize()) {
+        for (final c in geo.corners) {
+          final h = Rect.fromCenter(
+              center: c * scale, width: 11 * px, height: 11 * px);
+          canvas.drawRect(h, Paint()..color = Colors.white);
+          canvas.drawRect(
+            h,
+            Paint()
+              ..color = _blue
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 1.5 * px,
+          );
+        }
+      }
+      final close = geo.closeCenter * scale;
+      canvas.drawCircle(close, 13 * px, Paint()..color = const Color(0xFFD32F2F));
+      _icon(canvas, Icons.close, close, 18 * px, Colors.white);
+      if (canEdit()) {
+        final edit = geo.editCenter * scale;
+        canvas.drawCircle(edit, 13 * px, Paint()..color = _blue);
+        _icon(canvas, Icons.edit, edit, 16 * px, Colors.white);
+      }
     }
+
     final loop = lasso();
     if (loop.length > 1) {
       final path = Path()..moveTo(loop[0].dx * scale, loop[0].dy * scale);

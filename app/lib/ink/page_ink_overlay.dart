@@ -27,6 +27,8 @@ class PageInkOverlay extends StatefulWidget {
     required this.pageNumber,
     required this.pageWidthPt,
     required this.pageWidthPx,
+    required this.zoom,
+    required this.viewChanged,
     required this.onCreateItem,
     required this.onEditItem,
   });
@@ -37,6 +39,12 @@ class PageInkOverlay extends StatefulWidget {
   final int pageNumber;
   final double pageWidthPt;
   final double pageWidthPx;
+
+  /// Current viewer zoom, so selection buttons keep a constant screen size.
+  final double Function() zoom;
+
+  /// Fires when the zoom changes.
+  final Listenable viewChanged;
   final CreateItemCallback onCreateItem;
   final EditItemCallback onEditItem;
 
@@ -59,17 +67,31 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
   // Shape tool: drag start.
   Offset? _shapeStart;
 
-  // Lasso: loop being drawn, or a drag moving the selection.
+  // Lasso: loop being drawn, or a drag moving the selected strokes.
   List<Offset> _lasso = [];
   Offset? _dragFrom;
   Offset _dragOffset = Offset.zero;
 
-  // Text and pin tools: dragging an item, or a tap that may create one.
+  // Items: dragging one (stand-in preview in _itemPreview), or a tap that
+  // may select it, edit it, or create a new one.
   NoteItem? _itemDrag;
+  NoteItem? _itemPreview;
+  bool _itemWasSelected = false;
   Offset _itemFrom = Offset.zero;
   Offset _itemOffset = Offset.zero;
   Offset? _tapPoint;
   bool _tapMoved = false;
+
+  // Resizing the selection by a corner handle.
+  int? _resizeHandle;
+  Offset _resizeAnchor = Offset.zero;
+  Offset _resizeGrab = Offset.zero;
+  Rect _resizeRect0 = Rect.zero;
+  NoteItem? _resizeItem0;
+  double _resizeFactor = 1;
+
+  // A tap on a button (delete / edit): swallow the rest of the gesture.
+  bool _consumed = false;
 
   // Tape tool: dragging a new strip, or a tap that toggles an existing one.
   Offset? _tapeStart;
@@ -81,7 +103,15 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
   int _downCount = 0;
   bool _multiTouch = false;
 
+  Offset? _lastErase;
+
   double get _scale => widget.pageWidthPx / widget.pageWidthPt;
+
+  /// PDF points per screen pixel at the current zoom.
+  double get _unit {
+    final z = widget.zoom();
+    return 1 / (_scale * (z <= 0 ? 1 : z));
+  }
 
   bool get _selectionHere =>
       widget.selection.active && widget.selection.page == widget.pageNumber;
@@ -142,6 +172,42 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     return null;
   }
 
+  SelectionGeometry? _geometry() {
+    if (!_selectionHere) return null;
+    final b = widget.selection.bounds;
+    if (b == null) return null;
+    final it = widget.selection.item;
+    return SelectionGeometry(
+      b,
+      _unit,
+      canEdit: it != null && it.kind != ItemKind.tape,
+      canResize: it == null || it.kind != ItemKind.pin,
+    );
+  }
+
+  /// Bounds of the selection as it looks right now (mid move or resize).
+  Rect? _liveFrame() {
+    if (!_selectionHere) return null;
+    final pv = _itemPreview;
+    if (pv != null) return itemHitRect(pv);
+    final b = widget.selection.bounds;
+    if (b == null) return null;
+    if (_resizeHandle != null) {
+      final a = _resizeAnchor, f = _resizeFactor;
+      return Rect.fromPoints(
+          a + (b.topLeft - a) * f, a + (b.bottomRight - a) * f);
+    }
+    if (_dragFrom != null) return b.shift(_dragOffset);
+    return b;
+  }
+
+  SelectionTransform _strokeTransform() {
+    if (_resizeHandle != null) {
+      return SelectionTransform(factor: _resizeFactor, anchor: _resizeAnchor);
+    }
+    return SelectionTransform(offset: _dragOffset);
+  }
+
   void _resetGesture() {
     _snapTimer?.cancel();
     _snapped = false;
@@ -151,9 +217,15 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     _dragFrom = null;
     _dragOffset = Offset.zero;
     _itemDrag = null;
+    _itemPreview = null;
+    _itemWasSelected = false;
     _itemOffset = Offset.zero;
     _tapPoint = null;
     _tapMoved = false;
+    _resizeHandle = null;
+    _resizeItem0 = null;
+    _resizeFactor = 1;
+    _consumed = false;
     _tapeStart = null;
     _tapeRect = null;
     _tapeHit = null;
@@ -173,34 +245,44 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
   void _down(PointerDownEvent e) {
     _downCount++;
     if (_downCount > 1) {
+      // Two fingers: pinch-zoom or two-finger scroll belongs to the viewer.
       _multiTouch = true;
+      widget.tools.setAllowPan(true);
       _cancelGesture();
       return;
     }
-    if (_multiTouch || !_accepts(e)) return;
+    if (_multiTouch) return;
+    if (!_accepts(e)) {
+      // A finger while the pen draws (palm rejection): let it scroll the page.
+      if (e.kind == PointerDeviceKind.touch) widget.tools.setAllowPan(true);
+      return;
+    }
     _activePointer = e.pointer;
     _strokeStartMs = e.timeStamp.inMilliseconds;
     final tools = widget.tools;
     final p = _pt(e);
 
+    if (_selectionHere && tools.mode != ToolMode.eraser) {
+      final geo = _geometry();
+      if (geo != null && _selectionDown(geo, p)) {
+        _live.value++;
+        return;
+      }
+    }
+
     switch (tools.mode) {
       case ToolMode.lasso:
-        final box = widget.selection.bounds;
-        final slack = 10 / _scale;
-        if (_selectionHere && box != null && box.inflate(slack).contains(p)) {
-          _dragFrom = p;
-          _dragOffset = Offset.zero;
-        } else {
-          widget.selection.clear();
-          _lasso = [p];
-        }
+        widget.selection.clear();
+        _lasso = [p];
       case ToolMode.text || ToolMode.pin:
         final hit = _hitItem(p, {ItemKind.text, ItemKind.pin});
         if (hit != null) {
           _itemDrag = hit;
           _itemFrom = p;
           _itemOffset = Offset.zero;
+          _itemWasSelected = false;
         } else {
+          widget.selection.clear();
           _tapPoint = p;
         }
       case ToolMode.tape:
@@ -238,6 +320,48 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     _live.value++;
   }
 
+  /// A touch that lands on the selection's buttons, handles or body.
+  /// Returns true when it was used.
+  bool _selectionDown(SelectionGeometry geo, Offset p) {
+    final sel = widget.selection;
+    final page = widget.pageNumber;
+    if (geo.hitClose(p)) {
+      _consumed = true;
+      sel.deleteSelected();
+      return true;
+    }
+    if (geo.hitEdit(p)) {
+      _consumed = true;
+      final it = sel.item;
+      if (it != null) unawaited(widget.onEditItem(page, it));
+      return true;
+    }
+    final h = geo.hitHandle(p);
+    if (h != null) {
+      _resizeHandle = h;
+      _resizeAnchor = geo.anchorFor(h);
+      _resizeGrab = p;
+      _resizeRect0 = geo.bounds;
+      _resizeItem0 = sel.item;
+      _resizeFactor = 1;
+      return true;
+    }
+    if (geo.hitBody(p)) {
+      final it = sel.item;
+      if (it != null) {
+        _itemDrag = it;
+        _itemFrom = p;
+        _itemOffset = Offset.zero;
+        _itemWasSelected = true;
+      } else {
+        _dragFrom = p;
+        _dragOffset = Offset.zero;
+      }
+      return true;
+    }
+    return false;
+  }
+
   bool get _canSnap {
     final t = widget.tools;
     if (!t.snapShapes) return false;
@@ -256,8 +380,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
   void _trySnap() {
     final c = _current;
     if (c == null || _snapped) return;
-    final snapped =
-        snapShape([for (final p in c.points) Offset(p.x, p.y)]);
+    final snapped = snapShape([for (final p in c.points) Offset(p.x, p.y)]);
     if (snapped == null) return;
     _snapped = true;
     _current = c.copyWith(points: _asPoints(snapped));
@@ -265,9 +388,11 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
   }
 
   void _move(PointerMoveEvent e) {
-    if (e.pointer != _activePointer) return;
+    if (e.pointer != _activePointer || _consumed) return;
     final p = _pt(e);
-    if (_shapeStart != null) {
+    if (_resizeHandle != null) {
+      _resizeTo(p);
+    } else if (_shapeStart != null) {
       _current = _current!.copyWith(
         points: _asPoints(
             shapePoints(widget.tools.shapeKind, _shapeStart!, p)),
@@ -278,9 +403,15 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
       _lasso.add(p);
     } else if (_itemDrag != null) {
       _itemOffset = p - _itemFrom;
+      if (_itemOffset.distance >= 4 * _unit) {
+        _itemPreview = _itemDrag!.copyWith(
+          x: _itemDrag!.x + _itemOffset.dx,
+          y: _itemDrag!.y + _itemOffset.dy,
+        );
+      }
     } else if (_tapPoint != null) {
       // Dragging on empty page with the text/pin tool: not a tap any more.
-      if ((p - _tapPoint!).distance > 4) _tapMoved = true;
+      if ((p - _tapPoint!).distance > 4 * _unit) _tapMoved = true;
     } else if (_tapeStart != null) {
       _tapeRect = Rect.fromPoints(_tapeStart!, p);
     } else if (_current != null) {
@@ -294,7 +425,35 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     _live.value++;
   }
 
-  Offset? _lastErase;
+  /// Resize drag: strokes and text scale uniformly around the opposite
+  /// corner; tape stretches freely.
+  void _resizeTo(Offset p) {
+    final a = _resizeAnchor;
+    final item = _resizeItem0;
+    if (item != null && item.kind == ItemKind.tape) {
+      var r = Rect.fromPoints(a, p);
+      if (r.width < 6 || r.height < 6) {
+        r = Rect.fromLTWH(r.left, r.top, r.width < 6 ? 6 : r.width,
+            r.height < 6 ? 6 : r.height);
+      }
+      _itemPreview =
+          item.copyWith(x: r.left, y: r.top, w: r.width, h: r.height);
+      return;
+    }
+    final base = (_resizeGrab - a).distance;
+    if (base < 1e-6) return;
+    final f = ((p - a).distance / base).clamp(0.1, 20.0);
+    _resizeFactor = f;
+    if (item != null) {
+      final w0 = item.w > 0 ? item.w : NoteItem.defaultTextWidth;
+      _itemPreview = item.copyWith(
+        fontSize: (item.fontSize * f).clamp(4.0, 400.0),
+        w: w0 * f,
+        x: a.dx + (_resizeRect0.left - a.dx) * f,
+        y: a.dy + (_resizeRect0.top - a.dy) * f,
+      );
+    }
+  }
 
   void _erase(PointerEvent e) {
     final p = _pt(e);
@@ -312,9 +471,31 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     }
   }
 
+  /// A tap with the lasso: select the stroke or item under the finger.
+  void _pick(Offset p) {
+    final page = widget.pageNumber;
+    final tol = 10 * _unit;
+    final strokes = widget.document.strokesOf(page);
+    for (var i = strokes.length - 1; i >= 0; i--) {
+      if (strokes[i].distanceTo(p.dx, p.dy) <= tol) {
+        widget.selection.select(page, {strokes[i].id});
+        return;
+      }
+    }
+    final it = _hitItem(p, ItemKind.values.toSet());
+    if (it != null) {
+      widget.selection.selectItem(page, it.id);
+    } else {
+      widget.selection.clear();
+    }
+  }
+
   void _up(PointerEvent e) {
     if (_downCount > 0) _downCount--;
-    if (_downCount == 0) _multiTouch = false;
+    if (_downCount == 0) {
+      _multiTouch = false;
+      widget.tools.setAllowPan(false);
+    }
     if (e.pointer != _activePointer) return;
     _activePointer = null;
     _snapTimer?.cancel();
@@ -322,22 +503,44 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     final page = widget.pageNumber;
     final tools = widget.tools;
 
-    if (_dragFrom != null) {
+    if (_consumed) {
+      // Button already acted on touch-down.
+    } else if (_resizeHandle != null) {
+      final pv = _itemPreview;
+      if (pv != null) {
+        doc.replaceItem(page, pv);
+      } else {
+        widget.selection.scaleStrokes(_resizeFactor, _resizeAnchor);
+      }
+    } else if (_dragFrom != null) {
       final off = _dragOffset;
       // Ignore accidental taps: less than 1 PDF point of movement.
       final moved = off.distance >= 1;
       widget.selection.moveBy(moved ? off.dx : 0, moved ? off.dy : 0);
     } else if (_lasso.isNotEmpty) {
-      widget.selection
-          .select(page, strokesInLasso(doc.strokesOf(page), _lasso));
+      var length = 0.0;
+      for (var i = 1; i < _lasso.length; i++) {
+        length += (_lasso[i] - _lasso[i - 1]).distance;
+      }
+      if (length < 6 * _unit) {
+        _pick(_lasso.first);
+      } else {
+        widget.selection
+            .select(page, strokesInLasso(doc.strokesOf(page), _lasso));
+      }
     } else if (_itemDrag != null) {
       final item = _itemDrag!;
-      final off = _itemOffset;
-      if (off.distance < 3) {
-        unawaited(widget.onEditItem(page, item));
+      final pv = _itemPreview;
+      if (pv == null) {
+        // A tap: first tap selects, tapping the selected item edits it.
+        if (_itemWasSelected) {
+          unawaited(widget.onEditItem(page, item));
+        } else {
+          widget.selection.selectItem(page, item.id);
+        }
       } else {
-        doc.replaceItem(
-            page, item.copyWith(x: item.x + off.dx, y: item.y + off.dy));
+        doc.replaceItem(page, pv);
+        widget.selection.selectItem(page, item.id);
       }
     } else if (_tapPoint != null) {
       if (!_tapMoved) {
@@ -398,7 +601,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
             painter: StrokesPainter(
               strokes: () {
                 final all = widget.document.strokesOf(widget.pageNumber);
-                if (!_selectionHere) return all;
+                if (!_selectionHere || sel.ids.isEmpty) return all;
                 final hidden = sel.ids;
                 return all.where((s) => !hidden.contains(s.id)).toList();
               },
@@ -410,9 +613,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
         CustomPaint(
           painter: ItemsPainter(
             items: () => widget.document.itemsOf(widget.pageNumber),
-            drag: () => _itemDrag == null
-                ? null
-                : (id: _itemDrag!.id, offset: _itemOffset),
+            preview: () => _itemPreview,
             scale: scale,
             repaint: Listenable.merge([revision, _live]),
           ),
@@ -430,10 +631,20 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
           child: CustomPaint(
             painter: SelectionPainter(
               selected: () => _selectionHere ? sel.strokes : const [],
-              offset: () => _dragOffset,
+              transform: _strokeTransform,
+              frame: _liveFrame,
+              unit: () => _unit,
+              canEdit: () {
+                final it = sel.item;
+                return it != null && it.kind != ItemKind.tape;
+              },
+              canResize: () {
+                final it = sel.item;
+                return it == null || it.kind != ItemKind.pin;
+              },
               lasso: () => _lasso,
               scale: scale,
-              repaint: Listenable.merge([_live, sel]),
+              repaint: Listenable.merge([_live, sel, widget.viewChanged]),
             ),
           ),
         ),

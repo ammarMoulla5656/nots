@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:pdfrx/pdfrx.dart';
@@ -44,8 +46,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
     });
   }
 
+  ToolMode _lastMode = ToolMode.hand;
+
   void _onToolChanged() {
-    if (_tools.mode != ToolMode.lasso) _selection?.clear();
+    // Switching tool drops the selection; other changes (colour, size,
+    // two-finger panning) keep it.
+    if (_tools.mode != _lastMode) {
+      _lastMode = _tools.mode;
+      _selection?.clear();
+    }
   }
 
   @override
@@ -68,6 +77,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
         pageNumber: page.pageNumber,
         pageWidthPt: page.width,
         pageWidthPx: pageRect.width,
+        zoom: () => _viewer.isReady ? _viewer.currentZoom : 1.0,
+        viewChanged: _viewer,
         onCreateItem: _createItem,
         onEditItem: _editItem,
       ),
@@ -243,15 +254,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
                           widget.pdfPath,
                           controller: _viewer,
                           params: PdfViewerParams(
-                            // While drawing, one finger or the pen must not
-                            // move the page, but pinching with two fingers
-                            // still zooms. Use the hand tool to scroll.
-                            panEnabled: !_tools.drawing,
-                            // Allow zooming out below "fit width" (20%) and in
-                            // to 1600%; vector ink stays sharp at any level.
+                            // While drawing, one finger or the pen must not move
+                            // the page; with two fingers (or a finger while a
+                            // pen draws) it moves, so a zoomed page can be
+                            // navigated without leaving the drawing tool.
+                            panEnabled: !_tools.drawing || _tools.allowPan,
+                            // Allow zooming out far below "fit width" (5%) and
+                            // in to 1600%; vector ink stays sharp at any level.
                             sizeDelegateProvider:
                                 const PdfViewerSizeDelegateProviderLegacy(
-                              minScale: 0.2,
+                              minScale: 0.05,
                               maxScale: 16,
                               useAlternativeFitScaleAsMinScale: false,
                             ),
@@ -350,7 +362,7 @@ class _Toolbar extends StatelessWidget {
   /// Options of the current tool, or null when it has none.
   List<Widget>? _options(BuildContext context) {
     final mode = tools.mode;
-    if (mode == ToolMode.lasso && selection.active) {
+    if (selection.active) {
       return [
         IconButton(
           tooltip: 'حذف المحدد',
@@ -474,21 +486,22 @@ class _Toolbar extends StatelessWidget {
     );
   }
 
-  /// Continuous width (text size for the text tool) with a live preview dot.
+  /// Width (text size for the text tool) with a live preview dot. The slider
+  /// is logarithmic so very thin sizes get as much room as thick ones.
   Widget _widthControl(BuildContext context) {
     final range = tools.widthRange;
     final w = tools.width.clamp(range.min, range.max);
-    final dot = 6 + 18 * ((w - range.min) / (range.max - range.min));
+    final ratio = math.log(range.max / range.min);
+    final t = math.log(w / range.min) / ratio;
+    final dot = 4 + 20 * t;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         SizedBox(
           width: 130,
           child: Slider(
-            min: range.min,
-            max: range.max,
-            value: w,
-            onChanged: tools.setWidth,
+            value: t.clamp(0.0, 1.0),
+            onChanged: (v) => tools.setWidth(range.min * math.exp(v * ratio)),
           ),
         ),
         SizedBox(

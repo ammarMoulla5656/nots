@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nots/ink/ink_document.dart';
@@ -19,6 +20,7 @@ class _Harness {
   late final InkDocument doc;
   late final ToolController tools;
   late final SelectionController selection;
+  final viewChanged = ChangeNotifier();
   final created = <(ItemKind, Offset)>[];
   final edited = <NoteItem>[];
 
@@ -36,6 +38,8 @@ class _Harness {
             pageNumber: 1,
             pageWidthPt: 400,
             pageWidthPx: 400,
+            zoom: () => 1.0,
+            viewChanged: viewChanged,
             onCreateItem: (page, kind, pt) async => created.add((kind, pt)),
             onEditItem: (page, item) async => edited.add(item),
           ),
@@ -175,7 +179,8 @@ void main() {
     expect(h.created.length, 2);
   });
 
-  testWidgets('tapping an item edits it, dragging moves it', (tester) async {
+  testWidgets('first tap selects an item, tapping it again edits it',
+      (tester) async {
     final h = _Harness(tester);
     h.doc.addItem(
       1,
@@ -185,15 +190,210 @@ void main() {
     await h.pump();
 
     await h.drag(const [Offset(200, 200)]);
+    expect(h.selection.itemId, 1);
+    expect(h.edited, isEmpty);
+
+    await h.drag(const [Offset(200, 200)]);
     expect(h.edited.single.id, 1);
+  });
+
+  testWidgets('dragging an item moves it and keeps it selected',
+      (tester) async {
+    final h = _Harness(tester);
+    h.doc.addItem(
+      1,
+      const NoteItem(id: 1, kind: ItemKind.pin, x: 200, y: 200, text: 'n'),
+    );
+    h.tools.setMode(ToolMode.pin);
+    await h.pump();
 
     await h.drag(const [Offset(200, 200), Offset(230, 240)]);
     final moved = h.doc.itemsOf(1).single;
     expect(moved.x, closeTo(230, 0.01));
     expect(moved.y, closeTo(240, 0.01));
-    expect(h.edited.length, 1);
+    expect(h.edited, isEmpty);
+    expect(h.selection.itemId, 1);
     h.doc.undo();
     expect(h.doc.itemsOf(1).single.x, closeTo(200, 0.01));
+  });
+
+  testWidgets('the X button deletes the selected item, undo brings it back',
+      (tester) async {
+    final h = _Harness(tester);
+    h.doc.addItem(
+      1,
+      const NoteItem(
+          id: 1, kind: ItemKind.text, x: 100, y: 100, w: 220, text: 'hello'),
+    );
+    h.tools.setMode(ToolMode.text);
+    await h.pump();
+    await h.drag(const [Offset(150, 105)]);
+    expect(h.selection.itemId, 1);
+
+    final geo = SelectionGeometry(h.selection.bounds!, 1,
+        canEdit: true, canResize: true);
+    await h.drag([geo.closeCenter]);
+    expect(h.doc.itemsOf(1), isEmpty);
+    expect(h.selection.active, isFalse);
+    h.doc.undo();
+    expect(h.doc.itemsOf(1).single.id, 1);
+  });
+
+  testWidgets('the pencil button asks to edit the selected text',
+      (tester) async {
+    final h = _Harness(tester);
+    h.doc.addItem(
+      1,
+      const NoteItem(
+          id: 1, kind: ItemKind.text, x: 100, y: 100, w: 220, text: 'hello'),
+    );
+    h.tools.setMode(ToolMode.text);
+    await h.pump();
+    await h.drag(const [Offset(150, 105)]);
+    final geo = SelectionGeometry(h.selection.bounds!, 1,
+        canEdit: true, canResize: true);
+    await h.drag([geo.editCenter]);
+    expect(h.edited.single.id, 1);
+  });
+
+  testWidgets('dragging a corner handle scales the text size',
+      (tester) async {
+    final h = _Harness(tester);
+    h.doc.addItem(
+      1,
+      const NoteItem(
+          id: 1,
+          kind: ItemKind.text,
+          x: 100,
+          y: 100,
+          w: 120,
+          text: 'hello',
+          fontSize: 14),
+    );
+    h.tools.setMode(ToolMode.text);
+    await h.pump();
+    await h.drag(const [Offset(150, 105)]);
+
+    final geo = SelectionGeometry(h.selection.bounds!, 1,
+        canEdit: true, canResize: true);
+    final grab = geo.corners[2]; // bottom-right
+    final anchor = geo.anchorFor(2); // top-left of the text
+    await h.drag([grab, anchor + (grab - anchor) * 1.5]);
+
+    final it = h.doc.itemsOf(1).single;
+    expect(it.fontSize, closeTo(21, 0.1));
+    expect(it.w, closeTo(180, 0.5));
+    expect(it.x, closeTo(100, 0.01)); // the anchor corner stayed put
+    expect(it.y, closeTo(100, 0.01));
+
+    // and back down again
+    final geo2 = SelectionGeometry(h.selection.bounds!, 1,
+        canEdit: true, canResize: true);
+    final grab2 = geo2.corners[2];
+    await h.drag([grab2, anchor + (grab2 - anchor) / 1.5]);
+    expect(h.doc.itemsOf(1).single.fontSize, closeTo(14, 0.2));
+    h.doc.undo();
+    expect(h.doc.itemsOf(1).single.fontSize, closeTo(21, 0.1));
+  });
+
+  testWidgets('tape can be stretched with a handle', (tester) async {
+    final h = _Harness(tester);
+    h.doc.addItem(
+      1,
+      const NoteItem(
+          id: 1, kind: ItemKind.tape, x: 50, y: 50, w: 100, h: 20, color: 0xFF333333),
+    );
+    h.tools.setMode(ToolMode.lasso);
+    await h.pump();
+    await h.drag(const [Offset(100, 60)]); // tap picks the tape
+    expect(h.selection.itemId, 1);
+
+    final geo = SelectionGeometry(h.selection.bounds!, 1,
+        canEdit: false, canResize: true);
+    await h.drag([geo.corners[2], const Offset(250, 120)]);
+    final t = h.doc.itemsOf(1).single;
+    expect(t.x, closeTo(50, 0.01));
+    expect(t.w, closeTo(200, 0.01));
+    expect(t.h, closeTo(70, 0.01));
+  });
+
+  testWidgets('lasso tap picks a stroke; X deletes it; handle resizes it',
+      (tester) async {
+    final h = _Harness(tester);
+    h.tools
+      ..setMode(ToolMode.pen)
+      ..setSnapShapes(false);
+    await h.pump();
+    await h.drag(const [Offset(100, 100), Offset(160, 100), Offset(160, 140)]);
+    final width0 = h.doc.strokesOf(1).single.width;
+
+    h.tools.setMode(ToolMode.lasso);
+    await tester.pump();
+    await h.drag(const [Offset(130, 101)]); // a tap right on the line
+    expect(h.selection.ids.length, 1);
+
+    // resize to 2x from the bottom-right handle
+    final geo = SelectionGeometry(h.selection.bounds!, 1,
+        canEdit: false, canResize: true);
+    final grab = geo.corners[2];
+    final anchor = geo.anchorFor(2);
+    await h.drag([grab, anchor + (grab - anchor) * 2]);
+    final s = h.doc.strokesOf(1).single;
+    expect(s.width, closeTo(width0 * 2, 0.01));
+    expect(s.points.first.x, closeTo(100 - (anchor.dx - 100) * 0 + (100 - anchor.dx), 0.5));
+    expect(s.bounds.width, greaterThan(100));
+    h.doc.undo();
+    expect(h.doc.strokesOf(1).single.width, closeTo(width0, 0.001));
+    h.doc.redo();
+
+    final geo2 = SelectionGeometry(h.selection.bounds!, 1,
+        canEdit: false, canResize: false);
+    await h.drag([geo2.closeCenter]);
+    expect(h.doc.strokeCount, 0);
+  });
+
+  testWidgets('two fingers allow the page to move, one finger does not',
+      (tester) async {
+    final h = _Harness(tester);
+    h.tools.setMode(ToolMode.pen);
+    await h.pump();
+    final o = h.origin;
+
+    final a = await tester.startGesture(o + const Offset(50, 50));
+    expect(h.tools.allowPan, isFalse);
+    final b = await tester.startGesture(o + const Offset(200, 200));
+    expect(h.tools.allowPan, isTrue);
+    await a.up();
+    await b.up();
+    await tester.pump();
+    expect(h.tools.allowPan, isFalse);
+  });
+
+  testWidgets('with a pen drawing and finger drawing off, a finger scrolls',
+      (tester) async {
+    final h = _Harness(tester);
+    h.tools
+      ..setMode(ToolMode.pen)
+      ..setFingerDraws(false);
+    await h.pump();
+    final o = h.origin;
+
+    // The pen draws.
+    final pen = await tester.startGesture(o + const Offset(50, 50),
+        kind: PointerDeviceKind.stylus);
+    await pen.moveTo(o + const Offset(150, 50));
+    await pen.up();
+    await tester.pump();
+    expect(h.doc.strokeCount, 1);
+
+    // A finger does not draw; it is allowed to pan the page instead.
+    final finger = await tester.startGesture(o + const Offset(50, 200));
+    expect(h.tools.allowPan, isTrue);
+    await finger.moveTo(o + const Offset(150, 200));
+    await finger.up();
+    await tester.pump();
+    expect(h.doc.strokeCount, 1);
+    expect(h.tools.allowPan, isFalse);
   });
 
   testWidgets('tape: drag adds a strip, tap toggles it, eraser removes it',
