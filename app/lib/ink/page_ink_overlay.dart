@@ -131,6 +131,9 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
 
   // Ruler: one finger moves it, two rotate it, a stroke along its edge is
   // drawn straight.
+  /// A text box under the touch that started a pen, highlighter or shape
+  /// stroke: if the touch stays a tap, the box is opened for editing.
+  NoteItem? _textTap;
   int? _rulerPtr;
   int? _rulerPtrB;
   Offset _rulerFrom = Offset.zero;
@@ -421,7 +424,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
       if (side != null) {
         _rulerSide = side; // the stroke below follows this edge
         _rulerRef = ruler;
-      } else if (ruler.contains(p)) {
+      } else if (ruler.contains(p, slack: 10 * _unit)) {
         _rulerPtr = e.pointer;
         _rulerFrom = p;
         _rulerBase = ruler;
@@ -437,6 +440,12 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
         return;
       }
     }
+
+    _textTap = switch (tools.mode) {
+      ToolMode.pen || ToolMode.highlighter || ToolMode.shape =>
+        _penErases(e) ? null : _hitItem(p, {ItemKind.text}),
+      _ => null,
+    };
 
     switch (tools.mode) {
       case ToolMode.lasso:
@@ -671,12 +680,9 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
       final a1 = _ptrPos[_rulerPtr];
       final b1 = _ptrPos[_rulerPtrB];
       if (a1 != null && b1 != null) {
-        widget.tools.ruler.value = _rulerBase!.twoFingers(
-          _rulerA0,
-          _rulerB0,
-          a1,
-          b1,
-        );
+        widget.tools.ruler.value = _rulerBase!
+            .twoFingers(_rulerA0, _rulerB0, a1, b1)
+            .snappedAngle();
       }
       return;
     }
@@ -785,7 +791,11 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     final steps = ((p - from).distance / 3).ceil().clamp(1, 400);
     for (var i = 1; i <= steps; i++) {
       final q = Offset.lerp(from, p, i / steps)!;
-      widget.document.eraseAt(q.dx, q.dy, _eraserRadius);
+      if (widget.tools.eraserPartial) {
+        widget.document.erasePartAt(q.dx, q.dy, _eraserRadius);
+      } else {
+        widget.document.eraseAt(q.dx, q.dy, _eraserRadius);
+      }
       // Boxes and marks go only once the eraser has really been dragged.
       if (_eraseDist < 6 * _unit) continue;
       final hit = _hitItem(q, {ItemKind.tape, ItemKind.mark});
@@ -987,6 +997,11 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
           _tapeHit!.copyWith(revealed: !_tapeHit!.revealed),
         );
       }
+    } else if (_textTap != null &&
+        _current != null &&
+        _current!.bounds.longestSide < 3 + _current!.width) {
+      // A tap on a text box, whatever the tool: edit it.
+      unawaited(widget.onEditItem(page, _textTap!));
     } else if (_shapeStart != null &&
         _current!.bounds.longestSide < _current!.width + 3) {
       // A tap with the shape tool draws nothing.
@@ -1251,6 +1266,24 @@ class _RulerPainter extends CustomPainter {
         tp.dispose();
       }
     }
+    // The slope, in the middle of the ruler.
+    final label = TextPainter(
+      text: TextSpan(
+        text: '${r.degrees.round()}°',
+        style: TextStyle(
+          color: const Color(0xFF0D47A1),
+          fontSize: 14 * scale,
+          fontWeight: FontWeight.w600,
+          backgroundColor: Colors.white.withValues(alpha: 0.7),
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    // Keep the number upright when the ruler is turned over.
+    final flip = math.cos(r.angle) < 0;
+    if (flip) canvas.rotate(math.pi);
+    label.paint(canvas, Offset(-label.width / 2, -label.height / 2));
+    label.dispose();
     canvas.restore();
   }
 

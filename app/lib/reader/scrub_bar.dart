@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
 
@@ -31,6 +33,44 @@ class _ScrubBarState extends State<ScrubBar> {
   int _page = 1;
   int _lastJumpMs = 0;
   final _track = GlobalKey();
+
+  /// The handle shows while the pages move or a finger is on it, and slips
+  /// away a moment later.
+  bool _shown = false;
+  Timer? _hideTimer;
+  int _seenPage = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onPageMoved);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onPageMoved);
+    _hideTimer?.cancel();
+    super.dispose();
+  }
+
+  void _onPageMoved() {
+    final c = widget.controller;
+    if (!c.isReady) return;
+    final page = c.pageNumber ?? 1;
+    if (page != _seenPage) {
+      _seenPage = page;
+      _show();
+    }
+  }
+
+  void _show() {
+    _hideTimer?.cancel();
+    if (!_shown && mounted) setState(() => _shown = true);
+    if (_dragging) return;
+    _hideTimer = Timer(const Duration(milliseconds: 1600), () {
+      if (mounted && !_dragging) setState(() => _shown = false);
+    });
+  }
 
   double _trackY(PointerEvent e) {
     final box = _track.currentContext?.findRenderObject() as RenderBox?;
@@ -93,36 +133,51 @@ class _ScrubBarState extends State<ScrubBar> {
                 Positioned(
                   left: 0,
                   top: y,
-                  width: _width,
+                  // Hidden, only a thin strip at the edge is touchable.
+                  width: _shown || _dragging ? _width : 22,
                   height: _thumbH,
                   child: Listener(
                     behavior: HitTestBehavior.opaque,
                     onPointerDown: (e) {
-                      setState(() => _dragging = true);
+                      _hideTimer?.cancel();
+                      setState(() {
+                        _dragging = true;
+                        _shown = true;
+                      });
                       _update(e, height);
                     },
                     onPointerMove: (e) {
                       if (_dragging) _update(e, height);
                     },
-                    onPointerUp: (_) => setState(() => _dragging = false),
-                    onPointerCancel: (_) => setState(() => _dragging = false),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.primary,
-                        borderRadius: const BorderRadius.horizontal(
-                          right: Radius.circular(17),
+                    onPointerUp: (_) {
+                      setState(() => _dragging = false);
+                      _show();
+                    },
+                    onPointerCancel: (_) {
+                      setState(() => _dragging = false);
+                      _show();
+                    },
+                    child: AnimatedOpacity(
+                      opacity: _shown || _dragging ? 1 : 0,
+                      duration: const Duration(milliseconds: 200),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primary,
+                          borderRadius: const BorderRadius.horizontal(
+                            right: Radius.circular(17),
+                          ),
+                          boxShadow: const [
+                            BoxShadow(blurRadius: 3, color: Colors.black26),
+                          ],
                         ),
-                        boxShadow: const [
-                          BoxShadow(blurRadius: 3, color: Colors.black26),
-                        ],
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        '$current',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
+                        alignment: Alignment.center,
+                        child: Text(
+                          '$current',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ),

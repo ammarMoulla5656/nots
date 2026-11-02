@@ -180,7 +180,7 @@ class ItemsPainter extends CustomPainter {
       );
       final c = Offset(first.right + 3 * scale, first.top - 2 * scale);
       final rr = 4.5 * scale;
-      canvas.drawCircle(c, rr, Paint()..color = const Color(0xFFEF6C00));
+      canvas.drawCircle(c, rr, Paint()..color = Color(it.color));
       canvas.drawCircle(
         c,
         rr,

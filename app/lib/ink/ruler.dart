@@ -23,13 +23,32 @@ class Ruler {
   /// One centimetre in PDF points.
   static const cm = 72 / 2.54;
 
-  Ruler copyWith({int? page, Offset? center, double? angle}) => Ruler(
-    page: page ?? this.page,
-    center: center ?? this.center,
-    angle: angle ?? this.angle,
-    length: length,
-    thickness: thickness,
-  );
+  Ruler copyWith({int? page, Offset? center, double? angle, double? length}) =>
+      Ruler(
+        page: page ?? this.page,
+        center: center ?? this.center,
+        angle: angle ?? this.angle,
+        length: length ?? this.length,
+        thickness: thickness,
+      );
+
+  /// The ruler's slope in degrees, 0 to 180 (0 = flat, 90 = upright).
+  double get degrees {
+    var d = angle * 180 / math.pi % 180;
+    if (d < 0) d += 180;
+    return d;
+  }
+
+  /// The ruler turned to the nearest multiple of 15 degrees when it is
+  /// within [within] degrees of one, so flat, upright and 45 are easy to hit.
+  Ruler snappedAngle({double within = 2.5}) {
+    final deg = angle * 180 / math.pi;
+    final nearest = (deg / 15).round() * 15.0;
+    if ((deg - nearest).abs() <= within) {
+      return copyWith(angle: nearest * math.pi / 180);
+    }
+    return this;
+  }
 
   Offset get direction => Offset(math.cos(angle), math.sin(angle));
   Offset get normal => Offset(-math.sin(angle), math.cos(angle));
@@ -72,8 +91,12 @@ class Ruler {
     return fromLocal(Offset(x, side * thickness / 2));
   }
 
+  static const minLength = 120.0;
+  static const maxLength = 1400.0;
+
   /// New ruler after two fingers on it moved from [a0],[b0] to [a1],[b1]:
-  /// follows the midpoint and the direction between the fingers.
+  /// follows the midpoint and the direction between the fingers, and gets
+  /// longer or shorter as they move apart or together.
   Ruler twoFingers(Offset a0, Offset b0, Offset a1, Offset b1) {
     final mid0 = (a0 + b0) / 2, mid1 = (a1 + b1) / 2;
     final ang0 = math.atan2((b0 - a0).dy, (b0 - a0).dx);
@@ -85,6 +108,13 @@ class Ruler {
     while (d < -math.pi) {
       d += 2 * math.pi;
     }
-    return copyWith(center: center + (mid1 - mid0), angle: angle + d);
+    final spread0 = (b0 - a0).distance;
+    final spread1 = (b1 - a1).distance;
+    final f = spread0 < 1e-6 ? 1.0 : spread1 / spread0;
+    return copyWith(
+      center: center + (mid1 - mid0),
+      angle: angle + d,
+      length: (length * f).clamp(minLength, maxLength),
+    );
   }
 }

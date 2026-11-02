@@ -481,7 +481,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         // A text box is as wide as its text, so its frame fits the words.
         w: isText ? fitTextWidth(text, size) : 0,
         text: text,
-        color: isText ? _tools.color : 0xFFEF6C00,
+        color: isText ? _tools.color : 0xFF0D47A1,
         fontSize: size,
       ),
     );
@@ -680,13 +680,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final items = store.document.itemsOf(page.pageNumber);
     for (var i = items.length - 1; i >= 0; i--) {
       final it = items[i];
-      if (it.kind == ItemKind.mark && itemContains(it, pt) && it.text.isEmpty) {
-        // A second tap on a marked word takes the mark off.
-        store.document.removeItem(page.pageNumber, it.id);
-        return true;
-      }
-      if ((it.kind == ItemKind.pin || it.kind == ItemKind.mark) &&
-          itemContains(it, pt)) {
+      // Only a note shows something on tap; a plain mark is left alone.
+      final hasNote = it.kind == ItemKind.pin ||
+          (it.kind == ItemKind.mark &&
+              (it.text.isNotEmpty || it.style == MarkStyle.comment));
+      if (hasNote && itemContains(it, pt)) {
         _previewItem(page.pageNumber, it);
         return true;
       }
@@ -698,24 +696,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
         return true;
       }
     }
-    final words = _wordsReady[page.pageNumber];
-    if (words == null) {
-      _wordsOf(page); // load now; the next tap is instant
-      return false;
-    }
-    final i = wordAt(words, pt, tolerance: 2);
-    if (i == null) return false;
-    _wordMenu(page.pageNumber, words[i]);
-    return true;
+    return false;
   }
-
-  /// Default colour of each way of marking.
-  static int _defaultColor(MarkStyle s) => switch (s) {
-    MarkStyle.highlight => 0xFFFFEB3B,
-    MarkStyle.comment => 0xFFEF6C00,
-    MarkStyle.textColor => 0xFFD32F2F,
-    _ => 0xFFD32F2F,
-  };
 
   /// Puts [text] on the clipboard and says so.
   void _copy(String text) {
@@ -731,127 +713,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
         ),
       ),
     );
-  }
-
-  /// The paragraph of the book text holding the word [w] of PDF page
-  /// [pdfPage] (as far as the page goes), or null without a word map.
-  String? _paragraphOf(int pdfPage, WordBox w) {
-    final book = _book;
-    if (book == null || w.id < 0) return null;
-    final t = book.pages[book.bookPageOf(pdfPage) - 1];
-    final a = t.lastIndexOf('\n', w.start) + 1;
-    var b = t.indexOf('\n', w.end);
-    if (b < 0) b = t.length;
-    return t.substring(a, b).trim();
-  }
-
-  /// Highlight, underline, strike, recolour or comment the tapped word.
-  Future<void> _wordMenu(int page, WordBox word) async {
-    final paragraph = _paragraphOf(page, word);
-    int?
-    chosen; // colour picked with the wheel; null = the default of the action
-    final picked = await showModalBottomSheet<MarkStyle>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Wrap(
-                    alignment: WrapAlignment.center,
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final (style, icon, label) in [
-                        (MarkStyle.highlight, Icons.border_color, 'تظليل'),
-                        (MarkStyle.underline, Icons.format_underline, 'تسطير'),
-                        (MarkStyle.strike, Icons.format_strikethrough, 'شطب'),
-                        (
-                          MarkStyle.textColor,
-                          Icons.format_color_text,
-                          'لون الخط',
-                        ),
-                        (MarkStyle.comment, Icons.comment_outlined, 'تعليق'),
-                      ])
-                        FilledButton.tonalIcon(
-                          onPressed: () => Navigator.pop(context, style),
-                          icon: Icon(icon),
-                          label: Text(label),
-                        ),
-                      OutlinedButton.icon(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          _copy(word.text);
-                        },
-                        icon: const Icon(Icons.copy),
-                        label: const Text('نسخ'),
-                      ),
-                      if (paragraph != null)
-                        OutlinedButton.icon(
-                          onPressed: () {
-                            Navigator.pop(context);
-                            _copy(paragraph);
-                          },
-                          icon: const Icon(Icons.notes),
-                          label: const Text('نسخ الفقرة'),
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                // One colour circle: tap to choose another colour.
-                GestureDetector(
-                  onTap: () async {
-                    final c = await showColorWheelDialog(
-                      context,
-                      Color(chosen ?? 0xFFFFEB3B),
-                    );
-                    if (c != null) setState(() => chosen = c.toARGB32());
-                  },
-                  child: Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: chosen == null ? null : Color(chosen!),
-                      gradient: chosen == null
-                          ? const SweepGradient(
-                              colors: [
-                                Colors.red,
-                                Colors.yellow,
-                                Colors.green,
-                                Colors.cyan,
-                                Colors.blue,
-                                Colors.purple,
-                                Colors.red,
-                              ],
-                            )
-                          : null,
-                      border: Border.all(color: Colors.black38, width: 2),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-    if (picked == null || !mounted) return;
-    final doc = _store!.document;
-    final draft = NoteItem.mark(
-      id: doc.takeStrokeId(),
-      lineRects: [word.rect],
-      style: picked,
-      color: picked == MarkStyle.comment
-          ? 0xFFEF6C00
-          : (chosen ?? _defaultColor(picked)),
-      quote: word.text,
-    );
-    await _createMark(page, draft);
   }
 
   // ---- export ----
@@ -1110,46 +971,92 @@ class _ReaderScreenState extends State<ReaderScreen> {
       final ranges = await delegate.getSelectedTextRanges();
       final doc = _store?.document;
       if (doc == null || !_viewer.isReady) return;
+      final drafts = <(int, NoteItem)>[];
       for (final r in ranges) {
-        final page = _viewer.document.pages[r.pageNumber - 1];
-        final h = page.height;
-        final chars = <WordBox>[];
-        for (
-          var i = r.start;
-          i < r.end && i < r.pageText.charRects.length;
-          i++
-        ) {
-          final c = r.pageText.charRects[i];
-          if (c.isEmpty) continue;
-          chars.add(
-            WordBox(
-              i,
-              i + 1,
-              '',
-              Rect.fromLTRB(c.left, h - c.top, c.right, h - c.bottom),
-            ),
-          );
-        }
+        final chars = _charBoxes(r);
         if (chars.isEmpty) continue;
-        final draft = NoteItem.mark(
-          id: doc.takeStrokeId(),
-          lineRects: lineRects(chars),
-          style: style,
-          color: color,
-          quote: r.text.replaceAll(RegExp(r'\s+'), ' ').trim(),
-        );
-        await _createMark(r.pageNumber, draft);
+        drafts.add((
+          r.pageNumber,
+          _withBookWords(
+            r.pageNumber,
+            NoteItem.mark(
+              id: doc.takeStrokeId(),
+              lineRects: lineRects(chars),
+              style: style,
+              color: color,
+              quote: r.text.replaceAll(RegExp(r'\s+'), ' ').trim(),
+            ),
+          ),
+        ));
       }
       await delegate.clearTextSelection();
       params.dismissContextMenu();
+      if (drafts.isEmpty) return;
+      if (style == MarkStyle.comment) {
+        // One question for the whole selection, not one per page or range.
+        final result = await _textDialog(title: 'تعليق');
+        final text = result?.text.trim() ?? '';
+        if (result == null || result.delete || text.isEmpty) return;
+        for (final (page, d) in drafts) {
+          doc.addItem(page, d.copyWith(text: text));
+        }
+        return;
+      }
+      for (final (page, d) in drafts) {
+        // Applying the same mark to words that already have it takes it off.
+        final same = [
+          for (final it in doc.itemsOf(page))
+            if (it.kind == ItemKind.mark &&
+                it.style == style &&
+                _coverage(d.rects, it.rects) > 0)
+              it,
+        ];
+        final covered = same.isEmpty ? 0.0 : _coverage(d.rects, [
+          for (final it in same) ...it.rects,
+        ]);
+        if (covered > 0.5) {
+          for (final it in same) {
+            doc.removeItem(page, it.id);
+          }
+        } else {
+          doc.addItem(page, d);
+        }
+      }
+    }
+
+    // Copies the whole paragraph around the selection.
+    Future<void> copyParagraph() async {
+      final ranges = await delegate.getSelectedTextRanges();
+      await delegate.clearTextSelection();
+      params.dismissContextMenu();
+      if (ranges.isEmpty) return;
+      final r = ranges.first;
+      final book = _book;
+      String? text;
+      final l = book?.layoutOf(book.bookPageOf(r.pageNumber));
+      if (book != null && l != null) {
+        final ids = l.wordsInRects(lineRects(_charBoxes(r)));
+        if (ids.isNotEmpty) {
+          final t = book.pages[book.bookPageOf(r.pageNumber) - 1];
+          final at = l.starts[ids.first];
+          final a = t.lastIndexOf('\n', at > 0 ? at - 1 : 0) + 1;
+          var e = t.indexOf('\n', at);
+          if (e < 0) e = t.length;
+          text = t.substring(a, e).trim();
+        }
+      }
+      if (text == null) {
+        final full = r.pageText.fullText;
+        final at = r.start.clamp(0, full.length);
+        final a = full.lastIndexOf('\n', at > 0 ? at - 1 : 0) + 1;
+        var e = full.indexOf('\n', at);
+        if (e < 0) e = full.length;
+        text = full.substring(a, e).trim();
+      }
+      if (text.isNotEmpty) _copy(text);
     }
 
     items.insertAll(0, [
-      ContextMenuButtonItem(
-        type: ContextMenuButtonType.custom,
-        label: 'تظليل',
-        onPressed: () => mark(MarkStyle.highlight, 0xFFFFEB3B),
-      ),
       ContextMenuButtonItem(
         type: ContextMenuButtonType.custom,
         label: 'تسطير',
@@ -1168,9 +1075,46 @@ class _ReaderScreenState extends State<ReaderScreen> {
       ContextMenuButtonItem(
         type: ContextMenuButtonType.custom,
         label: 'تعليق',
-        onPressed: () => mark(MarkStyle.comment, 0xFFEF6C00),
+        onPressed: () => mark(MarkStyle.comment, 0xFF0D47A1),
+      ),
+      ContextMenuButtonItem(
+        type: ContextMenuButtonType.custom,
+        label: 'نسخ الفقرة',
+        onPressed: copyParagraph,
       ),
     ]);
+  }
+
+  /// One box per letter of a selected text range, in page points (y down).
+  List<WordBox> _charBoxes(PdfPageTextRange r) {
+    final h = _viewer.document.pages[r.pageNumber - 1].height;
+    final chars = <WordBox>[];
+    for (var i = r.start; i < r.end && i < r.pageText.charRects.length; i++) {
+      final c = r.pageText.charRects[i];
+      if (c.isEmpty) continue;
+      chars.add(
+        WordBox(i, i + 1, '',
+            Rect.fromLTRB(c.left, h - c.top, c.right, h - c.bottom)),
+      );
+    }
+    return chars;
+  }
+
+  /// The share (0..1) of the area of [rects] that [others] cover.
+  static double _coverage(List<Rect> rects, List<Rect> others) {
+    var total = 0.0, covered = 0.0;
+    for (final r in rects) {
+      total += r.width * r.height;
+      var best = 0.0;
+      for (final o in others) {
+        final i = r.intersect(o);
+        if (i.width > 0 && i.height > 0) {
+          best = math.max(best, i.width * i.height);
+        }
+      }
+      covered += best;
+    }
+    return total <= 0 ? 0 : covered / total;
   }
 
   /// The book text of the words a PDF text selection covers, or null when
@@ -1479,10 +1423,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
     for (final r in rects.skip(1)) {
       box = box.expandToInclude(r);
     }
-    final h = _viewer.document.pages[pdfPage - 1].height;
+    final pg = _viewer.document.pages[pdfPage - 1];
+    // Aim at a wide area around the hit, not at the hit itself, so the page
+    // only zooms a little and the surrounding lines stay in view.
+    final w = math.max(box.width, pg.width * 0.8);
+    final hh = math.max(box.height, pg.height * 0.14);
+    final left = (box.center.dx - w / 2).clamp(0.0, math.max(0.0, pg.width - w)).toDouble();
+    final top = (box.center.dy - hh / 2).clamp(0.0, math.max(0.0, pg.height - hh)).toDouble();
     _viewer.goToRectInsidePage(
       pageNumber: pdfPage,
-      rect: PdfRect(box.left, h - box.top, box.right, h - box.bottom),
+      rect: PdfRect(left, pg.height - top, left + w, pg.height - top - hh),
       anchor: PdfPageAnchor.center,
     );
   }
@@ -1613,35 +1563,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   @override
   Widget build(BuildContext context) {
     final store = _store;
-    return Scaffold(
-      key: _scaffoldKey,
-      endDrawer: ListenableBuilder(
-        listenable: _viewer,
-        builder: (context, _) => TocPanel(
-          title: widget.book.title,
-          entries: _tocEntries,
-          linkedSource: _book?.source,
-          currentPdfPage: _viewer.isReady ? (_viewer.pageNumber ?? 1) : 1,
-          onOpen: (page) {
-            Navigator.of(context).pop();
-            _viewer.goToPage(pageNumber: page);
-          },
-          onLink: () {
-            Navigator.of(context).pop();
-            _linkDocx();
-          },
-          embedded: _book?.embedded ?? false,
-          onUnlink: (_book?.embedded ?? false)
-              ? null
-              : () {
-                  Navigator.of(context).pop();
-                  _unlinkDocx();
-                },
-        ),
-      ),
-      appBar: _clean
-          ? null
-          : AppBar(
+    final appBar = AppBar(
               toolbarHeight: 50,
               titleSpacing: 0,
               title: _title(context),
@@ -1747,7 +1669,33 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   ),
                 ),
               ],
-            ),
+            );
+    return Scaffold(
+      key: _scaffoldKey,
+      endDrawer: ListenableBuilder(
+        listenable: _viewer,
+        builder: (context, _) => TocPanel(
+          title: widget.book.title,
+          entries: _tocEntries,
+          linkedSource: _book?.source,
+          currentPdfPage: _viewer.isReady ? (_viewer.pageNumber ?? 1) : 1,
+          onOpen: (page) {
+            Navigator.of(context).pop();
+            _viewer.goToPage(pageNumber: page);
+          },
+          onLink: () {
+            Navigator.of(context).pop();
+            _linkDocx();
+          },
+          embedded: _book?.embedded ?? false,
+          onUnlink: (_book?.embedded ?? false)
+              ? null
+              : () {
+                  Navigator.of(context).pop();
+                  _unlinkDocx();
+                },
+        ),
+      ),
       body: _error != null
           ? Center(child: Text('تعذّر فتح ملف الكتابة: $_error'))
           : store == null || _selection == null
@@ -1757,7 +1705,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 Positioned.fill(child: _viewerArea()),
                 if (_search != null && _book != null)
                   Positioned(
-                    top: 0,
+                    top: _clean ? 0 : 50,
                     left: 0,
                     right: 0,
                     child: _searchBanner(context),
@@ -1787,6 +1735,32 @@ class _ReaderScreenState extends State<ReaderScreen> {
                       ),
                     ),
                   ),
+                // The title bar goes away with the tools, so the page gets
+                // the whole screen; a tap on the top edge brings both back.
+                if (!_clean)
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: IgnorePointer(
+                      ignoring: !_toolsShown,
+                      child: AnimatedOpacity(
+                        opacity: _toolsShown ? 1 : 0,
+                        duration: const Duration(milliseconds: 180),
+                        child: Listener(
+                          onPointerDown: (_) => _showTools(),
+                          child: SizedBox(
+                            height: 50,
+                            child: Material(
+                              elevation: 2,
+                              color: Theme.of(context).colorScheme.surface,
+                              child: appBar,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 // A tap on the top edge brings the tools.
                 Positioned(
                   top: 0,
@@ -1799,7 +1773,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   ),
                 ),
                 Positioned(
-                  top: _search != null ? 62 : 4,
+                  top: (_clean ? 0 : 50) + (_search != null ? 58 : 4),
                   left: 8,
                   right: 8,
                   child: IgnorePointer(
@@ -1846,10 +1820,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
             // fingers anywhere, or one finger when finger drawing is off).
             panEnabled: !_tools.drawing,
             scaleEnabled: !_tools.drawing,
-            // Zoom out only a little below "fit width" (to 40%) and in to
+            // Zoom out no further than "fit width" and in to
             // 1600%; vector ink stays sharp at any level.
             sizeDelegateProvider: const PdfViewerSizeDelegateProviderLegacy(
-              minScale: 0.4,
+              minScale: 1.0,
               maxScale: 16,
               useAlternativeFitScaleAsMinScale: false,
             ),
@@ -2052,6 +2026,14 @@ class _Toolbar extends StatelessWidget {
         ),
       ];
     }
+    if (mode == ToolMode.eraser) {
+      return [
+        _chip('خط كامل', !tools.eraserPartial,
+            () => tools.setEraserPartial(false)),
+        _chip('ممحاة عادية', tools.eraserPartial,
+            () => tools.setEraserPartial(true)),
+      ];
+    }
     if (!tools.hasStyle) return null;
 
     return [
@@ -2083,9 +2065,7 @@ class _Toolbar extends StatelessWidget {
         for (final (kind, icon, label) in [
           (ShapeKind.line, Icons.horizontal_rule, 'خط'),
           (ShapeKind.arrow, Icons.arrow_right_alt, 'سهم'),
-          (ShapeKind.rectangle, Icons.crop_square, 'مستطيل'),
           (ShapeKind.ellipse, Icons.circle_outlined, 'دائرة / قطع ناقص'),
-          (ShapeKind.triangle, Icons.change_history, 'مثلث'),
         ])
           _icon(
             context,
@@ -2129,8 +2109,8 @@ class _Toolbar extends StatelessWidget {
         },
         child: Container(
           margin: const EdgeInsets.symmetric(horizontal: 6),
-          width: 30,
-          height: 30,
+          width: 22,
+          height: 22,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: Color(color),

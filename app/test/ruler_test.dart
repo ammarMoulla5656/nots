@@ -46,6 +46,29 @@ void main() {
     expect(moved.center.dy, closeTo(300 + (170 - 100), 1e-9));
   });
 
+  test('spreading two fingers makes the ruler longer, within limits', () {
+    final longer = r.twoFingers(const Offset(100, 100), const Offset(200, 100),
+        const Offset(50, 100), const Offset(250, 100));
+    expect(longer.length, closeTo(800, 1e-9));
+    expect(longer.angle, closeTo(0, 1e-9));
+    final huge = r.twoFingers(const Offset(100, 100), const Offset(110, 100),
+        const Offset(0, 100), const Offset(900, 100));
+    expect(huge.length, Ruler.maxLength);
+    final tiny = r.twoFingers(const Offset(0, 0), const Offset(400, 0),
+        const Offset(0, 0), const Offset(5, 0));
+    expect(tiny.length, Ruler.minLength);
+  });
+
+  test('degrees and snapping to multiples of 15', () {
+    expect(r.degrees, 0);
+    expect(r.copyWith(angle: math.pi / 2).degrees, closeTo(90, 1e-9));
+    expect(r.copyWith(angle: -math.pi / 4).degrees, closeTo(135, 1e-9));
+    final near = r.copyWith(angle: 44 * math.pi / 180).snappedAngle();
+    expect(near.degrees, closeTo(45, 1e-9));
+    final far = r.copyWith(angle: 38 * math.pi / 180).snappedAngle();
+    expect(far.degrees, closeTo(38, 1e-9));
+  });
+
   group('wordsAlongPath', () {
     final words = [
       WordBox(0, 3, 'a', const Rect.fromLTWH(10, 10, 40, 12)),

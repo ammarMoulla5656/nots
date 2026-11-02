@@ -41,6 +41,17 @@ class ToolController extends ChangeNotifier {
   /// only the ruler, not the whole toolbar and viewer.
   final ruler = ValueNotifier<Ruler?>(null);
 
+  bool _eraserPartial = false;
+
+  /// The normal eraser cuts parts out of strokes; the other one removes
+  /// the whole stroke it touches.
+  bool get eraserPartial => _eraserPartial;
+
+  void setEraserPartial(bool v) {
+    _eraserPartial = v;
+    notifyListeners();
+  }
+
   bool _selectionPinch = false;
 
   /// A page overlay is using two fingers itself (scaling the selection or
@@ -200,7 +211,7 @@ class ToolController extends ChangeNotifier {
     _markStyle = s;
     _highlighterColor = switch (s) {
       MarkStyle.highlight => 0xFFFFEB3B,
-      MarkStyle.comment => 0xFFEF6C00,
+      MarkStyle.comment => 0xFF0D47A1,
       _ => 0xFFD32F2F,
     };
     notifyListeners();

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 
 import 'note_items.dart';
@@ -113,6 +115,7 @@ class InkDocument extends ChangeNotifier {
   // Erase gesture in progress: collected so one drag is one undo step.
   int? _erasePage;
   final List<({int index, Stroke stroke})> _eraseRemoved = [];
+  final List<Stroke> _eraseAdded = [];
 
   /// Shared id counter for strokes and items.
   int get nextStrokeId => _nextId;
@@ -219,6 +222,20 @@ class InkDocument extends ChangeNotifier {
   void beginErase(int page) {
     _erasePage = page;
     _eraseRemoved.clear();
+    _eraseAdded.clear();
+  }
+
+  /// Takes [list][[i]] out as part of the erase gesture. A stroke that the
+  /// same gesture created (a piece left by the partial eraser) simply
+  /// disappears; any other is recorded so undo can bring it back.
+  void _eraseTake(List<Stroke> list, int i) {
+    final stroke = list.removeAt(i);
+    final k = _eraseAdded.indexWhere((e) => e.id == stroke.id);
+    if (k >= 0) {
+      _eraseAdded.removeAt(k);
+    } else {
+      _eraseRemoved.add((index: i, stroke: stroke));
+    }
   }
 
   /// Removes every stroke on the erase page that touches the circle at
@@ -231,7 +248,7 @@ class InkDocument extends ChangeNotifier {
     var removedAny = false;
     for (var i = list.length - 1; i >= 0; i--) {
       if (list[i].distanceTo(x, y) <= radius) {
-        _eraseRemoved.add((index: i, stroke: list.removeAt(i)));
+        _eraseTake(list, i);
         removedAny = true;
       }
     }
@@ -239,19 +256,83 @@ class InkDocument extends ChangeNotifier {
     return removedAny;
   }
 
+  /// The normal eraser: cuts out only the part of each stroke inside the
+  /// circle at ([x], [y]) with [radius]; what is left of a stroke on either
+  /// side stays as separate strokes. Returns true if anything was cut.
+  bool erasePartAt(double x, double y, double radius) {
+    final page = _erasePage;
+    if (page == null) return false;
+    final list = _pages[page];
+    if (list == null || list.isEmpty) return false;
+    var cutAny = false;
+    for (var i = list.length - 1; i >= 0; i--) {
+      final s = list[i];
+      if (s.distanceTo(x, y) > radius) continue;
+      final reach = radius + s.width / 2;
+      final dense = _densify(s.points, math.max(radius / 2, 0.4));
+      final pieces = <Stroke>[];
+      var run = <StrokePoint>[];
+      void close() {
+        if (run.length >= 2) {
+          pieces.add(s.copyWith(id: takeStrokeId(), points: run));
+        }
+        run = <StrokePoint>[];
+      }
+
+      for (final p in dense) {
+        final dx = p.x - x, dy = p.y - y;
+        if (dx * dx + dy * dy <= reach * reach) {
+          close();
+        } else {
+          run.add(p);
+        }
+      }
+      close();
+      _eraseTake(list, i);
+      list.insertAll(i, pieces);
+      _eraseAdded.addAll(pieces);
+      cutAny = true;
+    }
+    if (cutAny) _touch(page);
+    return cutAny;
+  }
+
+  /// [pts] with extra points so that none are more than [step] apart.
+  static List<StrokePoint> _densify(List<StrokePoint> pts, double step) {
+    if (pts.length < 2) return pts;
+    final out = <StrokePoint>[pts.first];
+    for (var i = 1; i < pts.length; i++) {
+      final a = pts[i - 1], b = pts[i];
+      final d = math.sqrt(math.pow(b.x - a.x, 2) + math.pow(b.y - a.y, 2));
+      final n = (d / step).ceil();
+      for (var k = 1; k < n; k++) {
+        final t = k / n;
+        out.add(StrokePoint(
+          a.x + (b.x - a.x) * t,
+          a.y + (b.y - a.y) * t,
+          a.pressure + (b.pressure - a.pressure) * t,
+          (a.t + (b.t - a.t) * t).round(),
+        ));
+      }
+      out.add(b);
+    }
+    return out;
+  }
+
   void endErase() {
     final page = _erasePage;
-    if (page != null && _eraseRemoved.isNotEmpty) {
+    if (page != null && (_eraseRemoved.isNotEmpty || _eraseAdded.isNotEmpty)) {
       // Indices were recorded while removing back-to-front; re-insertion
       // needs them front-to-back.
       final sorted = List.of(_eraseRemoved)
         ..sort((a, b) => a.index.compareTo(b.index));
-      _undo.add(_StrokeAction(page, removed: sorted));
+      _undo.add(_StrokeAction(page, removed: sorted, added: List.of(_eraseAdded)));
       _redo.clear();
       notifyListeners();
     }
     _erasePage = null;
     _eraseRemoved.clear();
+    _eraseAdded.clear();
   }
 
   // ---- history ----

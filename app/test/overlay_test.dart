@@ -161,6 +161,38 @@ void main() {
     expect(h.doc.strokeCount, 1);
   });
 
+  testWidgets('normal eraser cuts a stroke in two and undo restores it',
+      (tester) async {
+    final h = _Harness(tester);
+    h.tools.setMode(ToolMode.pen);
+    await h.pump();
+    await h.drag(const [Offset(50, 100), Offset(150, 100), Offset(250, 100)]);
+    expect(h.doc.strokeCount, 1);
+
+    h.tools.setMode(ToolMode.eraser);
+    h.tools.setEraserPartial(true);
+    await tester.pump();
+    await h.drag(const [Offset(150, 80), Offset(150, 120)]);
+    expect(h.doc.strokeCount, 2);
+    h.doc.undo();
+    expect(h.doc.strokeCount, 1);
+    expect(h.doc.strokesOf(1).single.points.last.x, closeTo(250, 0.5));
+  });
+
+  testWidgets('a tap on a text box with the pen edits it', (tester) async {
+    final h = _Harness(tester);
+    h.doc.addItem(
+      1,
+      const NoteItem(
+          id: 1, kind: ItemKind.text, x: 100, y: 100, w: 80, text: 'hello'),
+    );
+    h.tools.setMode(ToolMode.pen);
+    await h.pump();
+    await h.drag(const [Offset(110, 108)]);
+    expect(h.edited.single.id, 1);
+    expect(h.doc.strokeCount, 0);
+  });
+
   testWidgets('text and pin tools ask to create an item on a tap',
       (tester) async {
     final h = _Harness(tester);
@@ -762,7 +794,7 @@ void main() {
       h.tools
         ..setMode(ToolMode.highlighter)
         ..setMarkStyle(MarkStyle.comment);
-      expect(h.tools.color, 0xFFEF6C00);
+      expect(h.tools.color, 0xFF0D47A1);
       await h.pump();
       await tester.pump();
       await h.drag(const [Offset(230, 107)]);
