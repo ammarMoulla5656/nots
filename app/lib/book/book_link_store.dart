@@ -24,9 +24,8 @@ BookText _parseJson(String json) => BookText.fromJson(json);
 /// file linked by hand. Reading and parsing happen in a background isolate.
 class BookLinkStore {
   /// Folder of the links; tests may point it elsewhere.
-  static Future<Directory> Function() dirProvider = () async => Directory(
-    p.join((await getApplicationSupportDirectory()).path, 'links'),
-  );
+  static Future<Directory> Function() dirProvider = () async =>
+      Directory(p.join((await getApplicationSupportDirectory()).path, 'links'));
 
   static Future<File> _fileFor(String bookId) async {
     final dir = await dirProvider();

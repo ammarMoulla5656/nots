@@ -28,6 +28,7 @@ class TocPanel extends StatefulWidget {
   final int currentPdfPage;
   final ValueChanged<int> onOpen;
   final VoidCallback onLink;
+
   /// Null when the text cannot be unlinked (it is part of the PDF).
   final VoidCallback? onUnlink;
 

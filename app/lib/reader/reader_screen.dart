@@ -30,6 +30,7 @@ import 'pages_sheet.dart';
 import 'reader_prefs.dart';
 import 'scrub_bar.dart';
 import 'search_highlight.dart';
+import 'reader_zoom.dart';
 import 'search_page.dart';
 import 'toc_panel.dart';
 import 'touch_navigator.dart';
@@ -77,11 +78,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
   ReaderPrefs? _prefs;
   bool _restored = false;
 
-  /// Clean page: no app bar, no tools, no system bars.
-  bool _clean = false;
+  /// Full screen: the phone's own status and navigation bars hidden too.
+  bool _fullScreen = false;
 
-  void _setClean(bool v) {
-    setState(() => _clean = v);
+  void _setFullScreen(bool v) {
+    setState(() => _fullScreen = v);
     SystemChrome.setEnabledSystemUIMode(
       v ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
     );
@@ -95,29 +96,38 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (!_viewer.isReady) return;
     final n = _viewer.pageNumber ?? 1;
     final page = _viewer.document.pages[n - 1];
+    // About 1.5 cm wide on the screen at the current zoom, so a finger can
+    // hold it in the middle and still write along either edge.
+    final zoom = _viewer.currentZoom;
     _tools.ruler.value = Ruler(
       page: n,
       center: Offset(page.width / 2, page.height / 2),
       length: math.min(page.width * 0.85, 480),
+      thickness: zoom > 0 ? (90 / zoom).clamp(40.0, 140.0) : 54,
     );
     // The ruler works with the writing tools.
     if (!_tools.drawing) _tools.setMode(ToolMode.pen);
   }
 
-  /// Toolbar at the top of the page (default, like Notability) or bottom.
-
-  /// The tools appear when the top edge of the page is tapped and go away by
-  /// themselves a few seconds after the last use.
+  /// The title bar and the tools (together, "the bars") come with a tap in
+  /// the page (or on the small tab at the top) and go away by themselves a
+  /// few seconds after the last use, leaving the whole screen to the page.
   bool _toolsShown = true;
   Timer? _hideTimer;
+  static const _barsLinger = Duration(seconds: 5);
 
   void _showTools() {
     _hideTimer?.cancel();
     if (!_toolsShown) setState(() => _toolsShown = true);
-    _hideTimer = Timer(const Duration(seconds: 5), () {
-      if (mounted) setState(() => _toolsShown = false);
-    });
+    _hideTimer = Timer(_barsLinger, _hideTools);
   }
+
+  void _hideTools() {
+    _hideTimer?.cancel();
+    if (mounted && _toolsShown) setState(() => _toolsShown = false);
+  }
+
+  void _toggleTools() => _toolsShown ? _hideTools() : _showTools();
 
   /// Word boxes already loaded, per page, for instant taps.
   final _wordsReady = <int, List<WordBox>>{};
@@ -135,12 +145,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _prefs = pr;
       _restorePage();
     });
-    BookLinkStore.open(
-      widget.book.id,
-      widget.library.pathOf(widget.book),
-    ).then((b) {
-      if (mounted && b != null) _bookArrived(b);
-    });
+    BookLinkStore.open(widget.book.id, widget.library.pathOf(widget.book)).then(
+      (b) {
+        if (mounted && b != null) _bookArrived(b);
+      },
+    );
     _openInk();
   }
 
@@ -156,11 +165,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
       }
     });
     final entry = widget.book;
-    final fileTitle = entry.fileName.replaceAll(RegExp(r'\.pdf$', caseSensitive: false), '');
+    final fileTitle = entry.fileName.replaceAll(
+      RegExp(r'\.pdf$', caseSensitive: false),
+      '',
+    );
     if (b.title.isNotEmpty && entry.title == fileTitle) {
       unawaited(widget.library.rename(entry, b.title));
     }
-    if (b.embedded && b.sourceId.isNotEmpty) unawaited(_offerOriginalWriting(b));
+    if (b.embedded && b.sourceId.isNotEmpty) {
+      unawaited(_offerOriginalWriting(b));
+    }
   }
 
   /// This PDF is the linked edition of another PDF: the same pages in the
@@ -215,7 +229,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(copied ? 'نُقلت كتابتك إلى هذه النسخة.' : 'تعذّر نقل الكتابة.'),
+          content: Text(
+            copied ? 'نُقلت كتابتك إلى هذه النسخة.' : 'تعذّر نقل الكتابة.',
+          ),
         ),
       );
     }
@@ -333,7 +349,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   @override
   void dispose() {
-    if (_clean) SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    if (_fullScreen) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
     _tools.removeListener(_onToolChanged);
     _store?.dispose();
     _selection?.dispose();
@@ -422,8 +440,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
     return [
       for (var i = 0; i < l.length; i++)
         if (l.rectOf(i) case final r?)
-          WordBox(l.starts[i], l.ends[i],
-              text.substring(l.starts[i], l.ends[i]), r, l.firstWord + i),
+          WordBox(
+            l.starts[i],
+            l.ends[i],
+            text.substring(l.starts[i], l.ends[i]),
+            r,
+            l.firstWord + i,
+          ),
     ];
   }
 
@@ -569,119 +592,104 @@ class _ReaderScreenState extends State<ReaderScreen> {
     doc.replaceItem(page, next);
   }
 
-  /// A note shown for reading, with edit and delete buttons; the keyboard
-  /// opens only when the user chooses to edit.
+  /// A note or a word comment shown for reading, with small edit and
+  /// delete buttons; the keyboard opens only when the user chooses to edit.
   Future<void> _previewItem(int page, NoteItem item) async {
     final isMark = item.kind == ItemKind.mark;
-    final theme = Theme.of(context);
-    final action = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                isMark ? 'تعليق' : 'ملاحظة',
-                style: theme.textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 280),
-                child: SingleChildScrollView(
-                  child: SelectableText(
-                    item.text.isEmpty ? 'لا يوجد تعليق بعد.' : item.text,
-                    style: theme.textTheme.bodyLarge?.copyWith(height: 1.6),
-                  ),
-                ),
-              ),
-              if (isMark) ...[
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
+    final quote = isMark ? item.quote.trim() : '';
+    final action = await _repaintAfter(
+      showDialog<String>(
+        context: context,
+        builder: (context) {
+          final theme = Theme.of(context);
+          return AlertDialog(
+            contentPadding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+            actionsPadding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420, maxHeight: 360),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    for (final (style, label) in [
-                      (MarkStyle.highlight, 'تظليل'),
-                      (MarkStyle.underline, 'تسطير'),
-                      (MarkStyle.strike, 'شطب'),
-                      (MarkStyle.textColor, 'لون الخط'),
-                      (MarkStyle.comment, 'تعليق فقط'),
-                    ])
-                      ChoiceChip(
-                        label: Text(label),
-                        selected: item.style == style,
-                        onSelected: (_) =>
-                            Navigator.pop(context, 'style:${style.index}'),
+                    if (quote.isNotEmpty) ...[
+                      Text(
+                        '«$quote»',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: Color(item.color),
+                        ),
                       ),
+                      const SizedBox(height: 10),
+                    ],
+                    SelectableText(
+                      item.text.isEmpty ? 'لا يوجد تعليق بعد.' : item.text,
+                      style: theme.textTheme.bodyLarge?.copyWith(height: 1.6),
+                    ),
                   ],
                 ),
-              ],
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  FilledButton.icon(
-                    onPressed: () => Navigator.pop(context, 'edit'),
-                    icon: const Icon(Icons.edit),
-                    label: Text(item.text.isEmpty ? 'إضافة تعليق' : 'تعديل'),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    onPressed: () => Navigator.pop(context, 'delete'),
-                    icon: const Icon(Icons.delete_outline),
-                    label: const Text('حذف'),
-                  ),
-                  const Spacer(),
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('إغلاق'),
-                  ),
-                ],
+              ),
+            ),
+            actions: [
+              IconButton(
+                tooltip: 'حذف',
+                icon: const Icon(Icons.delete_outline),
+                onPressed: () => Navigator.pop(context, 'delete'),
+              ),
+              IconButton(
+                tooltip: 'تعديل',
+                icon: const Icon(Icons.edit_outlined),
+                onPressed: () => Navigator.pop(context, 'edit'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('إغلاق'),
               ),
             ],
-          ),
-        ),
+          );
+        },
       ),
     );
     if (action == null || !mounted) return;
-    final doc = _store!.document;
     if (action == 'edit') {
       await _editText(page, item);
     } else if (action == 'delete') {
-      doc.removeItem(page, item.id);
-    } else if (action.startsWith('style:')) {
-      final style = MarkStyle.values[int.parse(action.substring(6))];
-      doc.replaceItem(page, item.copyWith(style: style));
+      _store!.document.removeItem(page, item.id);
     }
   }
 
   // ---- reading mode: tap a word or a note on the page ----
 
-  /// A tap in the hand tool: a note opens its preview, a word opens the
-  /// marking menu. Returns false to leave other taps to the viewer.
+  /// A tap in the hand tool: a note (or a commented word) shows its text, a
+  /// tape strip opens or closes, and any other tap brings or hides the bars.
+  /// Returns false to leave the tap to the viewer too.
   bool _onGeneralTap(
     BuildContext context,
     PdfViewerController c,
     PdfViewerGeneralTapHandlerDetails d,
   ) {
     if (_tools.drawing || d.type != PdfViewerGeneralTapType.tap) return false;
+    // A tap while text is selected only lets go of the selection.
+    if (c.textSelectionDelegate.hasSelectedText) return false;
     final store = _store;
     if (store == null) return false;
     final hit = c.getPdfPageHitTestResult(
       d.documentPosition,
       useDocumentLayoutCoordinates: true,
     );
-    if (hit == null) return false;
+    if (hit == null) {
+      _toggleTools(); // a tap beside the pages
+      return false;
+    }
     final page = hit.page;
     final pt = Offset(hit.offset.x, page.height - hit.offset.y);
     final items = store.document.itemsOf(page.pageNumber);
     for (var i = items.length - 1; i >= 0; i--) {
       final it = items[i];
       // Only a note shows something on tap; a plain mark is left alone.
-      final hasNote = it.kind == ItemKind.pin ||
+      final hasNote =
+          it.kind == ItemKind.pin ||
           (it.kind == ItemKind.mark &&
               (it.text.isNotEmpty || it.style == MarkStyle.comment));
       if (hasNote && itemContains(it, pt)) {
@@ -696,6 +704,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         return true;
       }
     }
+    _toggleTools();
     return false;
   }
 
@@ -1011,9 +1020,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 _coverage(d.rects, it.rects) > 0)
               it,
         ];
-        final covered = same.isEmpty ? 0.0 : _coverage(d.rects, [
-          for (final it in same) ...it.rects,
-        ]);
+        final covered = same.isEmpty
+            ? 0.0
+            : _coverage(d.rects, [for (final it in same) ...it.rects]);
         if (covered > 0.5) {
           for (final it in same) {
             doc.removeItem(page, it.id);
@@ -1022,6 +1031,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
           doc.addItem(page, d);
         }
       }
+      _repaintPages(); // the menu is gone: the page must come back sharp
     }
 
     // Copies the whole paragraph around the selection.
@@ -1093,8 +1103,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
       final c = r.pageText.charRects[i];
       if (c.isEmpty) continue;
       chars.add(
-        WordBox(i, i + 1, '',
-            Rect.fromLTRB(c.left, h - c.top, c.right, h - c.bottom)),
+        WordBox(
+          i,
+          i + 1,
+          '',
+          Rect.fromLTRB(c.left, h - c.top, c.right, h - c.bottom),
+        ),
       );
     }
     return chars;
@@ -1132,8 +1146,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
       for (var i = r.start; i < r.end && i < r.pageText.charRects.length; i++) {
         final c = r.pageText.charRects[i];
         if (c.isEmpty) continue;
-        chars.add(WordBox(i, i + 1, '',
-            Rect.fromLTRB(c.left, h - c.top, c.right, h - c.bottom)));
+        chars.add(
+          WordBox(
+            i,
+            i + 1,
+            '',
+            Rect.fromLTRB(c.left, h - c.top, c.right, h - c.bottom),
+          ),
+        );
       }
       final ids = l.wordsInRects(lineRects(chars));
       if (ids.isNotEmpty) parts.add(l.textOf(book.pages[bookPage - 1], ids));
@@ -1158,96 +1178,124 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final controller = TextEditingController(text: initial);
     var size = fontSize;
     final range = ToolController.textSizeRange;
-    return showDialog<TextDialogResult>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: Text(title, style: const TextStyle(fontSize: 18)),
-          content: SizedBox(
-            width: 380,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: controller,
-                  autofocus: true,
-                  minLines: 3,
-                  maxLines: 8,
-                  style: size == null
-                      ? null
-                      : TextStyle(
-                          fontSize: size!.clamp(12.0, 34.0),
-                          color: color == null ? null : Color(color),
-                        ),
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
+    return _repaintAfter(
+      showDialog<TextDialogResult>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+            title: Text(title, style: const TextStyle(fontSize: 18)),
+            content: SizedBox(
+              width: 380,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    minLines: 3,
+                    maxLines: 8,
+                    style: size == null
+                        ? null
+                        : TextStyle(
+                            fontSize: size!.clamp(12.0, 34.0),
+                            color: color == null ? null : Color(color),
+                          ),
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                    ),
                   ),
-                ),
-                if (size != null) ...[
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      IconButton(
-                        tooltip: 'أصغر',
-                        icon: const Icon(Icons.text_decrease),
-                        onPressed: () => setState(
-                          () => size = math.max(range.min, size! - 2),
+                  if (size != null) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        IconButton(
+                          tooltip: 'أصغر',
+                          icon: const Icon(Icons.text_decrease),
+                          onPressed: () => setState(
+                            () => size = math.max(range.min, size! - 2),
+                          ),
                         ),
-                      ),
-                      Expanded(
-                        child: Slider(
-                          min: range.min,
-                          max: range.max,
-                          value: size!.clamp(range.min, range.max),
-                          onChanged: (v) => setState(() => size = v),
+                        Expanded(
+                          child: Slider(
+                            min: range.min,
+                            max: range.max,
+                            value: size!.clamp(range.min, range.max),
+                            onChanged: (v) => setState(() => size = v),
+                          ),
                         ),
-                      ),
-                      IconButton(
-                        tooltip: 'أكبر',
-                        icon: const Icon(Icons.text_increase),
-                        onPressed: () => setState(
-                          () => size = math.min(range.max, size! + 2),
+                        IconButton(
+                          tooltip: 'أكبر',
+                          icon: const Icon(Icons.text_increase),
+                          onPressed: () => setState(
+                            () => size = math.min(range.max, size! + 2),
+                          ),
                         ),
-                      ),
-                      SizedBox(
-                        width: 36,
-                        child: Text(
-                          '${size!.round()}',
-                          textAlign: TextAlign.center,
+                        SizedBox(
+                          width: 36,
+                          child: Text(
+                            '${size!.round()}',
+                            textAlign: TextAlign.center,
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
+                      ],
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
-          actions: [
-            if (allowDelete)
+            actions: [
+              if (allowDelete)
+                TextButton(
+                  onPressed: () => Navigator.pop(context, (
+                    text: initial,
+                    delete: true,
+                    fontSize: size,
+                  )),
+                  child: const Text('حذف'),
+                ),
               TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
                 onPressed: () => Navigator.pop(context, (
-                  text: initial,
-                  delete: true,
+                  text: controller.text,
+                  delete: false,
                   fontSize: size,
                 )),
-                child: const Text('حذف'),
+                child: const Text('حفظ'),
               ),
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, (
-                text: controller.text,
-                delete: false,
-                fontSize: size,
-              )),
-              child: const Text('حفظ'),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     ).whenComplete(controller.dispose);
+  }
+
+  /// [dialog], then has the viewer draw the pages again.
+  ///
+  /// pdfrx shows a quick, coarse picture of each page and then a sharp one
+  /// of the part on screen. If the sharp one is dropped while a menu or a
+  /// dialog is open (writing a comment), nothing asks for it again and the
+  /// page stays blurry until it is moved. Redrawing asks for it; once more a
+  /// couple of times a moment later, in case a render still running then is
+  /// dropped too.
+  Future<T> _repaintAfter<T>(Future<T> dialog) async {
+    try {
+      return await dialog;
+    } finally {
+      _repaintPages();
+    }
+  }
+
+  void _repaintPages() {
+    if (!mounted || !_viewer.isReady) return;
+    _viewer.invalidate();
+    for (final ms in const [400, 1200]) {
+      Future.delayed(Duration(milliseconds: ms), () {
+        if (mounted && _viewer.isReady) _viewer.invalidate();
+      });
+    }
   }
 
   Future<void> _askPage() async {
@@ -1428,8 +1476,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
     // only zooms a little and the surrounding lines stay in view.
     final w = math.max(box.width, pg.width * 0.8);
     final hh = math.max(box.height, pg.height * 0.14);
-    final left = (box.center.dx - w / 2).clamp(0.0, math.max(0.0, pg.width - w)).toDouble();
-    final top = (box.center.dy - hh / 2).clamp(0.0, math.max(0.0, pg.height - hh)).toDouble();
+    final left = (box.center.dx - w / 2)
+        .clamp(0.0, math.max(0.0, pg.width - w))
+        .toDouble();
+    final top = (box.center.dy - hh / 2)
+        .clamp(0.0, math.max(0.0, pg.height - hh))
+        .toDouble();
     _viewer.goToRectInsidePage(
       pageNumber: pdfPage,
       rect: PdfRect(left, pg.height - top, left + w, pg.height - top - hh),
@@ -1564,114 +1616,120 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Widget build(BuildContext context) {
     final store = _store;
     final appBar = AppBar(
-              toolbarHeight: 50,
-              titleSpacing: 0,
-              title: _title(context),
-              actions: [
-                IconButton(
-                  tooltip: 'صفحة صافية (بلا أدوات)',
-                  icon: const Icon(Icons.fullscreen),
-                  onPressed: () => _setClean(true),
-                ),
-                IconButton(
-                  tooltip: 'الفهرس',
-                  icon: const Icon(Icons.toc),
-                  onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
-                ),
-                IconButton(
-                  tooltip: 'بحث في نص الكتاب',
-                  icon: const Icon(Icons.search),
-                  onPressed: _openSearch,
-                ),
-                ListenableBuilder(
-                  listenable: _viewer,
-                  builder: (context, _) {
-                    final marked =
-                        _viewer.isReady &&
-                        (_prefs?.isBookmarked(_viewer.pageNumber ?? 1) ??
-                            false);
-                    return IconButton(
-                      tooltip: marked
-                          ? 'إزالة علامة الصفحة'
-                          : 'وضع علامة على الصفحة',
-                      icon: Icon(
-                        marked ? Icons.bookmark : Icons.bookmark_border,
-                        color: marked ? Colors.red : null,
-                      ),
-                      onPressed: _toggleBookmark,
-                    );
-                  },
-                ),
-                ListenableBuilder(
-                  listenable: _viewer,
-                  builder: (context, _) {
-                    if (!_viewer.isReady) return const SizedBox.shrink();
-                    return TextButton(
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 4),
-                        minimumSize: const Size(40, 40),
-                      ),
-                      onPressed: _askPage,
-                      child: Text(
-                        '${_viewer.pageNumber ?? 1}/${_viewer.pageCount}',
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                    );
-                  },
-                ),
-                ListenableBuilder(
-                  listenable: _tools,
-                  builder: (context, _) => PopupMenuButton<String>(
-                    tooltip: 'المزيد',
-                    onSelected: (v) {
-                      switch (v) {
-                        case 'pages':
-                          _openPages();
-                        case 'export':
-                          _export();
-                        case 'finger':
-                          _tools.setFingerDraws(!_tools.fingerDraws);
-                        case 'link':
-                          _linkDocx();
-                        case 'unlink':
-                          _unlinkDocx();
-                      }
-                    },
-                    itemBuilder: (context) => [
-                      const PopupMenuItem(
-                        value: 'pages',
-                        child: Text('الصفحات والعلامات'),
-                      ),
-                      const PopupMenuItem(
-                        value: 'export',
-                        child: Text('تصدير ومشاركة'),
-                      ),
-                      const PopupMenuDivider(),
-                      CheckedPopupMenuItem(
-                        value: 'finger',
-                        checked: _tools.fingerDraws,
-                        child: const Text(
-                          'الإصبع يرسم (أطفئه ليكتب القلم وحده ويحرّك الإصبعُ الصفحة)',
-                        ),
-                      ),
-                      if (_book == null)
-                        const PopupMenuItem(
-                          value: 'link',
-                          child: Text('ربط ملف Word (docx)'),
-                        )
-                      else if (!_book!.embedded)
-                        // A word map is part of the PDF itself: nothing to unlink.
-                        const PopupMenuItem(
-                          value: 'unlink',
-                          child: Text('إلغاء ربط ملف Word'),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
+      primary: false,
+      toolbarHeight: 52,
+      titleSpacing: 0,
+      backgroundColor: Colors.transparent,
+      surfaceTintColor: Colors.transparent,
+      title: _title(context),
+      actions: [
+        IconButton(
+          tooltip: 'الفهرس',
+          icon: const Icon(Icons.toc),
+          onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
+        ),
+        IconButton(
+          tooltip: 'بحث في نص الكتاب',
+          icon: const Icon(Icons.search),
+          onPressed: _openSearch,
+        ),
+        ListenableBuilder(
+          listenable: _viewer,
+          builder: (context, _) {
+            final marked =
+                _viewer.isReady &&
+                (_prefs?.isBookmarked(_viewer.pageNumber ?? 1) ?? false);
+            return IconButton(
+              tooltip: marked ? 'إزالة علامة الصفحة' : 'وضع علامة على الصفحة',
+              icon: Icon(
+                marked ? Icons.bookmark : Icons.bookmark_border,
+                color: marked ? Colors.red : null,
+              ),
+              onPressed: _toggleBookmark,
             );
+          },
+        ),
+        ListenableBuilder(
+          listenable: _viewer,
+          builder: (context, _) {
+            if (!_viewer.isReady) return const SizedBox.shrink();
+            return TextButton(
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                minimumSize: const Size(40, 40),
+              ),
+              onPressed: _askPage,
+              child: Text(
+                '${_viewer.pageNumber ?? 1}/${_viewer.pageCount}',
+                style: const TextStyle(fontSize: 13),
+              ),
+            );
+          },
+        ),
+        ListenableBuilder(
+          listenable: _tools,
+          builder: (context, _) => PopupMenuButton<String>(
+            tooltip: 'المزيد',
+            onSelected: (v) {
+              switch (v) {
+                case 'pages':
+                  _openPages();
+                case 'export':
+                  _export();
+                case 'finger':
+                  _tools.setFingerDraws(!_tools.fingerDraws);
+                case 'full':
+                  _setFullScreen(!_fullScreen);
+                case 'link':
+                  _linkDocx();
+                case 'unlink':
+                  _unlinkDocx();
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'pages',
+                child: Text('الصفحات والعلامات'),
+              ),
+              const PopupMenuItem(
+                value: 'export',
+                child: Text('تصدير ومشاركة'),
+              ),
+              const PopupMenuDivider(),
+              CheckedPopupMenuItem(
+                value: 'full',
+                checked: _fullScreen,
+                child: const Text('ملء الشاشة (إخفاء شريط الهاتف)'),
+              ),
+              CheckedPopupMenuItem(
+                value: 'finger',
+                checked: _tools.fingerDraws,
+                child: const Text(
+                  'الإصبع يرسم (أطفئه ليكتب القلم وحده ويحرّك الإصبعُ الصفحة)',
+                ),
+              ),
+              if (_book == null)
+                const PopupMenuItem(
+                  value: 'link',
+                  child: Text('ربط ملف Word (docx)'),
+                )
+              else if (!_book!.embedded)
+                // A word map is part of the PDF itself: nothing to unlink.
+                const PopupMenuItem(
+                  value: 'unlink',
+                  child: Text('إلغاء ربط ملف Word'),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
     return Scaffold(
       key: _scaffoldKey,
+      // The keyboard (writing a comment or a note) must not squeeze the
+      // page: that re-lays it out and can leave it drawn blurry. Dialogs
+      // make room for the keyboard themselves.
+      resizeToAvoidBottomInset: false,
       endDrawer: ListenableBuilder(
         listenable: _viewer,
         builder: (context, _) => TocPanel(
@@ -1703,95 +1761,118 @@ class _ReaderScreenState extends State<ReaderScreen> {
           : Stack(
               children: [
                 Positioned.fill(child: _viewerArea()),
-                if (_search != null && _book != null)
-                  Positioned(
-                    top: _clean ? 0 : 50,
-                    left: 0,
-                    right: 0,
-                    child: _searchBanner(context),
-                  ),
-                if (!_clean)
-                  Positioned(
-                    left: 0,
-                    top: 0,
-                    bottom: 0,
-                    width: 60,
-                    child: ScrubBar(controller: _viewer),
-                  ),
-                if (_clean)
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: Material(
-                      color: Colors.black.withValues(alpha: 0.35),
-                      shape: const CircleBorder(),
-                      child: IconButton(
-                        tooltip: 'إظهار الأدوات',
-                        iconSize: 20,
-                        visualDensity: VisualDensity.compact,
-                        color: Colors.white,
-                        icon: const Icon(Icons.fullscreen_exit),
-                        onPressed: () => _setClean(false),
-                      ),
-                    ),
-                  ),
-                // The title bar goes away with the tools, so the page gets
-                // the whole screen; a tap on the top edge brings both back.
-                if (!_clean)
-                  Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    child: IgnorePointer(
-                      ignoring: !_toolsShown,
-                      child: AnimatedOpacity(
-                        opacity: _toolsShown ? 1 : 0,
-                        duration: const Duration(milliseconds: 180),
-                        child: Listener(
-                          onPointerDown: (_) => _showTools(),
-                          child: SizedBox(
-                            height: 50,
-                            child: Material(
-                              elevation: 2,
-                              color: Theme.of(context).colorScheme.surface,
-                              child: appBar,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                // A tap on the top edge brings the tools.
                 Positioned(
-                  top: 0,
-                  left: 70,
-                  right: 70,
-                  height: 36,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    onTap: _showTools,
+                  left: 0,
+                  top: MediaQuery.paddingOf(context).top + 64,
+                  bottom: 8,
+                  width: 60,
+                  child: ScrubBar(controller: _viewer, shown: _toolsShown),
+                ),
+                // While the bars are away: a small tab at the top, showing
+                // the tool in use, brings them back (as does a tap on the
+                // page with the hand tool).
+                Positioned(
+                  top: MediaQuery.paddingOf(context).top + 2,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: IgnorePointer(
+                      ignoring: _toolsShown,
+                      child: AnimatedOpacity(
+                        opacity: _toolsShown ? 0 : 1,
+                        duration: const Duration(milliseconds: 200),
+                        child: _barsTab(context),
+                      ),
+                    ),
                   ),
                 ),
                 Positioned(
-                  top: (_clean ? 0 : 50) + (_search != null ? 58 : 4),
-                  left: 8,
-                  right: 8,
+                  top: 0,
+                  left: 0,
+                  right: 0,
                   child: IgnorePointer(
                     ignoring: !_toolsShown,
-                    child: AnimatedOpacity(
-                      opacity: _toolsShown ? 1 : 0,
-                      duration: const Duration(milliseconds: 180),
-                      child: Listener(
-                        // Any touch on the tools keeps them in view.
-                        onPointerDown: (_) => _showTools(),
-                        onPointerMove: (_) => _showTools(),
-                        child: _toolbar(store),
+                    child: AnimatedSlide(
+                      offset: _toolsShown ? Offset.zero : const Offset(0, -1),
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOutCubic,
+                      child: AnimatedOpacity(
+                        opacity: _toolsShown ? 1 : 0,
+                        duration: const Duration(milliseconds: 200),
+                        child: Listener(
+                          // Any touch on the bars keeps them in view.
+                          onPointerDown: (_) => _showTools(),
+                          onPointerMove: (_) => _showTools(),
+                          child: _bars(context, store, appBar),
+                        ),
                       ),
                     ),
                   ),
                 ),
               ],
             ),
+    );
+  }
+
+  /// Title bar (under the phone's status bar), the search result being
+  /// shown, and the tools, one under the other.
+  Widget _bars(BuildContext context, InkStore store, PreferredSizeWidget bar) {
+    final theme = Theme.of(context);
+    final pad = MediaQuery.paddingOf(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Material(
+          elevation: 2,
+          color: theme.colorScheme.surfaceContainer,
+          child: Padding(
+            padding: EdgeInsets.only(
+              top: pad.top,
+              left: pad.left,
+              right: pad.right,
+            ),
+            child: SizedBox(height: 52, child: bar),
+          ),
+        ),
+        if (_search != null && _book != null) _searchBanner(context),
+        Padding(
+          padding: EdgeInsets.fromLTRB(pad.left + 8, 6, pad.right + 8, 0),
+          child: Center(child: _toolbar(store)),
+        ),
+      ],
+    );
+  }
+
+  /// The tab that brings the bars back.
+  Widget _barsTab(BuildContext context) {
+    final theme = Theme.of(context);
+    return ListenableBuilder(
+      listenable: _tools,
+      builder: (context, _) => Material(
+        color: theme.colorScheme.surfaceContainerHigh.withValues(alpha: 0.92),
+        elevation: 2,
+        shape: const StadiumBorder(),
+        child: InkWell(
+          customBorder: const StadiumBorder(),
+          onTap: _showTools,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _modeIcons[_tools.mode]?.$1 ?? Icons.pan_tool_alt_outlined,
+                  size: 18,
+                  color: _tools.drawing ? Color(_tools.color) : null,
+                ),
+                const SizedBox(width: 4),
+                const Icon(Icons.keyboard_arrow_down, size: 18),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -1820,13 +1901,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
             // fingers anywhere, or one finger when finger drawing is off).
             panEnabled: !_tools.drawing,
             scaleEnabled: !_tools.drawing,
-            // Zoom out no further than "fit width" and in to
-            // 1600%; vector ink stays sharp at any level.
-            sizeDelegateProvider: const PdfViewerSizeDelegateProviderLegacy(
-              minScale: 1.0,
-              maxScale: 16,
-              useAlternativeFitScaleAsMinScale: false,
-            ),
+            // Zoom out until a whole page shows, and in to 1600%; vector
+            // ink stays sharp at any level.
+            sizeDelegateProvider: const ReaderZoom(),
             pageOverlaysBuilder: _overlays,
             onGeneralTap: _onGeneralTap,
             customizeContextMenuItems: _selectionMenu,
@@ -1855,7 +1932,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
 const _modeIcons = {
   ToolMode.hand: (Icons.pan_tool_alt_outlined, 'تحريك'),
   ToolMode.pen: (Icons.edit, 'قلم'),
-  ToolMode.highlighter: (Icons.border_color, 'تعليم النص'),
+  ToolMode.highlighter: (Icons.border_color, 'تظليل'),
   ToolMode.shape: (Icons.category_outlined, 'أشكال'),
   ToolMode.text: (Icons.text_fields, 'نص'),
   ToolMode.pin: (Icons.push_pin_outlined, 'ملاحظة'),
@@ -2028,10 +2105,16 @@ class _Toolbar extends StatelessWidget {
     }
     if (mode == ToolMode.eraser) {
       return [
-        _chip('خط كامل', !tools.eraserPartial,
-            () => tools.setEraserPartial(false)),
-        _chip('ممحاة عادية', tools.eraserPartial,
-            () => tools.setEraserPartial(true)),
+        _chip(
+          'خط كامل',
+          !tools.eraserPartial,
+          () => tools.setEraserPartial(false),
+        ),
+        _chip(
+          'ممحاة عادية',
+          tools.eraserPartial,
+          () => tools.setEraserPartial(true),
+        ),
       ];
     }
     if (!tools.hasStyle) return null;
@@ -2044,21 +2127,6 @@ class _Toolbar extends StatelessWidget {
           (InkTool.calligraphy, 'خط عربي'),
         ])
           _chip(label, tools.penKind == kind, () => tools.setPenKind(kind)),
-        divider,
-      ],
-      if (mode == ToolMode.highlighter) ...[
-        for (final (style, label) in [
-          (MarkStyle.highlight, 'تظليل'),
-          (MarkStyle.underline, 'تسطير'),
-          (MarkStyle.strike, 'شطب'),
-          (MarkStyle.textColor, 'لون الخط'),
-          (MarkStyle.comment, 'تعليق'),
-        ])
-          _chip(
-            label,
-            tools.markStyle == style,
-            () => tools.setMarkStyle(style),
-          ),
         divider,
       ],
       if (mode == ToolMode.shape) ...[

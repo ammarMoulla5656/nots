@@ -84,7 +84,9 @@ class _TouchNavigatorState extends State<TouchNavigator> {
       if (tools.selectionPinch) return;
       tools.setMultiTouch(true);
       _startPinch();
-    } else if (e.kind == PointerDeviceKind.touch && tools.fingerScrolls) {
+    } else if (e.kind == PointerDeviceKind.touch &&
+        tools.fingerScrolls &&
+        !tools.selectionPinch) {
       final m = widget.readView();
       if (m != null) {
         _start = m.clone();

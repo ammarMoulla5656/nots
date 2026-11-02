@@ -72,13 +72,16 @@ class Ruler {
   }
 
   /// The edge a stroke starting at [p] would follow: [p] must be within
-  /// [tolerance] of a long edge (and over its length). Returns the side
-  /// (-1 or +1), or null.
-  int? edgeSideNear(Offset p, double tolerance) {
+  /// [tolerance] of a long edge off the ruler, or within [inside] of it on
+  /// the ruler (default: [tolerance] too), and over its length. Returns the
+  /// side (-1 or +1), or null.
+  int? edgeSideNear(Offset p, double tolerance, {double? inside}) {
     final l = toLocal(p);
     if (l.dx.abs() > length / 2 + tolerance) return null;
     for (final side in const [-1, 1]) {
-      if ((l.dy - side * thickness / 2).abs() <= tolerance) return side;
+      // > 0 beyond the edge, < 0 on the ruler.
+      final off = (l.dy - side * thickness / 2) * side;
+      if (off <= tolerance && off >= -(inside ?? tolerance)) return side;
     }
     return null;
   }

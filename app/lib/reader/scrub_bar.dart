@@ -16,9 +16,12 @@ int pageForTrackY(double y, double height, int pageCount) {
 /// the page under the finger floats beside it, so the reader sees where the
 /// pages are and carries on from there.
 class ScrubBar extends StatefulWidget {
-  const ScrubBar({super.key, required this.controller});
+  const ScrubBar({super.key, required this.controller, this.shown = false});
 
   final PdfViewerController controller;
+
+  /// Show the handle now (the reader's bars are in view).
+  final bool shown;
 
   @override
   State<ScrubBar> createState() => _ScrubBarState();
@@ -37,6 +40,7 @@ class _ScrubBarState extends State<ScrubBar> {
   /// The handle shows while the pages move or a finger is on it, and slips
   /// away a moment later.
   bool _shown = false;
+  bool get _visible => widget.shown || _shown || _dragging;
   Timer? _hideTimer;
   int _seenPage = 1;
 
@@ -134,7 +138,7 @@ class _ScrubBarState extends State<ScrubBar> {
                   left: 0,
                   top: y,
                   // Hidden, only a thin strip at the edge is touchable.
-                  width: _shown || _dragging ? _width : 22,
+                  width: _visible ? _width : 22,
                   height: _thumbH,
                   child: Listener(
                     behavior: HitTestBehavior.opaque,
@@ -158,7 +162,7 @@ class _ScrubBarState extends State<ScrubBar> {
                       _show();
                     },
                     child: AnimatedOpacity(
-                      opacity: _shown || _dragging ? 1 : 0,
+                      opacity: _visible ? 1 : 0,
                       duration: const Duration(milliseconds: 200),
                       child: Container(
                         decoration: BoxDecoration(

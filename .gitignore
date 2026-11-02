@@ -1,3 +1,7 @@
 .claude/
 # Sample books given for testing: never pushed
 app/docs/
+# Source books and the merged library built from them: never pushed
+pdf/
+جيد/
+build/

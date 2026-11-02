@@ -685,6 +685,86 @@ void main() {
     expect(h.doc.strokeCount, 1);
   });
 
+  testWidgets('ruler: one finger holds it, a second finger anywhere turns it',
+      (tester) async {
+    final h = _Harness(tester);
+    h.tools.ruler.value = const Ruler(
+      page: 1,
+      center: Offset(200, 200),
+      length: 300,
+      thickness: 60,
+    );
+    h.tools.setMode(ToolMode.pen);
+    await h.pump();
+    final o = h.origin;
+
+    final a = await tester.startGesture(o + const Offset(150, 200));
+    expect(h.tools.selectionPinch, isTrue, reason: 'the page must stay put');
+    // The second finger lands well off the ruler.
+    final b = await tester.startGesture(o + const Offset(330, 330));
+    expect(h.tools.multiTouch, isFalse);
+    await b.moveTo(o + const Offset(150, 380)); // swing it round
+    final turned = h.tools.ruler.value!;
+    expect(turned.angle, isNot(closeTo(0, 0.1)));
+    await a.up();
+    await b.up();
+    await tester.pump();
+    expect(h.tools.selectionPinch, isFalse);
+    expect(h.doc.strokeCount, 0);
+  });
+
+  testWidgets('ruler: a finger near an edge writes along it, in the middle moves it',
+      (tester) async {
+    final h = _Harness(tester);
+    h.tools.ruler.value = const Ruler(
+      page: 1,
+      center: Offset(200, 200),
+      length: 300,
+      thickness: 80,
+    );
+    h.tools
+      ..setMode(ToolMode.pen)
+      ..setSnapShapes(false);
+    await h.pump();
+    // Top edge is y = 160: start just above it.
+    await h.drag(const [Offset(100, 150), Offset(200, 140), Offset(280, 152)]);
+    final s = h.doc.strokesOf(1).single;
+    expect(s.points.first.y, closeTo(160, 1e-6));
+    expect(s.points.last.y, closeTo(160, 1e-6));
+    // 15 px inside the edge is already the ruler's body: it moves.
+    await h.drag(const [Offset(200, 175), Offset(200, 195)]);
+    expect(h.tools.ruler.value!.center.dy, closeTo(220, 1e-6));
+    expect(h.doc.strokeCount, 1);
+  });
+
+  testWidgets('ruler: with the hand tool it still moves', (tester) async {
+    final h = _Harness(tester);
+    h.tools.ruler.value = const Ruler(
+      page: 1,
+      center: Offset(200, 200),
+      length: 300,
+      thickness: 60,
+    );
+    await h.pump(); // hand tool
+    await h.drag(const [Offset(200, 200), Offset(240, 150)]);
+    final r = h.tools.ruler.value!;
+    expect(r.center.dx, closeTo(240, 1e-6));
+    expect(r.center.dy, closeTo(150, 1e-6));
+    // Off the ruler the overlay takes nothing (the page scrolls there).
+    final mine = tester
+        .renderObjectList(
+          find.descendant(
+            of: find.byType(PageInkOverlay),
+            matching: find.byType(Listener),
+          ),
+        )
+        .toSet();
+    final hits = tester.hitTestOnBinding(h.origin + const Offset(30, 380));
+    expect(hits.path.any((e) => mine.contains(e.target)), isFalse);
+    final onIt = tester.hitTestOnBinding(h.origin + const Offset(240, 150));
+    expect(onIt.path.any((e) => mine.contains(e.target)), isTrue);
+  });
+
   testWidgets('two fingers inside the selection frame scale it, not the page',
       (tester) async {
     final h = _Harness(tester);

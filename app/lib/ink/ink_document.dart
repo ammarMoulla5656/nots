@@ -307,12 +307,14 @@ class InkDocument extends ChangeNotifier {
       final n = (d / step).ceil();
       for (var k = 1; k < n; k++) {
         final t = k / n;
-        out.add(StrokePoint(
-          a.x + (b.x - a.x) * t,
-          a.y + (b.y - a.y) * t,
-          a.pressure + (b.pressure - a.pressure) * t,
-          (a.t + (b.t - a.t) * t).round(),
-        ));
+        out.add(
+          StrokePoint(
+            a.x + (b.x - a.x) * t,
+            a.y + (b.y - a.y) * t,
+            a.pressure + (b.pressure - a.pressure) * t,
+            (a.t + (b.t - a.t) * t).round(),
+          ),
+        );
       }
       out.add(b);
     }
@@ -326,7 +328,9 @@ class InkDocument extends ChangeNotifier {
       // needs them front-to-back.
       final sorted = List.of(_eraseRemoved)
         ..sort((a, b) => a.index.compareTo(b.index));
-      _undo.add(_StrokeAction(page, removed: sorted, added: List.of(_eraseAdded)));
+      _undo.add(
+        _StrokeAction(page, removed: sorted, added: List.of(_eraseAdded)),
+      );
       _redo.clear();
       notifyListeners();
     }

@@ -73,10 +73,17 @@ class _HitPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2
       ..color = const Color(0xFFE65100);
-    Rect scaled(Rect r) =>
-        Rect.fromLTRB(r.left * s, r.top * s, r.right * s, r.bottom * s).inflate(1);
+    Rect scaled(Rect r) => Rect.fromLTRB(
+      r.left * s,
+      r.top * s,
+      r.right * s,
+      r.bottom * s,
+    ).inflate(1);
     for (final r in others) {
-      canvas.drawRRect(RRect.fromRectAndRadius(scaled(r), const Radius.circular(2)), light);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(scaled(r), const Radius.circular(2)),
+        light,
+      );
     }
     for (final r in current) {
       final rr = RRect.fromRectAndRadius(scaled(r), const Radius.circular(3));

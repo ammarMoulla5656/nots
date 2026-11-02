@@ -122,53 +122,66 @@ class ItemsPainter extends CustomPainter {
       ..color = color
       ..strokeWidth = 1.4 * scale
       ..strokeCap = StrokeCap.round;
-    for (final r in it.rects.map(_px)) {
-      switch (it.style) {
-        case MarkStyle.highlight:
-          // Multiply: the page shows through as it is, so the letters keep
-          // their colour and the highlight sits "under" them.
-          canvas.drawRRect(
-            RRect.fromRectAndRadius(
-              r.inflate(0.5 * scale),
-              Radius.circular(2 * scale),
-            ),
-            Paint()
-              ..color = color.withValues(alpha: 0.6)
-              ..blendMode = BlendMode.multiply,
-          );
-        case MarkStyle.textColor:
-          // Lighten keeps the lighter of page and colour: the dark letters
-          // take the colour, the white page stays white.
-          canvas.drawRect(
-            r.inflate(0.4 * scale),
-            Paint()
-              ..color = color
-              ..blendMode = BlendMode.lighten,
-          );
-        case MarkStyle.underline:
-          canvas.drawLine(r.bottomLeft, r.bottomRight, line);
-        case MarkStyle.strike:
-          canvas.drawLine(r.centerLeft, r.centerRight, line);
-        case MarkStyle.comment:
-          // A commented word changes colour (lighten keeps the page white
-          // and turns the dark letters to the colour), and gets a dotted
-          // underline and a bubble.
-          canvas.drawRect(
-            r.inflate(0.4 * scale),
-            Paint()
-              ..color = color
-              ..blendMode = BlendMode.lighten,
-          );
-          final y = r.bottom;
-          final step = 3 * scale;
-          for (var x = r.left; x < r.right; x += step * 2) {
-            canvas.drawLine(
-              Offset(x, y),
-              Offset(math.min(x + step, r.right), y),
-              line,
-            );
-          }
+    final rects = it.rects.map(_px).toList();
+    // All lines of a mark are filled as one shape, so where two lines touch
+    // the colour is not laid on twice.
+    Path area(double grow, [double radius = 0]) {
+      final path = Path();
+      for (final r in rects) {
+        path.addRRect(
+          RRect.fromRectAndRadius(r.inflate(grow), Radius.circular(radius)),
+        );
       }
+      return path;
+    }
+
+    switch (it.style) {
+      case MarkStyle.highlight:
+        // Multiply: the page shows through as it is, so the letters keep
+        // their colour and the highlight sits "under" them.
+        canvas.drawPath(
+          area(0.5 * scale, 2 * scale),
+          Paint()
+            ..color = color.withValues(alpha: 0.6)
+            ..blendMode = BlendMode.multiply,
+        );
+      case MarkStyle.textColor || MarkStyle.comment:
+        // Screen turns black letters into the colour and leaves the white
+        // page white, and the soft edges of the letters blend between the
+        // two exactly as if the letters had been printed in that colour, so
+        // they stay as sharp as the rest of the page.
+        canvas.drawPath(
+          area(0.4 * scale),
+          Paint()
+            ..color = color
+            ..blendMode = BlendMode.screen,
+        );
+        if (it.style == MarkStyle.comment) {
+          // and a light dotted underline.
+          final dots = Paint()
+            ..color = color.withValues(alpha: 0.75)
+            ..strokeWidth = 1 * scale
+            ..strokeCap = StrokeCap.round;
+          final step = 2.5 * scale;
+          for (final r in rects) {
+            final y = r.bottom + 1 * scale;
+            for (var x = r.left; x < r.right; x += step * 2) {
+              canvas.drawLine(
+                Offset(x, y),
+                Offset(math.min(x + step, r.right), y),
+                dots,
+              );
+            }
+          }
+        }
+      case MarkStyle.underline:
+        for (final r in rects) {
+          canvas.drawLine(r.bottomLeft, r.bottomRight, line);
+        }
+      case MarkStyle.strike:
+        for (final r in rects) {
+          canvas.drawLine(r.centerLeft, r.centerRight, line);
+        }
     }
     // A comment bubble at the start of the marked words (their right end:
     // the books are Arabic) whenever the mark carries a comment.

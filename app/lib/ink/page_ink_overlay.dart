@@ -384,6 +384,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     _rulerSide = null;
     _rulerRef = null;
     _rulerPtr = null;
+    _textTap = null;
   }
 
   void _cancelGesture() {
@@ -408,29 +409,40 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
       _cancelGesture();
       return;
     }
-    if (_multiTouch || widget.tools.multiTouch || !_accepts(e)) return;
-    _activePointer = e.pointer;
-    _strokeStartMs = e.timeStamp.inMilliseconds;
+    if (_multiTouch || widget.tools.multiTouch) return;
     final tools = widget.tools;
     final p = _pt(e);
 
+    // The ruler: a stroke that starts on or near a long edge runs along
+    // that edge; a touch anywhere else on it moves it (a finger always may,
+    // even when only the pen draws).
     final ruler = tools.ruler.value;
-    if (ruler != null && ruler.page == widget.pageNumber && tools.drawing) {
-      final writes =
-          tools.mode == ToolMode.pen || tools.mode == ToolMode.highlighter;
-      final side = writes && !_penErases(e)
-          ? ruler.edgeSideNear(p, 12 * _unit)
-          : null;
-      if (side != null) {
-        _rulerSide = side; // the stroke below follows this edge
-        _rulerRef = ruler;
-      } else if (ruler.contains(p, slack: 10 * _unit)) {
-        _rulerPtr = e.pointer;
-        _rulerFrom = p;
-        _rulerBase = ruler;
-        _live.value++;
-        return;
-      }
+    final rulerHere =
+        ruler != null && ruler.page == widget.pageNumber && tools.drawing;
+    final finger = e.kind == PointerDeviceKind.touch;
+    final writes =
+        tools.mode == ToolMode.pen || tools.mode == ToolMode.highlighter;
+    final edge = rulerHere && writes && !_penErases(e)
+        ? ruler.edgeSideNear(
+            p,
+            (finger ? 30 : 14) * _unit,
+            inside: (finger ? 10 : 8) * _unit,
+          )
+        : null;
+    if (rulerHere &&
+        edge == null &&
+        _activePointer == null &&
+        (finger || _accepts(e)) &&
+        ruler.contains(p, slack: 10 * _unit)) {
+      _grabRuler(e.pointer, p, ruler);
+      return;
+    }
+    if (!_accepts(e)) return;
+    _activePointer = e.pointer;
+    _strokeStartMs = e.timeStamp.inMilliseconds;
+    if (edge != null) {
+      _rulerSide = edge; // the stroke below follows this edge
+      _rulerRef = ruler;
     }
 
     if (_selectionHere && tools.mode != ToolMode.eraser) {
@@ -442,8 +454,9 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     }
 
     _textTap = switch (tools.mode) {
-      ToolMode.pen || ToolMode.highlighter || ToolMode.shape =>
-        _penErases(e) ? null : _hitItem(p, {ItemKind.text}),
+      ToolMode.pen ||
+      ToolMode.highlighter ||
+      ToolMode.shape => _penErases(e) ? null : _hitItem(p, {ItemKind.text}),
       _ => null,
     };
 
@@ -526,6 +539,73 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     _live.value++;
   }
 
+  // ---- the ruler with the hand tool ----
+
+  void _handRulerDown(PointerDownEvent e) {
+    final ruler = widget.tools.ruler.value;
+    if (ruler == null) return;
+    final p = _pt(e);
+    _ptrPos[e.pointer] = p;
+    if (_rulerPtr == null) {
+      _rulerPtr = e.pointer;
+      _rulerFrom = p;
+      _rulerBase = ruler;
+    } else if (_rulerPtrB == null) {
+      _rulerPtrB = e.pointer;
+      _rulerBase = ruler;
+      _rulerA0 = _ptrPos[_rulerPtr!] ?? p;
+      _rulerB0 = p;
+    }
+  }
+
+  void _handRulerMove(PointerMoveEvent e) {
+    if (!_ptrPos.containsKey(e.pointer)) return;
+    final p = _pt(e);
+    _ptrPos[e.pointer] = p;
+    final base = _rulerBase;
+    if (base == null) return;
+    if (_rulerPtrB != null) {
+      final a1 = _ptrPos[_rulerPtr], b1 = _ptrPos[_rulerPtrB];
+      if (a1 != null && b1 != null) {
+        widget.tools.ruler.value = base
+            .twoFingers(_rulerA0, _rulerB0, a1, b1)
+            .snappedAngle();
+      }
+    } else if (e.pointer == _rulerPtr) {
+      widget.tools.ruler.value = base.copyWith(
+        center: base.center + (p - _rulerFrom),
+      );
+    }
+  }
+
+  void _handRulerUp(PointerEvent e) {
+    _ptrPos.remove(e.pointer);
+    if (e.pointer != _rulerPtr && e.pointer != _rulerPtrB) return;
+    // One finger left: it carries on moving the ruler from where it is.
+    final rest = e.pointer == _rulerPtr ? _rulerPtrB : _rulerPtr;
+    _rulerPtrB = null;
+    _rulerPtr = rest;
+    final at = rest == null ? null : _ptrPos[rest];
+    if (at == null) {
+      _rulerPtr = null;
+      _rulerBase = null;
+    } else {
+      _rulerBase = widget.tools.ruler.value;
+      _rulerFrom = at;
+    }
+  }
+
+  /// One finger (or the pen) took hold of the ruler to move it. The page
+  /// must not scroll under it.
+  void _grabRuler(int pointer, Offset p, Ruler ruler) {
+    _activePointer = pointer;
+    _rulerPtr = pointer;
+    _rulerFrom = p;
+    _rulerBase = ruler;
+    widget.tools.setSelectionPinch(true);
+    _live.value++;
+  }
+
   /// A touch that lands on the selection's buttons, handles or body.
   /// Returns true when it was used.
   bool _selectionDown(SelectionGeometry geo, Offset p) {
@@ -575,16 +655,27 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     final tools = widget.tools;
     final pb = _ptrPos[e.pointer]!;
 
+    // Two fingers on the ruler move, turn and stretch it: the first finger
+    // already holds it (the second may land anywhere), or both land on or
+    // near it.
     final ruler = tools.ruler.value;
-    if (_rulerPtr != null &&
-        ruler != null &&
-        ruler.contains(pb, slack: 24 * _unit)) {
-      _rulerPtrB = e.pointer;
-      _rulerBase = ruler;
-      _rulerA0 = _ptrPos[_rulerPtr!]!;
-      _rulerB0 = pb;
-      tools.setSelectionPinch(true);
-      return true;
+    if (ruler != null && ruler.page == widget.pageNumber && tools.drawing) {
+      final first = _ptrPos.entries.firstWhere((x) => x.key != e.pointer);
+      final slack = 30 * _unit;
+      if (_rulerPtr != null ||
+          (ruler.contains(first.value, slack: slack) &&
+              ruler.contains(pb, slack: slack))) {
+        if (_rulerPtr == null) _cancelGesture(); // drop a stroke just begun
+        _activePointer = first.key;
+        _rulerPtr = first.key;
+        _rulerPtrB = e.pointer;
+        _rulerBase = ruler;
+        _rulerA0 = first.value;
+        _rulerB0 = pb;
+        tools.setSelectionPinch(true);
+        _live.value++;
+        return true;
+      }
     }
 
     if (_selectionHere && tools.mode != ToolMode.eraser) {
@@ -909,6 +1000,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     if (e.pointer != _activePointer) return;
     _activePointer = null;
     _snapTimer?.cancel();
+    if (_rulerPtr != null) widget.tools.setSelectionPinch(false);
     final doc = widget.document;
     final page = widget.pageNumber;
     final tools = widget.tools;
@@ -1118,9 +1210,33 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
           ),
         ),
         ListenableBuilder(
-          listenable: widget.tools,
+          listenable: Listenable.merge([widget.tools, widget.tools.ruler]),
           builder: (context, _) {
-            if (!widget.tools.drawing) return const SizedBox.shrink();
+            if (!widget.tools.drawing) {
+              // Reading: only the ruler takes touches (to move and turn
+              // it); everywhere else the page scrolls and zooms as usual.
+              final r = widget.tools.ruler.value;
+              if (r == null || r.page != widget.pageNumber) {
+                return const SizedBox.shrink();
+              }
+              return Listener(
+                onPointerDown: _handRulerDown,
+                onPointerMove: _handRulerMove,
+                onPointerUp: _handRulerUp,
+                onPointerCancel: _handRulerUp,
+                child: CustomPaint(
+                  size: Size.infinite,
+                  painter: _RulerHitArea(
+                    hit: (pos) =>
+                        widget.tools.ruler.value?.contains(
+                          pos / scale,
+                          slack: 10 * _unit,
+                        ) ??
+                        false,
+                  ),
+                ),
+              );
+            }
             return Listener(
               behavior: HitTestBehavior.opaque,
               onPointerHover: _onHover,
@@ -1204,6 +1320,22 @@ class _HoverPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_HoverPainter old) => old.scale != scale;
+}
+
+/// Paints nothing; takes touches only where [hit] says (on the ruler).
+class _RulerHitArea extends CustomPainter {
+  _RulerHitArea({required this.hit});
+
+  final bool Function(Offset position) hit;
+
+  @override
+  void paint(Canvas canvas, Size size) {}
+
+  @override
+  bool hitTest(Offset position) => hit(position);
+
+  @override
+  bool shouldRepaint(_RulerHitArea old) => false;
 }
 
 /// The ruler: a translucent band with centimetre marks along both edges.

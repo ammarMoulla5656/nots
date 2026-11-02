@@ -129,13 +129,23 @@ class PageLayout {
   Rect? rectOf(int i) {
     final l = boxes[4 * i];
     if (l.isNaN) return null;
-    return Rect.fromLTRB(l, boxes[4 * i + 1], boxes[4 * i + 2], boxes[4 * i + 3]);
+    return Rect.fromLTRB(
+      l,
+      boxes[4 * i + 1],
+      boxes[4 * i + 2],
+      boxes[4 * i + 3],
+    );
   }
 
   /// Words of [text] (separated by spaces and line breaks) with the boxes of
   /// a word map page: per word four tenths-of-a-point differences from the
   /// previous placed word, or null alone for a word without a place.
-  static PageLayout parse(String kind, int firstWord, String text, List? deltas) {
+  static PageLayout parse(
+    String kind,
+    int firstWord,
+    String text,
+    List? deltas,
+  ) {
     final starts = <int>[], ends = <int>[];
     var i = 0;
     while (i < text.length) {
@@ -178,8 +188,13 @@ class PageLayout {
         boxes.fillRange(0, 4 * n, double.nan);
       }
     }
-    return PageLayout._(kind, firstWord, Int32List.fromList(starts),
-        Int32List.fromList(ends), boxes);
+    return PageLayout._(
+      kind,
+      firstWord,
+      Int32List.fromList(starts),
+      Int32List.fromList(ends),
+      boxes,
+    );
   }
 
   /// Index of the first word ending after [offset] (binary search).
@@ -211,7 +226,11 @@ class PageLayout {
   /// Words covered by [rects] (PDF points, top-left origin), in reading
   /// order: at least [share] of a word's box inside one of them, so a
   /// selection that starts or ends inside a word still takes the word.
-  List<int> wordsInRects(List<Rect> rects, {double slack = 1, double share = 0.3}) {
+  List<int> wordsInRects(
+    List<Rect> rects, {
+    double slack = 1,
+    double share = 0.3,
+  }) {
     final out = <int>[];
     final inflated = [for (final r in rects) r.inflate(slack)];
     for (var i = 0; i < length; i++) {
@@ -237,7 +256,9 @@ class PageLayout {
       final i = ids[k];
       if (k > 0) {
         final prev = ids[k - 1];
-        b.write(i == prev + 1 ? pageText.substring(ends[prev], starts[i]) : ' ');
+        b.write(
+          i == prev + 1 ? pageText.substring(ends[prev], starts[i]) : ' ',
+        );
       }
       b.write(pageText.substring(starts[i], ends[i]));
     }
@@ -298,9 +319,7 @@ class BookText {
     final l = layoutOf(h.page);
     final range = l?.wordsIn(h.start, h.end);
     if (l == null || range == null) return const [];
-    return [
-      for (var i = range.$1; i <= range.$2; i++) ?l.rectOf(i),
-    ];
+    return [for (var i = range.$1; i <= range.$2; i++) ?l.rectOf(i)];
   }
 
   /// The exact text of page words [from]..[to] (inclusive), with the line
@@ -377,7 +396,11 @@ class BookText {
     for (final p in (j['pages'] as List).cast<Map<String, dynamic>>()) {
       final text = p['t'] as String? ?? '';
       final l = PageLayout.parse(
-          p['k'] as String? ?? 'text', first, text, p['b'] as List?);
+        p['k'] as String? ?? 'text',
+        first,
+        text,
+        p['b'] as List?,
+      );
       pages.add(text);
       layout.add(l);
       first += l.length;
@@ -386,7 +409,9 @@ class BookText {
     return BookText(
       pages: pages,
       headings: [
-        for (final h in (j['headings'] as List? ?? const []).cast<Map<String, dynamic>>())
+        for (final h
+            in (j['headings'] as List? ?? const [])
+                .cast<Map<String, dynamic>>())
           BookHeading(h['t'] as String, h['l'] as int, h['p'] as int),
       ],
       source: src['text'] as String? ?? 'nots-words',

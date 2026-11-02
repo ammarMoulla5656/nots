@@ -59,6 +59,13 @@ void main() {
     expect(tiny.length, Ruler.minLength);
   });
 
+  test('edge zone can be narrower on the ruler than off it', () {
+    // r: centre (200, 300), thickness 50 -> edges at y = 275 and 325.
+    expect(r.edgeSideNear(const Offset(150, 345), 20, inside: 5), 1);
+    expect(r.edgeSideNear(const Offset(150, 315), 20, inside: 5), isNull);
+    expect(r.edgeSideNear(const Offset(150, 322), 20, inside: 5), 1);
+  });
+
   test('degrees and snapping to multiples of 15', () {
     expect(r.degrees, 0);
     expect(r.copyWith(angle: math.pi / 2).degrees, closeTo(90, 1e-9));
