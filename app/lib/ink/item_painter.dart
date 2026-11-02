@@ -118,9 +118,22 @@ class ItemsPainter extends CustomPainter {
     for (final r in it.rects.map(_px)) {
       switch (it.style) {
         case MarkStyle.highlight:
+          // Multiply: the page shows through as it is, so the letters keep
+          // their colour and the highlight sits "under" them.
           canvas.drawRRect(
             RRect.fromRectAndRadius(r.inflate(0.5 * scale), Radius.circular(2 * scale)),
-            Paint()..color = color.withValues(alpha: 0.35),
+            Paint()
+              ..color = color.withValues(alpha: 0.6)
+              ..blendMode = BlendMode.multiply,
+          );
+        case MarkStyle.textColor:
+          // Lighten keeps the lighter of page and colour: the dark letters
+          // take the colour, the white page stays white.
+          canvas.drawRect(
+            r.inflate(0.4 * scale),
+            Paint()
+              ..color = color
+              ..blendMode = BlendMode.lighten,
           );
         case MarkStyle.underline:
           canvas.drawLine(r.bottomLeft, r.bottomRight, line);

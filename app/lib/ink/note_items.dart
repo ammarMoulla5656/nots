@@ -5,7 +5,15 @@ import 'dart:ui';
 enum ItemKind { text, pin, tape, mark }
 
 /// How a mark on PDF words looks. Append new values only (stored in files).
-enum MarkStyle { highlight, underline, strike, comment }
+enum MarkStyle {
+  highlight,
+  underline,
+  strike,
+  comment,
+
+  /// Recolours the words' own letters.
+  textColor,
+}
 
 class NoteItem {
   const NoteItem({

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'ink_document.dart';
 import 'item_painter.dart';
 import 'note_items.dart';
+import 'ruler.dart';
 import 'selection.dart';
 import 'shapes.dart';
 import 'stroke.dart';
@@ -120,6 +121,29 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
   int _downCount = 0;
   bool _multiTouch = false;
 
+  // Two fingers inside the selection frame scale the selection.
+  final _ptrPos = <int, Offset>{};
+  bool _pinching = false;
+  bool _pinchCommitted = false;
+  double _pinch0 = 1;
+  Offset _pinchAnchor = Offset.zero;
+  NoteItem? _pinchItem0;
+
+  // Ruler: one finger moves it, two rotate it, a stroke along its edge is
+  // drawn straight.
+  int? _rulerPtr;
+  int? _rulerPtrB;
+  Offset _rulerFrom = Offset.zero;
+  Offset _rulerA0 = Offset.zero;
+  Offset _rulerB0 = Offset.zero;
+  Ruler? _rulerBase;
+  Ruler? _rulerRef;
+  int? _rulerSide;
+
+  // The eraser removes boxes only after it has really moved, so a tap does
+  // not delete them.
+  double _eraseDist = 0;
+
   Offset? _lastErase;
 
   /// The current stroke erases because of the pen's eraser end or button.
@@ -152,7 +176,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
   /// Radius of the hover ring in PDF points.
   double get _hoverRadius {
     final t = widget.tools;
-    if (t.mode == ToolMode.eraser) return 6;
+    if (t.mode == ToolMode.eraser) return _eraserRadius;
     return (t.width / 2).clamp(1.5, 30.0);
   }
 
@@ -171,7 +195,10 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
   void initState() {
     super.initState();
     widget.tools.addListener(_onTools);
-    if (widget.tools.mode == ToolMode.word) _ensureWords();
+    if (widget.tools.mode == ToolMode.word ||
+        widget.tools.mode == ToolMode.highlighter) {
+      _ensureWords();
+    }
   }
 
   @override
@@ -202,7 +229,9 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     } else if (!t.multiTouch && _downCount == 0) {
       _multiTouch = false;
     }
-    if (t.mode == ToolMode.word) _ensureWords();
+    if (t.mode == ToolMode.word || t.mode == ToolMode.highlighter) {
+      _ensureWords();
+    }
   }
 
   void _ensureWords() {
@@ -283,6 +312,11 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     );
   }
 
+  bool get _isScaling => _resizeHandle != null || _pinching;
+
+  /// Eraser radius: about 9 screen pixels, whatever the zoom.
+  double get _eraserRadius => (9 * _unit).clamp(2.0, 24.0);
+
   /// Bounds of the selection as it looks right now (mid move or resize).
   Rect? _liveFrame() {
     if (!_selectionHere) return null;
@@ -290,7 +324,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     if (pv != null) return itemHitRect(pv);
     final b = widget.selection.bounds;
     if (b == null) return null;
-    if (_resizeHandle != null) {
+    if (_isScaling) {
       final a = _resizeAnchor, f = _resizeFactor;
       return Rect.fromPoints(
         a + (b.topLeft - a) * f,
@@ -302,7 +336,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
   }
 
   SelectionTransform _strokeTransform() {
-    if (_resizeHandle != null) {
+    if (_isScaling) {
       return SelectionTransform(factor: _resizeFactor, anchor: _resizeAnchor);
     }
     return SelectionTransform(offset: _dragOffset);
@@ -343,6 +377,10 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     _wordB = null;
     _lastErase = null;
     _stylusErasing = false;
+    _eraseDist = 0;
+    _rulerSide = null;
+    _rulerRef = null;
+    _rulerPtr = null;
   }
 
   void _cancelGesture() {
@@ -358,9 +396,11 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
 
   void _down(PointerDownEvent e) {
     _downCount++;
+    _ptrPos[e.pointer] = _pt(e);
     // A fresh touch after every finger was lifted: drawing is allowed again.
     if (_downCount == 1 && !widget.tools.multiTouch) _multiTouch = false;
     if (_downCount > 1) {
+      if (_startTwoFinger(e)) return;
       _multiTouch = true;
       _cancelGesture();
       return;
@@ -370,6 +410,24 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     _strokeStartMs = e.timeStamp.inMilliseconds;
     final tools = widget.tools;
     final p = _pt(e);
+
+    final ruler = tools.ruler.value;
+    if (ruler != null && ruler.page == widget.pageNumber && tools.drawing) {
+      final writes = tools.mode == ToolMode.pen || tools.mode == ToolMode.highlighter;
+      final side = writes && !_penErases(e)
+          ? ruler.edgeSideNear(p, 12 * _unit)
+          : null;
+      if (side != null) {
+        _rulerSide = side; // the stroke below follows this edge
+        _rulerRef = ruler;
+      } else if (ruler.contains(p)) {
+        _rulerPtr = e.pointer;
+        _rulerFrom = p;
+        _rulerBase = ruler;
+        _live.value++;
+        return;
+      }
+    }
 
     if (_selectionHere && tools.mode != ToolMode.eraser) {
       final geo = _geometry();
@@ -437,7 +495,15 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
             tool: tools.strokeTool,
             color: tools.color,
             width: tools.width,
-            points: [_point(e)],
+            points: [
+              if (_rulerSide != null)
+                () {
+                  final q = _rulerRef!.snapToEdge(p, _rulerSide!);
+                  return StrokePoint(q.dx, q.dy, 0.5, 0);
+                }()
+              else
+                _point(e),
+            ],
           );
         }
       case ToolMode.hand:
@@ -488,6 +554,83 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     return false;
   }
 
+  /// The second finger of a gesture: it may rotate the ruler or scale the
+  /// selection. Returns true when it was taken (the page does not zoom).
+  bool _startTwoFinger(PointerDownEvent e) {
+    if (_downCount != 2 || _ptrPos.length != 2) return false;
+    final tools = widget.tools;
+    final pb = _ptrPos[e.pointer]!;
+
+    final ruler = tools.ruler.value;
+    if (_rulerPtr != null &&
+        ruler != null &&
+        ruler.contains(pb, slack: 24 * _unit)) {
+      _rulerPtrB = e.pointer;
+      _rulerBase = ruler;
+      _rulerA0 = _ptrPos[_rulerPtr!]!;
+      _rulerB0 = pb;
+      tools.setSelectionPinch(true);
+      return true;
+    }
+
+    if (_selectionHere && tools.mode != ToolMode.eraser) {
+      final geo = _geometry();
+      if (geo == null || !geo.canResize) return false;
+      final zone = geo.frame.inflate(24 * _unit);
+      final other = _ptrPos.entries.firstWhere((x) => x.key != e.pointer).value;
+      if (!zone.contains(pb) || !zone.contains(other)) return false;
+      _resetGesture();
+      _activePointer = null;
+      _pinching = true;
+      _pinchCommitted = false;
+      _pinch0 = math.max((pb - other).distance, 1e-3);
+      _pinchAnchor = geo.bounds.center;
+      _resizeAnchor = _pinchAnchor;
+      _resizeFactor = 1;
+      _pinchItem0 = widget.selection.item;
+      tools.setSelectionPinch(true);
+      _live.value++;
+      return true;
+    }
+    return false;
+  }
+
+  void _pinchUpdate() {
+    if (_ptrPos.length < 2) return;
+    final ps = _ptrPos.values.take(2).toList();
+    final f = ((ps[0] - ps[1]).distance / _pinch0).clamp(0.2, 12.0);
+    _resizeFactor = f;
+    final item = _pinchItem0;
+    if (item != null) {
+      final a = _pinchAnchor;
+      final r = itemHitRect(item);
+      _itemPreview = item.kind == ItemKind.tape
+          ? item.copyWith(
+              x: a.dx + (r.left - a.dx) * f,
+              y: a.dy + (r.top - a.dy) * f,
+              w: r.width * f,
+              h: r.height * f,
+            )
+          : item.copyWith(
+              fontSize: (item.fontSize * f).clamp(4.0, 400.0),
+              w: (item.w > 0 ? item.w : NoteItem.defaultTextWidth) * f,
+              x: a.dx + (r.left - a.dx) * f,
+              y: a.dy + (r.top - a.dy) * f,
+            );
+    }
+    _live.value++;
+  }
+
+  void _commitPinch() {
+    _pinchCommitted = true;
+    final pv = _itemPreview;
+    if (pv != null) {
+      widget.document.replaceItem(widget.pageNumber, pv);
+    } else if (_pinchItem0 == null) {
+      widget.selection.scaleStrokes(_resizeFactor, _pinchAnchor);
+    }
+  }
+
   bool get _canSnap {
     final t = widget.tools;
     if (!t.snapShapes) return false;
@@ -514,8 +657,27 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
   }
 
   void _move(PointerMoveEvent e) {
+    _ptrPos[e.pointer] = _pt(e);
+    if (_pinching) {
+      _pinchUpdate();
+      return;
+    }
+    if (_rulerPtrB != null) {
+      final a1 = _ptrPos[_rulerPtr];
+      final b1 = _ptrPos[_rulerPtrB];
+      if (a1 != null && b1 != null) {
+        widget.tools.ruler.value =
+            _rulerBase!.twoFingers(_rulerA0, _rulerB0, a1, b1);
+      }
+      return;
+    }
     if (e.pointer != _activePointer || _consumed) return;
     final p = _pt(e);
+    if (_rulerPtr != null) {
+      widget.tools.ruler.value =
+          _rulerBase!.copyWith(center: _rulerBase!.center + (p - _rulerFrom));
+      return;
+    }
     if (_resizeHandle != null) {
       _resizeTo(p);
     } else if (_shapeStart != null) {
@@ -533,7 +695,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
       _itemOffset = p - _itemFrom;
       // Marks belong to the PDF words: they never move.
       if (_itemDrag!.kind != ItemKind.mark &&
-          _itemOffset.distance >= 4 * _unit) {
+          _itemOffset.distance >= 8 * _unit) {
         _itemPreview = _itemDrag!.copyWith(
           x: _itemDrag!.x + _itemOffset.dx,
           y: _itemDrag!.y + _itemOffset.dy,
@@ -541,13 +703,21 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
       }
     } else if (_tapPoint != null) {
       // Dragging on empty page with the text/pin tool: not a tap any more.
-      if ((p - _tapPoint!).distance > 4 * _unit) _tapMoved = true;
+      if ((p - _tapPoint!).distance > 8 * _unit) _tapMoved = true;
     } else if (_tapeStart != null) {
       _tapeRect = Rect.fromPoints(_tapeStart!, p);
     } else if (_current != null) {
       if (_snapped) return; // keep the clean shape while the pen is down
-      _current!.points.add(_point(e));
-      _armSnap();
+      if (_rulerSide != null) {
+        // Along the ruler edge: a straight line from the first point.
+        final end = _rulerRef!.snapToEdge(p, _rulerSide!);
+        final pts = _current!.points;
+        pts.removeRange(1, pts.length);
+        pts.add(StrokePoint(end.dx, end.dy, 0.5, 1));
+      } else {
+        _current!.points.add(_point(e));
+        _armSnap();
+      }
     } else if (widget.tools.mode == ToolMode.eraser || _stylusErasing) {
       _erase(e);
       return;
@@ -601,16 +771,43 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     // so the eraser cannot jump over a thin stroke.
     final from = _lastErase ?? p;
     _lastErase = p;
+    _eraseDist += (p - from).distance;
     final steps = ((p - from).distance / 3).ceil().clamp(1, 400);
     for (var i = 1; i <= steps; i++) {
       final q = Offset.lerp(from, p, i / steps)!;
-      // Eraser radius: 6 PDF points, whatever the zoom.
-      widget.document.eraseAt(q.dx, q.dy, 6);
+      widget.document.eraseAt(q.dx, q.dy, _eraserRadius);
+      // Boxes and marks go only once the eraser has really been dragged.
+      if (_eraseDist < 6 * _unit) continue;
       final hit = _hitItem(q, {ItemKind.tape, ItemKind.mark});
       if (hit != null && hit.text.isEmpty) {
         widget.document.removeItem(widget.pageNumber, hit.id);
       }
     }
+  }
+
+  /// A highlighter stroke that passes over text becomes a highlight of the
+  /// words it touched (drawn under the letters, like the word highlighter);
+  /// over pictures or empty page it stays a free stroke. Returns true when
+  /// the stroke was turned into a word highlight.
+  bool _snapHighlight(int page, Stroke cur) {
+    if (cur.tool != InkTool.highlighter) return false;
+    final words = _words;
+    if (words == null || words.isEmpty) return false;
+    final path = [for (final p in cur.points) Offset(p.x, p.y)];
+    final idx = wordsAlongPath(words, path);
+    if (idx.isEmpty) return false;
+    final doc = widget.document;
+    doc.addItem(
+      page,
+      NoteItem.mark(
+        id: doc.takeStrokeId(),
+        lineRects: lineRects([for (final i in idx) words[i]]),
+        style: MarkStyle.highlight,
+        color: cur.color,
+        quote: idx.map((i) => words[i].text).join(' '),
+      ),
+    );
+    return true;
   }
 
   /// A tap with the lasso: select the stroke or item under the finger.
@@ -634,6 +831,29 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
 
   void _up(PointerEvent e) {
     if (_downCount > 0) _downCount--;
+    _ptrPos.remove(e.pointer);
+    if (_pinching) {
+      if (!_pinchCommitted) _commitPinch();
+      if (_ptrPos.isEmpty) {
+        _pinching = false;
+        _pinchCommitted = false;
+        _pinchItem0 = null;
+        widget.tools.setSelectionPinch(false);
+        _resetGesture();
+      }
+      _live.value++;
+      return;
+    }
+    if (_rulerPtrB != null) {
+      if (_ptrPos.isEmpty) {
+        _rulerPtr = null;
+        _rulerPtrB = null;
+        _rulerBase = null;
+        _activePointer = null;
+        widget.tools.setSelectionPinch(false);
+      }
+      return;
+    }
     if (e.pointer != _activePointer) return;
     _activePointer = null;
     _snapTimer?.cancel();
@@ -641,8 +861,8 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     final page = widget.pageNumber;
     final tools = widget.tools;
 
-    if (_consumed) {
-      // Button already acted on touch-down.
+    if (_consumed || _rulerPtr != null) {
+      // Button already acted on touch-down, or the ruler was only moved.
     } else if (_resizeHandle != null) {
       final pv = _itemPreview;
       if (pv != null) {
@@ -728,6 +948,8 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     } else if (_shapeStart != null &&
         _current!.bounds.longestSide < _current!.width + 3) {
       // A tap with the shape tool draws nothing.
+    } else if (_current != null && _snapHighlight(page, _current!)) {
+      // The highlighter went over text: it became a highlight of those words.
     } else if (_current != null) {
       final cur = _current!;
       doc.add(
@@ -802,6 +1024,18 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
               lasso: () => _lasso,
               scale: scale,
               repaint: Listenable.merge([_live, sel, widget.viewChanged]),
+            ),
+          ),
+        ),
+        IgnorePointer(
+          child: CustomPaint(
+            painter: _RulerPainter(
+              ruler: () {
+                final r = widget.tools.ruler.value;
+                return r != null && r.page == widget.pageNumber ? r : null;
+              },
+              scale: scale,
+              repaint: widget.tools.ruler,
             ),
           ),
         ),
@@ -913,4 +1147,65 @@ class _HoverPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_HoverPainter old) => old.scale != scale;
+}
+
+/// The ruler: a translucent band with centimetre marks along both edges.
+class _RulerPainter extends CustomPainter {
+  _RulerPainter({
+    required this.ruler,
+    required this.scale,
+    required Listenable repaint,
+  }) : super(repaint: repaint);
+
+  final Ruler? Function() ruler;
+  final double scale;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final r = ruler();
+    if (r == null) return;
+    canvas.save();
+    canvas.translate(r.center.dx * scale, r.center.dy * scale);
+    canvas.rotate(r.angle);
+    final w = r.length * scale, h = r.thickness * scale;
+    final body = Rect.fromCenter(center: Offset.zero, width: w, height: h);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(body, Radius.circular(4 * scale)),
+      Paint()..color = const Color(0xFF90CAF9).withValues(alpha: 0.42),
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(body, Radius.circular(4 * scale)),
+      Paint()
+        ..color = const Color(0xFF1565C0).withValues(alpha: 0.8)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1 * scale,
+    );
+    final tick = Paint()
+      ..color = const Color(0xFF0D47A1)
+      ..strokeWidth = 0.7 * scale;
+    final cm = Ruler.cm * scale;
+    final n = (w / cm / 2).floor();
+    for (var i = -n; i <= n; i++) {
+      final x = i * cm;
+      final big = i % 5 == 0;
+      final len = (big ? 9 : 5) * scale;
+      canvas.drawLine(Offset(x, h / 2), Offset(x, h / 2 - len), tick);
+      canvas.drawLine(Offset(x, -h / 2), Offset(x, -h / 2 + len), tick);
+      if (big && i != 0) {
+        final tp = TextPainter(
+          text: TextSpan(
+            text: '${i.abs()}',
+            style: TextStyle(color: const Color(0xFF0D47A1), fontSize: 8 * scale),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        tp.paint(canvas, Offset(x - tp.width / 2, h / 2 - len - tp.height - scale));
+        tp.dispose();
+      }
+    }
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_RulerPainter old) => old.scale != scale;
 }

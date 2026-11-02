@@ -110,130 +110,60 @@ class _WheelPainter extends CustomPainter {
   bool shouldRepaint(_WheelPainter old) => old.color != color;
 }
 
-String _hex(Color c) =>
-    c.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase();
-
-Color? _parseHex(String s) {
-  final t = s.trim().replaceFirst('#', '');
-  if (t.length != 6) return null;
-  final v = int.tryParse(t, radix: 16);
-  return v == null ? null : Color(0xFF000000 | v);
-}
-
-/// Dialog with the colour wheel, a brightness slider, quick colours and a
-/// HEX field. Returns the chosen colour, or null when cancelled.
+/// Colour dialog: the colour wheel and one slider from dark to light.
+/// Returns the chosen colour, or null when cancelled.
 Future<Color?> showColorWheelDialog(BuildContext context, Color initial) {
   var hsv = HSVColor.fromColor(initial);
-  final hexController = TextEditingController(text: _hex(initial));
-  const quick = [
-    0xFF000000, 0xFF5D4037, 0xFFD32F2F, 0xFFEF6C00, 0xFFFFEB3B,
-    0xFF2E7D32, 0xFF00897B, 0xFF1565C0, 0xFF6A1B9A, 0xFFFFFFFF,
-  ];
+  // A pure black/white/grey start has no hue: begin with a visible colour.
+  if (hsv.saturation < 0.05 && hsv.value < 0.12) {
+    hsv = hsv.withValue(0.1);
+  }
   return showDialog<Color>(
     context: context,
     builder: (context) => StatefulBuilder(
-      builder: (context, setState) {
-        void set(HSVColor v, {bool updateHex = true}) => setState(() {
-              hsv = v;
-              if (updateHex) hexController.text = _hex(v.toColor());
-            });
-        return AlertDialog(
-          title: const Text('اختر لوناً'),
-          content: SingleChildScrollView(
-            child: SizedBox(
-              width: 280,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
+      builder: (context, setState) => AlertDialog(
+        contentPadding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+        content: SizedBox(
+          width: 280,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ColorWheel(
+                color: hsv,
+                onChanged: (v) => setState(() => hsv = v),
+              ),
+              const SizedBox(height: 12),
+              Row(
                 children: [
-                  ColorWheel(color: hsv, onChanged: set),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      const Icon(Icons.brightness_6_outlined, size: 20),
-                      Expanded(
-                        child: Slider(
-                          value: hsv.value,
-                          onChanged: (v) => set(hsv.withValue(v)),
-                        ),
-                      ),
-                    ],
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: hsv.toColor(),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.black26),
+                    ),
                   ),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: [
-                      for (final q in quick)
-                        GestureDetector(
-                          onTap: () => set(HSVColor.fromColor(Color(q))),
-                          child: Container(
-                            width: 24,
-                            height: 24,
-                            decoration: BoxDecoration(
-                              color: Color(q),
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.black26),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: initial,
-                          borderRadius: const BorderRadiusDirectional.horizontal(
-                              start: Radius.circular(8)),
-                          border: Border.all(color: Colors.black26),
-                        ),
-                      ),
-                      Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: hsv.toColor(),
-                          borderRadius: const BorderRadiusDirectional.horizontal(
-                              end: Radius.circular(8)),
-                          border: Border.all(color: Colors.black26),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: hexController,
-                          textDirection: TextDirection.ltr,
-                          decoration: const InputDecoration(
-                            prefixText: '#',
-                            isDense: true,
-                            border: OutlineInputBorder(),
-                          ),
-                          onChanged: (s) {
-                            final c = _parseHex(s);
-                            if (c != null) {
-                              set(HSVColor.fromColor(c), updateHex: false);
-                            }
-                          },
-                        ),
-                      ),
-                    ],
+                  Expanded(
+                    child: Slider(
+                      value: hsv.value,
+                      onChanged: (v) => setState(() => hsv = hsv.withValue(v)),
+                    ),
                   ),
                 ],
               ),
-            ),
+            ],
           ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('إلغاء')),
-            FilledButton(
-                onPressed: () => Navigator.pop(context, hsv.toColor()),
-                child: const Text('موافق')),
-          ],
-        );
-      },
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, hsv.toColor()),
+              child: const Text('موافق')),
+        ],
+      ),
     ),
-  ).whenComplete(hexController.dispose);
+  );
 }

@@ -18,7 +18,7 @@ void paintStroke(Canvas canvas, Stroke s, double scale) {
   final isHighlighter = s.tool == InkTool.highlighter;
   final base = s.width * scale;
   // Pencil: slightly translucent and thinner so overlapping strokes darken.
-  final alpha = isHighlighter ? 0.35 : (s.tool == InkTool.pencil ? 0.8 : 1.0);
+  final alpha = isHighlighter ? 0.55 : (s.tool == InkTool.pencil ? 0.8 : 1.0);
   final color = Color(s.color).withValues(alpha: alpha);
 
   final paint = Paint()
@@ -27,6 +27,9 @@ void paintStroke(Canvas canvas, Stroke s, double scale) {
     ..strokeCap = isHighlighter ? StrokeCap.butt : StrokeCap.round
     ..strokeJoin = StrokeJoin.round
     ..isAntiAlias = true;
+  // The highlighter multiplies with the page: the letters under it keep
+  // their colour instead of being washed out.
+  if (isHighlighter) paint.blendMode = BlendMode.multiply;
 
   if (pts.length == 1) {
     canvas.drawCircle(

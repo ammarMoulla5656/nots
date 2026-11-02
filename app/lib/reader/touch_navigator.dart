@@ -79,6 +79,9 @@ class _TouchNavigatorState extends State<TouchNavigator> {
     final tools = widget.tools;
     if (!tools.drawing) return;
     if (_pointers.length >= 2) {
+      // The page overlay took these two fingers (scaling the selection or
+      // turning the ruler): the page stays where it is.
+      if (tools.selectionPinch) return;
       tools.setMultiTouch(true);
       _startPinch();
     } else if (e.kind == PointerDeviceKind.touch && tools.fingerScrolls) {

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nots/ink/ink_document.dart';
 import 'package:nots/ink/note_items.dart';
+import 'package:nots/ink/ruler.dart';
 import 'package:nots/ink/page_ink_overlay.dart';
 import 'package:nots/ink/selection.dart';
 import 'package:nots/ink/shapes.dart';
@@ -601,5 +602,96 @@ void main() {
     await tester.pump();
     expect(viewerDrags, before);
     expect(doc.strokeCount, 2);
+  });
+
+  testWidgets('highlighter over text becomes a word highlight; over blank page '
+      'it stays a free stroke', (tester) async {
+    final h = _Harness(tester);
+    h.words = const [
+      WordBox(0, 4, 'كلمة', Rect.fromLTWH(200, 100, 60, 14)),
+      WordBox(5, 9, 'ثانية', Rect.fromLTWH(120, 100, 70, 14)),
+    ];
+    h.tools.setMode(ToolMode.highlighter);
+    await h.pump();
+    await tester.pump();
+
+    await h.drag(const [Offset(270, 107), Offset(150, 107), Offset(110, 107)]);
+    final mark = h.doc.itemsOf(1).single;
+    expect(mark.kind, ItemKind.mark);
+    expect(mark.style, MarkStyle.highlight);
+    expect(mark.quote, 'كلمة ثانية');
+    expect(h.doc.strokeCount, 0);
+
+    await h.drag(const [Offset(50, 300), Offset(300, 300)]);
+    expect(h.doc.itemsOf(1).length, 1);
+    expect(h.doc.strokeCount, 1);
+  });
+
+  testWidgets('ruler: a stroke along its edge is a straight line; the body moves it',
+      (tester) async {
+    final h = _Harness(tester);
+    h.tools.ruler.value =
+        const Ruler(page: 1, center: Offset(200, 200), length: 300, thickness: 50);
+    h.tools
+      ..setMode(ToolMode.pen)
+      ..setSnapShapes(false);
+    await h.pump();
+
+    // bottom edge is y = 225; start close to it and wobble
+    await h.drag(const [Offset(100, 227), Offset(150, 240), Offset(220, 215), Offset(300, 223)]);
+    final s = h.doc.strokesOf(1).single;
+    expect(s.points.length, 2);
+    expect(s.points.first.y, closeTo(225, 1e-6));
+    expect(s.points.last.y, closeTo(225, 1e-6));
+    expect(s.points.last.x, closeTo(300, 1e-6));
+
+    // dragging the middle of the ruler moves it and draws nothing
+    await h.drag(const [Offset(200, 200), Offset(230, 260)]);
+    final r = h.tools.ruler.value!;
+    expect(r.center.dx, closeTo(230, 1e-6));
+    expect(r.center.dy, closeTo(260, 1e-6));
+    expect(h.doc.strokeCount, 1);
+  });
+
+  testWidgets('two fingers inside the selection frame scale it, not the page',
+      (tester) async {
+    final h = _Harness(tester);
+    h.doc.addItem(
+      1,
+      const NoteItem(
+          id: 1, kind: ItemKind.text, x: 100, y: 100, w: 120, text: 'hello world', fontSize: 14),
+    );
+    h.tools.setMode(ToolMode.text);
+    await h.pump();
+    await h.drag(const [Offset(110, 105)]); // select it
+    expect(h.selection.itemId, 1);
+    final b = h.selection.bounds!;
+    final o = h.origin;
+
+    final a = await tester.startGesture(o + Offset(b.left + 4, b.center.dy));
+    final c = await tester.startGesture(o + Offset(b.right - 4, b.center.dy));
+    expect(h.tools.selectionPinch, isTrue);
+    expect(h.tools.multiTouch, isFalse);
+    await a.moveBy(const Offset(-30, 0));
+    await c.moveBy(const Offset(30, 0));
+    await a.up();
+    await c.up();
+    await tester.pump();
+
+    final it = h.doc.itemsOf(1).single;
+    expect(it.fontSize, greaterThan(14 * 1.4));
+    expect(h.tools.selectionPinch, isFalse);
+  });
+
+  testWidgets('eraser: a tap does not delete a tape strip, a drag does',
+      (tester) async {
+    final h = _Harness(tester);
+    h.doc.addItem(1, const NoteItem(id: 1, kind: ItemKind.tape, x: 100, y: 100, w: 150, h: 20));
+    h.tools.setMode(ToolMode.eraser);
+    await h.pump();
+    await h.drag(const [Offset(150, 110)]);
+    expect(h.doc.itemsOf(1), hasLength(1));
+    await h.drag(const [Offset(110, 110), Offset(240, 110)]);
+    expect(h.doc.itemsOf(1), isEmpty);
   });
 }

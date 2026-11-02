@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nots/export/exporter.dart';
 import 'package:nots/ink/ink_document.dart';
 import 'package:nots/ink/ink_store.dart';
 import 'package:nots/ink/stroke.dart';
@@ -115,5 +116,14 @@ void main() {
     await (await InkStore.open('empty')).dispose();
     expect(await InkStore.orphans({}), isEmpty);
     expect(InkDocument().strokeCount, 0);
+  });
+
+  test('export file names always have a dot and the right extension', () {
+    expect(exportFileName('المسائل المنتخبة 1441', 'pdf'), 'المسائل المنتخبة 1441.pdf');
+    expect(exportFileName('Book v1.2', 'nots'), 'Book v1.2.nots');
+    expect(exportFileName('a/b:c*d', 'png'), 'a b c d.png');
+    expect(exportFileName('   ', '.nots'), 'nots.nots');
+    expect(exportFileName('x' * 200, 'pdf').length, 84);
+    expect(exportFileName('x', 'pdf').endsWith('.pdf'), isTrue);
   });
 }

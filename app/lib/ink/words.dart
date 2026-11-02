@@ -85,3 +85,30 @@ List<Rect> lineRects(List<WordBox> words) {
   }
   return lines;
 }
+
+/// Indices of the words a stroke passed over, in reading order. [path] is the
+/// stroke's polyline (PDF points); each segment is sampled every [step]
+/// points, and a word counts when a sample falls inside its box widened by
+/// [tolerance]. A stroke that touches no word returns an empty list.
+List<int> wordsAlongPath(List<WordBox> words, List<Offset> path,
+    {double tolerance = 1.5, double step = 1.5}) {
+  if (path.isEmpty || words.isEmpty) return const [];
+  final hit = <int>{};
+  void sample(Offset p) {
+    for (var i = 0; i < words.length; i++) {
+      if (!hit.contains(i) && words[i].rect.inflate(tolerance).contains(p)) {
+        hit.add(i);
+      }
+    }
+  }
+
+  sample(path.first);
+  for (var i = 1; i < path.length; i++) {
+    final a = path[i - 1], b = path[i];
+    final n = math.max(1, ((b - a).distance / step).ceil());
+    for (var k = 1; k <= n; k++) {
+      sample(Offset.lerp(a, b, k / n)!);
+    }
+  }
+  return hit.toList()..sort();
+}

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'note_items.dart';
+import 'ruler.dart';
 import 'shapes.dart';
 import 'stroke.dart';
 
@@ -35,6 +36,20 @@ class ToolController extends ChangeNotifier {
   bool _snapShapes = true;
   bool _multiTouch = false;
   bool _sawStylus = false;
+
+  /// The ruler on a page, or null. A separate notifier so moving it repaints
+  /// only the ruler, not the whole toolbar and viewer.
+  final ruler = ValueNotifier<Ruler?>(null);
+
+  bool _selectionPinch = false;
+
+  /// A page overlay is using two fingers itself (scaling the selection or
+  /// turning the ruler): the viewer must not zoom or move the page.
+  bool get selectionPinch => _selectionPinch;
+
+  void setSelectionPinch(bool v) {
+    _selectionPinch = v; // read directly by the viewer's touch handler
+  }
 
   ToolMode get mode => _mode;
   bool get drawing => _mode != ToolMode.hand;
@@ -85,17 +100,17 @@ class ToolController extends ChangeNotifier {
   bool get snapShapes => _snapShapes;
 
   int get color => switch (_mode) {
-        ToolMode.highlighter => _highlighterColor,
-        ToolMode.word => _markColor,
-        _ => _penColor,
-      };
+    ToolMode.highlighter => _highlighterColor,
+    ToolMode.word => _markColor,
+    _ => _penColor,
+  };
 
   /// Width of strokes; text size in text mode.
   double get width => switch (_mode) {
-        ToolMode.highlighter => _highlighterWidth,
-        ToolMode.text => _textSize,
-        _ => _penWidth,
-      };
+    ToolMode.highlighter => _highlighterWidth,
+    ToolMode.text => _textSize,
+    _ => _penWidth,
+  };
 
   double get textSize => _textSize;
 
@@ -105,10 +120,10 @@ class ToolController extends ChangeNotifier {
   static const textSizeRange = (min: 6.0, max: 96.0);
 
   ({double min, double max}) get widthRange => switch (_mode) {
-        ToolMode.highlighter => highlighterWidthRange,
-        ToolMode.text => textSizeRange,
-        _ => penWidthRange,
-      };
+    ToolMode.highlighter => highlighterWidthRange,
+    ToolMode.text => textSizeRange,
+    _ => penWidthRange,
+  };
 
   /// Whether the palette applies to the current tool.
   bool get hasStyle =>
@@ -152,15 +167,15 @@ class ToolController extends ChangeNotifier {
   ];
 
   List<int> get palette => switch (_mode) {
-        ToolMode.highlighter => [...highlighterColors, ..._customHighlighter],
-        ToolMode.word => [
-            ...highlighterColors,
-            0xFFD32F2F,
-            0xFF1565C0,
-            ..._customHighlighter,
-          ],
-        _ => [...penColors, ..._customPen],
-      };
+    ToolMode.highlighter => [...highlighterColors, ..._customHighlighter],
+    ToolMode.word => [
+      ...highlighterColors,
+      0xFFD32F2F,
+      0xFF1565C0,
+      ..._customHighlighter,
+    ],
+    _ => [...penColors, ..._customPen],
+  };
 
   void setMode(ToolMode m) {
     if (_mode == m) return;

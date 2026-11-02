@@ -206,6 +206,14 @@ class SelectionController extends ChangeNotifier {
     select(page, copies.map((s) => s.id).toSet());
   }
 
+  /// Colour of the selection (of its first stroke or the item), or null.
+  int? get currentColor {
+    final it = item;
+    if (it != null) return it.color;
+    final st = strokes;
+    return st.isEmpty ? null : st.first.color;
+  }
+
   void recolor(int color) {
     if (!active) return;
     final it = item;

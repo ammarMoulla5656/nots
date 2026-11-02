@@ -6,7 +6,6 @@ import 'dart:ui' as ui;
 import 'package:archive/archive.dart';
 import 'package:flutter/widgets.dart';
 import 'package:image/image.dart' as img;
-import 'package:path/path.dart' as p;
 import 'package:pdfrx/pdfrx.dart';
 
 import '../ink/ink_document.dart';
@@ -195,8 +194,17 @@ class NotsPackage {
   }
 }
 
-/// A safe file name from a book title.
+/// A safe file name (title, dot, extension) from a book title. The extension is
+/// always appended after a dot, and a dot inside the title is kept.
 String exportFileName(String title, String ext) {
-  final clean = title.replaceAll(RegExp(r'[\\/:*?"<>|]'), ' ').trim();
-  return p.setExtension(clean.isEmpty ? 'nots' : clean, ext);
+  final clean = title
+      .replaceAll(RegExp(r'[\\/:*?"<>|]'), ' ')
+      .replaceAll(RegExp(r'[\u0000-\u001f]'), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+  final base = clean.isEmpty ? 'nots' : clean;
+  final dotted = ext.startsWith('.') ? ext : '.$ext';
+  final cut = base.length > 80 ? base.substring(0, 80).trim() : base;
+  return '$cut$dotted';
 }
+
