@@ -1,0 +1,5 @@
+__pycache__/
+tessdata/
+*.nots.pdf
+*.report.json
+*.debug/

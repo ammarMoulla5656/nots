@@ -131,7 +131,8 @@ class StrokeCodec {
   static const _magic = [0x4E, 0x4F, 0x54, 0x53]; // "NOTS"
   // Version 1: strokes only. Version 2 appends text boxes, pins and tape.
   // Version 3 adds marks on PDF words (style, line rectangles, quote).
-  static const _version = 3;
+  // Version 4 adds the marked words' indices in the book text.
+  static const _version = 4;
   static const _scale = 100.0;
 
   static Uint8List encodeDocument(
@@ -231,6 +232,9 @@ class StrokeCodec {
     final quote = utf8.encode(it.quote);
     w.varint(quote.length);
     w.bytes(quote);
+    // Version 4: word range, stored +1 so that "none" (-1) is 0.
+    w.varint(it.wordFrom + 1);
+    w.varint(it.wordTo + 1);
   }
 
   static T _enumAt<T>(List<T> values, int index, String what) {
@@ -268,10 +272,17 @@ class StrokeCodec {
       ];
       quote = utf8.decode(r.bytes(r.varint()));
     }
+    var wordFrom = -1, wordTo = -1;
+    if (version >= 4) {
+      wordFrom = r.varint() - 1;
+      wordTo = r.varint() - 1;
+    }
     return NoteItem(
       style: style,
       rects: rects,
       quote: quote,
+      wordFrom: wordFrom,
+      wordTo: wordTo,
       id: id,
       kind: kind,
       x: x,

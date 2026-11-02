@@ -144,6 +144,25 @@ class InkStore {
     return true;
   }
 
+  /// Copies the writing and reading position of the book [fromId] to the
+  /// book [toId], which must have no writing yet: used when a linked
+  /// edition of a PDF (same pages, same places) replaces the original. The
+  /// original keeps its own copy. Returns false when nothing was copied.
+  static Future<bool> copyWriting(String fromId, String toId) async {
+    if (fromId == toId || !await hasWriting(fromId) || await hasWriting(toId)) {
+      return false;
+    }
+    final dir = await _dir();
+    await writeRaw(
+      toId,
+      await File(p.join(dir.path, '$fromId.nots')).readAsBytes(),
+    );
+    final prefs = File(p.join(dir.parent.path, 'prefs', '$fromId.json'));
+    final to = File(p.join(dir.parent.path, 'prefs', '$toId.json'));
+    if (await prefs.exists() && !await to.exists()) await prefs.copy(to.path);
+    return true;
+  }
+
   /// Whether the book [bookId] has any writing saved.
   static Future<bool> hasWriting(String bookId) async {
     final f = File(p.join((await _dir()).path, '$bookId.nots'));

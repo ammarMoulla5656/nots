@@ -4,13 +4,17 @@ import 'dart:ui';
 /// One word of a PDF page's text layer, with its box in PDF points
 /// (top-left origin, like the ink).
 class WordBox {
-  const WordBox(this.start, this.end, this.text, this.rect);
+  const WordBox(this.start, this.end, this.text, this.rect, [this.id = -1]);
 
   /// Character range in the page text.
   final int start;
   final int end;
   final String text;
   final Rect rect;
+
+  /// Index of the word in the whole book text (from the book's word map),
+  /// or -1 for a word read from the PDF alone.
+  final int id;
 }
 
 bool _isSpace(int cu) =>

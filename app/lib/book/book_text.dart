@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:ui';
 
 import 'package:archive/archive.dart';
 
@@ -104,14 +105,158 @@ class SearchHit {
   final int end;
 }
 
-/// The clean text of a book, page by page, with its headings. Built from a
-/// Word file that matches the PDF page for page.
+/// Where the words of one page's text sit on the PDF page: from the word
+/// map that nots-cook embeds in the PDF.
+class PageLayout {
+  PageLayout._(this.kind, this.firstWord, this.starts, this.ends, this.boxes);
+
+  /// "text", "ocr", "image" (a picture: words without places) or "blank".
+  final String kind;
+
+  /// Index in the whole book of this page's first word.
+  final int firstWord;
+
+  /// Character range of each word in the page text.
+  final Int32List starts;
+  final Int32List ends;
+
+  /// left, top, right, bottom of each word in PDF points (top-left origin);
+  /// NaN for a word whose place is unknown.
+  final Float32List boxes;
+
+  int get length => starts.length;
+
+  Rect? rectOf(int i) {
+    final l = boxes[4 * i];
+    if (l.isNaN) return null;
+    return Rect.fromLTRB(l, boxes[4 * i + 1], boxes[4 * i + 2], boxes[4 * i + 3]);
+  }
+
+  /// Words of [text] (separated by spaces and line breaks) with the boxes of
+  /// a word map page: per word four tenths-of-a-point differences from the
+  /// previous placed word, or null alone for a word without a place.
+  static PageLayout parse(String kind, int firstWord, String text, List? deltas) {
+    final starts = <int>[], ends = <int>[];
+    var i = 0;
+    while (i < text.length) {
+      final c = text.codeUnitAt(i);
+      if (c == 0x20 || c == 0x0A) {
+        i++;
+        continue;
+      }
+      final s = i;
+      while (i < text.length) {
+        final d = text.codeUnitAt(i);
+        if (d == 0x20 || d == 0x0A) break;
+        i++;
+      }
+      starts.add(s);
+      ends.add(i);
+    }
+    final n = starts.length;
+    final boxes = Float32List(4 * n)..fillRange(0, 4 * n, double.nan);
+    if (deltas != null) {
+      var k = 0, w = 0;
+      final prev = [0, 0, 0, 0];
+      while (k < deltas.length && w < n) {
+        final v = deltas[k];
+        if (v == null) {
+          k++;
+          w++;
+          continue;
+        }
+        if (k + 4 > deltas.length) break;
+        for (var j = 0; j < 4; j++) {
+          prev[j] += (deltas[k + j] as num).toInt();
+          boxes[4 * w + j] = prev[j] / 10;
+        }
+        k += 4;
+        w++;
+      }
+      if (w != n || k != deltas.length) {
+        // A map that does not fit its text: no places rather than wrong ones.
+        boxes.fillRange(0, 4 * n, double.nan);
+      }
+    }
+    return PageLayout._(kind, firstWord, Int32List.fromList(starts),
+        Int32List.fromList(ends), boxes);
+  }
+
+  /// Index of the first word ending after [offset] (binary search).
+  int _wordAtOrAfter(int offset) {
+    var lo = 0, hi = length;
+    while (lo < hi) {
+      final mid = (lo + hi) >> 1;
+      if (ends[mid] <= offset) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    return lo;
+  }
+
+  /// Words overlapping the character range [start, end), as (first, last)
+  /// page word indices, or null.
+  (int, int)? wordsIn(int start, int end) {
+    final a = _wordAtOrAfter(start);
+    if (a >= length || starts[a] >= end) return null;
+    var b = a;
+    while (b + 1 < length && starts[b + 1] < end) {
+      b++;
+    }
+    return (a, b);
+  }
+
+  /// Words covered by [rects] (PDF points, top-left origin), in reading
+  /// order: at least [share] of a word's box inside one of them, so a
+  /// selection that starts or ends inside a word still takes the word.
+  List<int> wordsInRects(List<Rect> rects, {double slack = 1, double share = 0.3}) {
+    final out = <int>[];
+    final inflated = [for (final r in rects) r.inflate(slack)];
+    for (var i = 0; i < length; i++) {
+      final r = rectOf(i);
+      if (r == null) continue;
+      final area = r.width * r.height;
+      for (final x in inflated) {
+        final o = r.intersect(x);
+        if (o.width > 0 && o.height > 0 && o.width * o.height >= share * area) {
+          out.add(i);
+          break;
+        }
+      }
+    }
+    return out;
+  }
+
+  /// The exact text of page words [ids] (reading order): the source's own
+  /// space or line break between neighbours, one space across gaps.
+  String textOf(String pageText, List<int> ids) {
+    final b = StringBuffer();
+    for (var k = 0; k < ids.length; k++) {
+      final i = ids[k];
+      if (k > 0) {
+        final prev = ids[k - 1];
+        b.write(i == prev + 1 ? pageText.substring(ends[prev], starts[i]) : ' ');
+      }
+      b.write(pageText.substring(starts[i], ends[i]));
+    }
+    return b.toString();
+  }
+}
+
+/// The clean text of a book, page by page, with its headings: from the word
+/// map embedded in the PDF (with every word's place), or from a Word file
+/// linked by hand that matches the PDF page for page.
 class BookText {
   BookText({
     required this.pages,
     required this.headings,
     this.source = '',
     this.pageOffset = 0,
+    this.layout,
+    this.sourceId = '',
+    this.title = '',
   }) : _norm = [for (final p in pages) normalizeForSearch(p)];
 
   /// Text of each page; pages[0] is page 1.
@@ -124,9 +269,46 @@ class BookText {
   /// PDF page = book page + [pageOffset] (0 when they match exactly).
   final int pageOffset;
 
+  /// Every word's place on its page, when the text came from a word map.
+  final List<PageLayout>? layout;
+
+  /// Book id (content fingerprint) of the PDF the word map was made from:
+  /// writing done on that edition fits this one exactly.
+  final String sourceId;
+
+  /// Title written in the word map.
+  final String title;
+
   final List<NormalizedText> _norm;
 
   int get pageCount => pages.length;
+
+  /// True when the text is the PDF's own word map (not a separate file).
+  bool get embedded => layout != null;
+
+  /// Layout of book page [bookPage], or null.
+  PageLayout? layoutOf(int bookPage) {
+    final l = layout;
+    if (l == null || bookPage < 1 || bookPage > l.length) return null;
+    return l[bookPage - 1];
+  }
+
+  /// Boxes of the words a hit covers (PDF points, top-left origin).
+  List<Rect> hitRects(SearchHit h) {
+    final l = layoutOf(h.page);
+    final range = l?.wordsIn(h.start, h.end);
+    if (l == null || range == null) return const [];
+    return [
+      for (var i = range.$1; i <= range.$2; i++) ?l.rectOf(i),
+    ];
+  }
+
+  /// The exact text of page words [from]..[to] (inclusive), with the line
+  /// breaks between paragraphs.
+  String textOfWords(int bookPage, int from, int to) {
+    final l = layoutOf(bookPage)!;
+    return pages[bookPage - 1].substring(l.starts[from], l.ends[to]);
+  }
 
   int pdfPageOf(int bookPage) => bookPage + pageOffset;
   int bookPageOf(int pdfPage) => pdfPage - pageOffset;
@@ -184,8 +366,40 @@ class BookText {
     'headings': [for (final h in headings) h.toJson()],
   });
 
+  /// The book text of a word map (see tools/cook/FORMAT.md).
+  static BookText fromWordMap(Map<String, dynamic> j) {
+    if (j['format'] != 'nots-words') {
+      throw const FormatException('ليست خريطة كلمات');
+    }
+    final pages = <String>[];
+    final layout = <PageLayout>[];
+    var first = 0;
+    for (final p in (j['pages'] as List).cast<Map<String, dynamic>>()) {
+      final text = p['t'] as String? ?? '';
+      final l = PageLayout.parse(
+          p['k'] as String? ?? 'text', first, text, p['b'] as List?);
+      pages.add(text);
+      layout.add(l);
+      first += l.length;
+    }
+    final src = j['source'] as Map<String, dynamic>? ?? const {};
+    return BookText(
+      pages: pages,
+      headings: [
+        for (final h in (j['headings'] as List? ?? const []).cast<Map<String, dynamic>>())
+          BookHeading(h['t'] as String, h['l'] as int, h['p'] as int),
+      ],
+      source: src['text'] as String? ?? 'nots-words',
+      layout: layout,
+      sourceId: src['pdfId'] as String? ?? '',
+      title: j['title'] as String? ?? '',
+    );
+  }
+
+  /// Text saved by [toJson], or a word map.
   static BookText fromJson(String s) {
     final j = jsonDecode(s) as Map<String, dynamic>;
+    if (j['format'] == 'nots-words') return fromWordMap(j);
     return BookText(
       pages: (j['pages'] as List).cast<String>(),
       headings: [

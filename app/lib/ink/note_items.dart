@@ -30,6 +30,8 @@ class NoteItem {
     this.style = MarkStyle.highlight,
     this.rects = const [],
     this.quote = '',
+    this.wordFrom = -1,
+    this.wordTo = -1,
   });
 
   final int id;
@@ -63,6 +65,14 @@ class NoteItem {
   /// linking to the book text later).
   final String quote;
 
+  /// Marks only: the marked words as indices in the whole book text (first
+  /// and last, inclusive) when the book has a word map, else -1. They name
+  /// the same words in any app reading the same map, whatever the screen.
+  final int wordFrom;
+  final int wordTo;
+
+  bool get hasWords => wordFrom >= 0 && wordTo >= wordFrom;
+
   static const defaultTextWidth = 220.0;
   static const pinRadius = 9.0;
 
@@ -79,6 +89,8 @@ class NoteItem {
     MarkStyle? style,
     List<Rect>? rects,
     String? quote,
+    int? wordFrom,
+    int? wordTo,
   }) => NoteItem(
     id: id ?? this.id,
     kind: kind,
@@ -93,6 +105,8 @@ class NoteItem {
     style: style ?? this.style,
     rects: rects ?? this.rects,
     quote: quote ?? this.quote,
+    wordFrom: wordFrom ?? this.wordFrom,
+    wordTo: wordTo ?? this.wordTo,
   );
 
   /// Area that reacts to touches, in PDF points. Pins get a little slack so

@@ -17,6 +17,7 @@ import unicodedata
 from dataclasses import dataclass, field
 
 import pymupdf
+from fontTools.pens.boundsPen import BoundsPen
 from fontTools.ttLib import TTFont
 
 SUBSET_TAG = re.compile(r'^[A-Z]{6}\+')
@@ -47,19 +48,46 @@ def glyph_texts_from_font(buf: bytes) -> dict[int, str]:
         cm = tt.getBestCmap() or {}
     except Exception:
         cm = {}
-    # Base characters first; presentation forms only when nothing else.
-    for u, g in sorted(cm.items(), key=lambda kv: (0xFB50 <= kv[0] <= 0xFEFF, kv[0])):
+    presentation: list[tuple[str, str]] = []
+    for u, g in sorted(cm.items()):
         if u < 0x20 or 0xE000 <= u <= 0xF8FF:
             continue  # control codes and private-use slots carry no text
         s = chr(u)
         if 0xFB50 <= u <= 0xFEFF:
             s = unicodedata.normalize('NFKC', s)
+            if len(s) > 1:
+                # A ligature: what its parts are is the font's own business.
+                presentation.append((g, s))
+                continue
+        # A letter's code point (even as an initial, medial or final form)
+        # names the letter exactly: the shaping rules may reach the same
+        # glyph from two letters (yeh and alef maksura share forms).
         out.setdefault(g, s)
+    lookups = []
     if 'GSUB' in tt:
         try:
             lookups = tt['GSUB'].table.LookupList.Lookup
         except Exception:
             lookups = []
+    _close_gsub(out, lookups)
+    # Presentation forms only for glyphs the shaping rules do not reach: the
+    # rules say what a glyph stands for in this font (U+FDF2 "Allah" is
+    # drawn after a separate alef here, so it stands for "لله"), while the
+    # standard decomposition of the code point may say otherwise.
+    added = False
+    for g, s in presentation:
+        if g not in out:
+            out[g] = s
+            added = True
+    if added:
+        _close_gsub(out, lookups)
+    return {gid[n]: s for n, s in out.items() if n in gid}
+
+
+def _close_gsub(out: dict[str, str], lookups) -> None:
+    """Gives every glyph the shaping rules derive from known glyphs the text
+    of its sources: forms inherit their letter, ligatures join theirs."""
+    if lookups:
         changed = True
         while changed:
             changed = False
@@ -87,7 +115,6 @@ def glyph_texts_from_font(buf: bytes) -> dict[int, str]:
                                 if lig.LigGlyph not in out and all(c in out for c in comps):
                                     out[lig.LigGlyph] = ''.join(out[c] for c in comps)
                                     changed = True
-    return {gid[n]: s for n, s in out.items() if n in gid}
 
 
 def parse_tounicode(data: bytes) -> dict[int, str]:
@@ -155,6 +182,7 @@ class PdfFont:
     tounicode_xref: int  # 0 when absent
     tounicode: dict[int, str] = field(default_factory=dict)
     from_font: dict[int, str] = field(default_factory=dict)
+    mark_ink: dict[int, tuple[float, float]] = field(default_factory=dict)
 
 
 def _key(doc: pymupdf.Document, xref: int, key: str) -> tuple[str, str]:
@@ -201,6 +229,7 @@ def read_fonts(doc: pymupdf.Document) -> dict[int, PdfFont]:
                 _, ext, _, buf = doc.extract_font(xref)
                 if buf and ext in ('ttf', 'otf', 'cff', 'n/a'):
                     pf.from_font = glyph_texts_from_font(buf)
+                    pf.mark_ink = mark_extents(buf, pf.from_font)
             except Exception:
                 pf.from_font = {}
             fonts[xref] = pf
@@ -208,15 +237,49 @@ def read_fonts(doc: pymupdf.Document) -> dict[int, PdfFont]:
 
 
 def family_maps(fonts: dict[int, PdfFont]) -> dict[str, dict[int, str]]:
-    """gid -> text from the font programs, merged per family: Word embeds
+    """gid -> text from the font programs, merged per font name: Word embeds
     the same font (same glyph ids) several times, some copies stripped of
-    their tables."""
+    their tables. A bold face is a font of its own, with its own glyph ids."""
     fams: dict[str, dict[int, str]] = {}
     for pf in sorted(fonts.values(), key=lambda f: -len(f.from_font)):
-        fam = fams.setdefault(base_family(pf.name), {})
+        fam = fams.setdefault(pf.name, {})
         for g, s in pf.from_font.items():
             fam.setdefault(g, s)
     return fams
+
+
+def family_mark_ink(fonts: dict[int, PdfFont]) -> dict[str, dict[int, tuple[float, float]]]:
+    """Ink extents of the diacritic glyphs, merged per font name."""
+    out: dict[str, dict[int, tuple[float, float]]] = {}
+    for pf in fonts.values():
+        m = out.setdefault(pf.name, {})
+        for g, e in pf.mark_ink.items():
+            m.setdefault(g, e)
+    return out
+
+
+def mark_extents(buf: bytes, texts: dict[int, str]) -> dict[int, tuple[float, float]]:
+    """Left and right edge of the ink of each diacritic glyph, as fractions
+    of the em from the glyph's origin: tells which letter it is drawn on."""
+    try:
+        tt = TTFont(io.BytesIO(buf), lazy=True)
+        gs = tt.getGlyphSet()
+        order = tt.getGlyphOrder()
+        upem = tt['head'].unitsPerEm
+    except Exception:
+        return {}
+    out = {}
+    for gid, s in texts.items():
+        if not s or not all(unicodedata.category(c) in ('Mn', 'Me') for c in s) or gid >= len(order):
+            continue
+        try:
+            pen = BoundsPen(gs)
+            gs[order[gid]].draw(pen)
+        except Exception:
+            continue
+        if pen.bounds:
+            out[gid] = (pen.bounds[0] / upem, pen.bounds[2] / upem)
+    return out
 
 
 def family_tounicode(fonts: dict[int, PdfFont]) -> dict[str, dict[int, str]]:

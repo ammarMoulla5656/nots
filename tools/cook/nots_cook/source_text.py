@@ -38,7 +38,9 @@ class SourcePage:
 
     @property
     def text(self) -> str:
-        return '\n'.join(p for p in self.paragraphs if p)
+        """Paragraphs joined by line breaks, words by single spaces: the only
+        two separators readers of the word map split on."""
+        return '\n'.join(' '.join(p.split()) for p in self.paragraphs if p.split())
 
     def words(self) -> list[str]:
         return self.text.split()

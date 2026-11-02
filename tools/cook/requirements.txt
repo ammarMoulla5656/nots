@@ -1,0 +1,4 @@
+pymupdf>=1.24
+fonttools>=4.40
+# Optional: checks the result with PDFium, the engine of the app.
+pypdfium2>=4.0

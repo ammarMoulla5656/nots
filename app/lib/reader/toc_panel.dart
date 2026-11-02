@@ -17,6 +17,7 @@ class TocPanel extends StatefulWidget {
     required this.onOpen,
     required this.onLink,
     required this.onUnlink,
+    this.embedded = false,
   });
 
   final String title;
@@ -27,7 +28,11 @@ class TocPanel extends StatefulWidget {
   final int currentPdfPage;
   final ValueChanged<int> onOpen;
   final VoidCallback onLink;
-  final VoidCallback onUnlink;
+  /// Null when the text cannot be unlinked (it is part of the PDF).
+  final VoidCallback? onUnlink;
+
+  /// The text is the PDF's own word map (made by nots-cook).
+  final bool embedded;
 
   /// Entries built from the linked book text.
   static List<TocEntry> fromBook(BookText book) => [
@@ -172,12 +177,18 @@ class _TocPanelState extends State<TocPanel> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                subtitle: const Text('ملف النص المربوط'),
-                trailing: IconButton(
-                  tooltip: 'إلغاء الربط',
-                  icon: const Icon(Icons.link_off),
-                  onPressed: widget.onUnlink,
+                subtitle: Text(
+                  widget.embedded
+                      ? 'نص الكتاب مدمج في ملفه: كل كلمة مربوطة بمكانها'
+                      : 'ملف النص المربوط',
                 ),
+                trailing: widget.onUnlink == null
+                    ? null
+                    : IconButton(
+                        tooltip: 'إلغاء الربط',
+                        icon: const Icon(Icons.link_off),
+                        onPressed: widget.onUnlink,
+                      ),
               ),
           ],
         ),

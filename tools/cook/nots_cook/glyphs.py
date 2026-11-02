@@ -58,10 +58,9 @@ def text_dir(s: str) -> str:
 def page_glyphs(page: pymupdf.Page) -> list[Glyph]:
     """Every glyph drawn on the page, in drawing order."""
     out: list[Glyph] = []
+    seen: set[tuple] = set()
     seq = 0
     for span in page.get_texttrace():
-        if span.get('type') == 3 and span.get('opacity', 1) == 0:
-            pass  # invisible text is still text (e.g. an OCR layer)
         font = family_key(span.get('font', ''))
         size = float(span.get('size', 0))
         chars = span['chars']
@@ -75,21 +74,47 @@ def page_glyphs(page: pymupdf.Page) -> list[Glyph]:
                     tu += chr(chars[j][0])
                 j += 1
             ox, oy = c[2]
+            # The same glyph drawn twice in the same place (fake bold,
+            # outline + fill) is one glyph of text.
+            key = (font, c[1], round(ox, 1), round(oy, 1))
+            if key in seen:
+                continue
+            seen.add(key)
             out.append(Glyph(seq=seq, font=font, gid=c[1], tu=tu, x=ox, y=oy,
                              bbox=tuple(c[3]), size=size))
             seq += 1
     return out
 
 
-def attach_marks(glyphs: list[Glyph]) -> list[Glyph]:
-    """Moves each diacritic onto the glyph drawn before it; returns the base
-    glyphs (letters, digits, spaces, punctuation)."""
+def attach_marks(glyphs: list[Glyph], ink=None) -> list[Glyph]:
+    """Moves each diacritic onto the letter it sits on; returns the base
+    glyphs (letters, digits, spaces, punctuation).
+
+    A diacritic is drawn right before or right after its letter depending
+    on the producer (Word draws it before), so the choice is made by place:
+    the neighbour whose box holds the middle of the diacritic's ink.
+    [ink] gives a glyph's ink extent as fractions of the font size from its
+    origin (from the font outline); without it the origin is used."""
+    is_base = [not is_mark(g.text) for g in glyphs]
     bases: list[Glyph] = []
-    for g in glyphs:
-        if is_mark(g.text) and bases and abs(bases[-1].y - g.y) < max(g.size, 1):
-            bases[-1].marks.append(g)
-        else:
+    n = len(glyphs)
+    for k, g in enumerate(glyphs):
+        if is_base[k]:
             bases.append(g)
+            continue
+        tol = max(g.size, 1)
+        prev = next((glyphs[j] for j in range(k - 1, -1, -1) if is_base[j]), None)
+        nxt = next((glyphs[j] for j in range(k + 1, n) if is_base[j]), None)
+        cands = [c for c in (prev, nxt) if c is not None and abs(c.y - g.y) < tol]
+        if not cands:
+            bases.append(g)  # a lone diacritic: keep it as text
+            continue
+        e = ink(g) if ink else None
+        center = g.x + (e[0] + e[1]) / 2 * g.size if e else g.x
+        inside = [c for c in cands if c.bbox[0] - 0.2 <= center <= c.bbox[2] + 0.2]
+        pool = inside if len(inside) == 1 else cands
+        best = min(pool, key=lambda c: abs((c.bbox[0] + c.bbox[2]) / 2 - center))
+        best.marks.append(g)
     return bases
 
 
@@ -159,9 +184,9 @@ def logical_text(glyph: Glyph, rtl_run: bool) -> str:
     return t + ''.join(m.text for m in glyph.marks)
 
 
-def page_lines(glyphs: list[Glyph]) -> list[list[tuple[Glyph, bool]]]:
+def page_lines(glyphs: list[Glyph], ink=None) -> list[list[tuple[Glyph, bool]]]:
     """Base glyphs (with marks attached) per line, each line in reading order."""
     for g in glyphs:
         g.marks = []
-    bases = attach_marks(glyphs)
+    bases = attach_marks(glyphs, ink)
     return [logical_order(L) for L in group_lines(bases)]

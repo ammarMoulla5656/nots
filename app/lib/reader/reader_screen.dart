@@ -29,6 +29,7 @@ import '../ui/color_wheel.dart';
 import 'pages_sheet.dart';
 import 'reader_prefs.dart';
 import 'scrub_bar.dart';
+import 'search_highlight.dart';
 import 'search_page.dart';
 import 'toc_panel.dart';
 import 'touch_navigator.dart';
@@ -63,6 +64,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   /// The search result being shown, with the whole result list.
   SearchPick? _search;
+
+  /// [_search] for the pages, which draw where its hits are.
+  final _searchShown = ValueNotifier<SearchPick?>(null);
+
+  void _setSearch(SearchPick? pick) {
+    setState(() => _search = pick);
+    _searchShown.value = pick;
+  }
 
   /// Last page read and bookmarks of this book.
   ReaderPrefs? _prefs;
@@ -126,10 +135,90 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _prefs = pr;
       _restorePage();
     });
-    BookLinkStore.load(widget.book.id).then((b) {
-      if (mounted && b != null) setState(() => _book = b);
+    BookLinkStore.open(
+      widget.book.id,
+      widget.library.pathOf(widget.book),
+    ).then((b) {
+      if (mounted && b != null) _bookArrived(b);
     });
     _openInk();
+  }
+
+  /// The book's text is ready. With a word map, the words of the pages come
+  /// from the text (exact letters, the source's own spelling), so taps,
+  /// marks, copying and search all use it.
+  void _bookArrived(BookText b) {
+    setState(() {
+      _book = b;
+      if (b.embedded) {
+        _words.clear();
+        _wordsReady.clear();
+      }
+    });
+    final entry = widget.book;
+    final fileTitle = entry.fileName.replaceAll(RegExp(r'\.pdf$', caseSensitive: false), '');
+    if (b.title.isNotEmpty && entry.title == fileTitle) {
+      unawaited(widget.library.rename(entry, b.title));
+    }
+    if (b.embedded && b.sourceId.isNotEmpty) unawaited(_offerOriginalWriting(b));
+  }
+
+  /// This PDF is the linked edition of another PDF: the same pages in the
+  /// same places. Writing done on the original can come along.
+  Future<void> _offerOriginalWriting(BookText b) async {
+    final from = b.sourceId;
+    if (from == widget.book.id ||
+        !await InkStore.hasWriting(from) ||
+        await InkStore.hasWriting(widget.book.id) ||
+        !mounted) {
+      return;
+    }
+    final store = _store;
+    if (store != null &&
+        (store.document.strokeCount > 0 ||
+            store.document.items.values.any((l) => l.isNotEmpty))) {
+      return;
+    }
+    final original = widget.library.byId(from)?.title;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('نقل كتابتك إلى هذه النسخة؟'),
+        content: Text(
+          'هذه النسخة المترابطة من الكتاب${original == null ? '' : ' «$original»'} '
+          'لها الصفحات نفسها. لك كتابة وعلامات على النسخة الأصلية: '
+          'تُنسخ إلى هنا في أماكنها نفسها، وتبقى الأصلية كما هي.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('لا'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('نقل الكتابة'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final old = _store;
+    final oldSelection = _selection;
+    setState(() {
+      _store = null;
+      _selection = null;
+    });
+    await old?.dispose();
+    oldSelection?.dispose();
+    final copied = await InkStore.copyWriting(from, widget.book.id);
+    await _openInk();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(copied ? 'نُقلت كتابتك إلى هذه النسخة.' : 'تعذّر نقل الكتابة.'),
+        ),
+      );
+    }
   }
 
   Future<void> _openInk() async {
@@ -251,6 +340,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _tools.dispose();
     _hideTimer?.cancel();
     _prefs?.dispose();
+    _searchShown.dispose();
     super.dispose();
   }
 
@@ -296,10 +386,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (page != null) await _viewer.goToPage(pageNumber: page);
   }
 
-  /// Words of a page from the PDF text layer, converted to PDF points with a
-  /// top-left origin (the PDF itself counts y from the bottom).
+  /// Words of a page in PDF points with a top-left origin: from the book's
+  /// word map when it has one (the source text's exact words, each with its
+  /// index in the book), else from the PDF text layer (where the PDF itself
+  /// counts y from the bottom).
   Future<List<WordBox>> _wordsOf(PdfPage page) =>
       _words.putIfAbsent(page.pageNumber, () async {
+        final mapped = _mappedWords(page.pageNumber);
+        if (mapped != null) {
+          _wordsReady[page.pageNumber] = mapped;
+          return mapped;
+        }
         final text = await page.loadStructuredText();
         final h = page.height;
         final rects = [
@@ -313,11 +410,38 @@ class _ReaderScreenState extends State<ReaderScreen> {
         return words;
       });
 
+  /// The placed words of PDF page [pdfPage] from the word map, or null.
+  List<WordBox>? _mappedWords(int pdfPage) {
+    final book = _book;
+    final bookPage = book?.bookPageOf(pdfPage) ?? 0;
+    final l = book?.layoutOf(bookPage);
+    if (book == null || l == null || l.kind == 'image' || l.kind == 'blank') {
+      return null;
+    }
+    final text = book.pages[bookPage - 1];
+    return [
+      for (var i = 0; i < l.length; i++)
+        if (l.rectOf(i) case final r?)
+          WordBox(l.starts[i], l.ends[i],
+              text.substring(l.starts[i], l.ends[i]), r, l.firstWord + i),
+    ];
+  }
+
   List<Widget> _overlays(BuildContext context, Rect pageRect, PdfPage page) {
     final store = _store, selection = _selection;
     if (store == null || selection == null) return const [];
+    final book = _book;
     return [
+      if (book != null && book.embedded)
+        SearchHighlight(
+          search: _searchShown,
+          book: book,
+          pdfPage: page.pageNumber,
+          pageWidthPt: page.width,
+        ),
       PageInkOverlay(
+        // A new word source (the book's map arrived) means new words.
+        key: ValueKey(book?.embedded ?? false),
         document: store.document,
         tools: _tools,
         selection: selection,
@@ -365,6 +489,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   Future<void> _createMark(int page, NoteItem draft) async {
     final doc = _store!.document;
+    draft = _withBookWords(page, draft);
     if (draft.style != MarkStyle.comment) {
       doc.addItem(page, draft);
       return;
@@ -373,6 +498,34 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final text = result?.text.trim() ?? '';
     if (result == null || result.delete || text.isEmpty) return;
     doc.addItem(page, draft.copyWith(text: text));
+  }
+
+  /// A mark on the book's words: snapped to the words it covers, quoting
+  /// their exact text, and naming them by their index in the book, so the
+  /// same words can be found by any app that reads the same word map.
+  NoteItem _withBookWords(int pdfPage, NoteItem draft) {
+    final book = _book;
+    final bookPage = book?.bookPageOf(pdfPage) ?? 0;
+    final l = book?.layoutOf(bookPage);
+    if (book == null || l == null || draft.rects.isEmpty) return draft;
+    final ids = l.wordsInRects(draft.rects);
+    if (ids.isEmpty) return draft;
+    final boxes = [
+      for (final i in ids)
+        if (l.rectOf(i) case final r?) WordBox(l.starts[i], l.ends[i], '', r),
+    ];
+    final snapped = NoteItem.mark(
+      id: draft.id,
+      lineRects: lineRects(boxes),
+      style: draft.style,
+      color: draft.color,
+      quote: l.textOf(book.pages[bookPage - 1], ids),
+      comment: draft.text,
+    );
+    return snapped.copyWith(
+      wordFrom: l.firstWord + ids.first,
+      wordTo: l.firstWord + ids.last,
+    );
   }
 
   /// Pins and word comments open as a note to read; text boxes open for
@@ -564,8 +717,37 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _ => 0xFFD32F2F,
   };
 
+  /// Puts [text] on the clipboard and says so.
+  void _copy(String text) {
+    Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 2),
+        content: Text(
+          'نُسخ: ${text.length > 60 ? '${text.substring(0, 60)}…' : text}',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+    );
+  }
+
+  /// The paragraph of the book text holding the word [w] of PDF page
+  /// [pdfPage] (as far as the page goes), or null without a word map.
+  String? _paragraphOf(int pdfPage, WordBox w) {
+    final book = _book;
+    if (book == null || w.id < 0) return null;
+    final t = book.pages[book.bookPageOf(pdfPage) - 1];
+    final a = t.lastIndexOf('\n', w.start) + 1;
+    var b = t.indexOf('\n', w.end);
+    if (b < 0) b = t.length;
+    return t.substring(a, b).trim();
+  }
+
   /// Highlight, underline, strike, recolour or comment the tapped word.
   Future<void> _wordMenu(int page, WordBox word) async {
+    final paragraph = _paragraphOf(page, word);
     int?
     chosen; // colour picked with the wheel; null = the default of the action
     final picked = await showModalBottomSheet<MarkStyle>(
@@ -598,6 +780,23 @@ class _ReaderScreenState extends State<ReaderScreen> {
                           onPressed: () => Navigator.pop(context, style),
                           icon: Icon(icon),
                           label: Text(label),
+                        ),
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _copy(word.text);
+                        },
+                        icon: const Icon(Icons.copy),
+                        label: const Text('نسخ'),
+                      ),
+                      if (paragraph != null)
+                        OutlinedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _copy(paragraph);
+                          },
+                          icon: const Icon(Icons.notes),
+                          label: const Text('نسخ الفقرة'),
                         ),
                     ],
                   ),
@@ -884,6 +1083,29 @@ class _ReaderScreenState extends State<ReaderScreen> {
     List<ContextMenuButtonItem> items,
   ) {
     final delegate = params.textSelectionDelegate;
+    // No "Select all": a whole book selected by one slip of the finger is of
+    // no use and slow to undo.
+    items.removeWhere((i) => i.type == ContextMenuButtonType.selectAll);
+    // Copying takes the book text of the selected words, not the PDF's
+    // letters.
+    final copy = items.indexWhere((i) => i.type == ContextMenuButtonType.copy);
+    if (copy >= 0 && (_book?.embedded ?? false)) {
+      items[copy] = ContextMenuButtonItem(
+        type: ContextMenuButtonType.copy,
+        onPressed: () async {
+          final text = await _selectedBookText(
+            await delegate.getSelectedTextRanges(),
+          );
+          if (text == null) {
+            await delegate.copyTextSelection();
+          } else {
+            _copy(text);
+          }
+          await delegate.clearTextSelection();
+          params.dismissContextMenu();
+        },
+      );
+    }
     Future<void> mark(MarkStyle style, int color) async {
       final ranges = await delegate.getSelectedTextRanges();
       final doc = _store?.document;
@@ -949,6 +1171,30 @@ class _ReaderScreenState extends State<ReaderScreen> {
         onPressed: () => mark(MarkStyle.comment, 0xFFEF6C00),
       ),
     ]);
+  }
+
+  /// The book text of the words a PDF text selection covers, or null when
+  /// the book has no word map there.
+  Future<String?> _selectedBookText(List<PdfPageTextRange> ranges) async {
+    final book = _book;
+    if (book == null || !book.embedded || !_viewer.isReady) return null;
+    final parts = <String>[];
+    for (final r in ranges) {
+      final bookPage = book.bookPageOf(r.pageNumber);
+      final l = book.layoutOf(bookPage);
+      if (l == null) return null;
+      final h = _viewer.document.pages[r.pageNumber - 1].height;
+      final chars = <WordBox>[];
+      for (var i = r.start; i < r.end && i < r.pageText.charRects.length; i++) {
+        final c = r.pageText.charRects[i];
+        if (c.isEmpty) continue;
+        chars.add(WordBox(i, i + 1, '',
+            Rect.fromLTRB(c.left, h - c.top, c.right, h - c.bottom)));
+      }
+      final ids = l.wordsInRects(lineRects(chars));
+      if (ids.isNotEmpty) parts.add(l.textOf(book.pages[bookPage - 1], ids));
+    }
+    return parts.isEmpty ? null : parts.join('\n');
   }
 
   void _toggleBookmark() {
@@ -1192,6 +1438,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       setState(() {
         _book = null;
         _search = null;
+        _searchShown.value = null;
       });
     }
   }
@@ -1216,10 +1463,28 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (pick != null && mounted) _showHit(pick);
   }
 
+  /// Shows one search result: its page, and with a word map the hit itself,
+  /// marked on the page and brought to the middle of the screen.
   void _showHit(SearchPick pick) {
-    setState(() => _search = pick);
+    _setSearch(pick);
+    final book = _book!;
     final hit = pick.hits[pick.index];
-    _viewer.goToPage(pageNumber: _book!.pdfPageOf(hit.page));
+    final pdfPage = book.pdfPageOf(hit.page);
+    final rects = book.hitRects(hit);
+    if (rects.isEmpty || !_viewer.isReady || pdfPage > _viewer.pageCount) {
+      _viewer.goToPage(pageNumber: pdfPage);
+      return;
+    }
+    var box = rects.first;
+    for (final r in rects.skip(1)) {
+      box = box.expandToInclude(r);
+    }
+    final h = _viewer.document.pages[pdfPage - 1].height;
+    _viewer.goToRectInsidePage(
+      pageNumber: pdfPage,
+      rect: PdfRect(box.left, h - box.top, box.right, h - box.bottom),
+      anchor: PdfPageAnchor.center,
+    );
   }
 
   void _stepHit(int delta) {
@@ -1250,7 +1515,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
               tooltip: 'إغلاق البحث',
               visualDensity: VisualDensity.compact,
               icon: const Icon(Icons.close),
-              onPressed: () => setState(() => _search = null),
+              onPressed: () => _setSearch(null),
             ),
             Expanded(
               child: InkWell(
@@ -1365,10 +1630,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
             Navigator.of(context).pop();
             _linkDocx();
           },
-          onUnlink: () {
-            Navigator.of(context).pop();
-            _unlinkDocx();
-          },
+          embedded: _book?.embedded ?? false,
+          onUnlink: (_book?.embedded ?? false)
+              ? null
+              : () {
+                  Navigator.of(context).pop();
+                  _unlinkDocx();
+                },
         ),
       ),
       appBar: _clean
@@ -1469,7 +1737,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
                           value: 'link',
                           child: Text('ربط ملف Word (docx)'),
                         )
-                      else
+                      else if (!_book!.embedded)
+                        // A word map is part of the PDF itself: nothing to unlink.
                         const PopupMenuItem(
                           value: 'unlink',
                           child: Text('إلغاء ربط ملف Word'),
