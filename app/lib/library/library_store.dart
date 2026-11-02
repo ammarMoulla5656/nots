@@ -29,22 +29,22 @@ class BookEntry {
   DateTime lastOpened;
 
   Map<String, Object> toJson() => {
-        'id': id,
-        'title': title,
-        'file': fileName,
-        'size': size,
-        'added': added.toIso8601String(),
-        'opened': lastOpened.toIso8601String(),
-      };
+    'id': id,
+    'title': title,
+    'file': fileName,
+    'size': size,
+    'added': added.toIso8601String(),
+    'opened': lastOpened.toIso8601String(),
+  };
 
   static BookEntry fromJson(Map<String, dynamic> j) => BookEntry(
-        id: j['id'] as String,
-        title: j['title'] as String,
-        fileName: j['file'] as String,
-        size: j['size'] as int,
-        added: DateTime.parse(j['added'] as String),
-        lastOpened: DateTime.parse(j['opened'] as String),
-      );
+    id: j['id'] as String,
+    title: j['title'] as String,
+    fileName: j['file'] as String,
+    size: j['size'] as int,
+    added: DateTime.parse(j['added'] as String),
+    lastOpened: DateTime.parse(j['opened'] as String),
+  );
 }
 
 /// FNV-1a over the file size, its first and its last megabyte: identical
@@ -88,7 +88,9 @@ class LibraryStore extends ChangeNotifier {
     if (await index.exists()) {
       try {
         final list = jsonDecode(await index.readAsString()) as List;
-        books.addAll(list.map((e) => BookEntry.fromJson(e as Map<String, dynamic>)));
+        books.addAll(
+          list.map((e) => BookEntry.fromJson(e as Map<String, dynamic>)),
+        );
       } on FormatException {
         await index.rename('${index.path}.corrupt');
       }
@@ -179,9 +181,10 @@ class LibraryStore extends ChangeNotifier {
   Future<void> _save() async {
     final index = File(p.join(_root.path, 'library.json'));
     final tmp = File('${index.path}.tmp');
-    await tmp.writeAsString(jsonEncode([for (final b in _books) b.toJson()]),
-        flush: true);
+    await tmp.writeAsString(
+      jsonEncode([for (final b in _books) b.toJson()]),
+      flush: true,
+    );
     await tmp.rename(index.path);
   }
-
 }

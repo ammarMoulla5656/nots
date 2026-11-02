@@ -39,8 +39,12 @@ Set<int> strokesInLasso(List<Stroke> strokes, List<Offset> lasso) {
 /// are, in PDF points. [unit] is how many PDF points one screen pixel is, so
 /// buttons keep the same finger-friendly size at any zoom level.
 class SelectionGeometry {
-  SelectionGeometry(this.bounds, this.unit,
-      {required this.canEdit, required this.canResize});
+  SelectionGeometry(
+    this.bounds,
+    this.unit, {
+    required this.canEdit,
+    required this.canResize,
+  });
 
   final Rect bounds;
   final double unit;
@@ -58,16 +62,20 @@ class SelectionGeometry {
       Offset(frame.right - 30 * unit, frame.top - 15 * unit);
 
   /// Frame corners: top-left, top-right, bottom-right, bottom-left.
-  List<Offset> get corners =>
-      [frame.topLeft, frame.topRight, frame.bottomRight, frame.bottomLeft];
+  List<Offset> get corners => [
+    frame.topLeft,
+    frame.topRight,
+    frame.bottomRight,
+    frame.bottomLeft,
+  ];
 
   /// Corner of [bounds] opposite to handle [i]; it stays fixed while resizing.
   Offset anchorFor(int i) => [
-        bounds.topLeft,
-        bounds.topRight,
-        bounds.bottomRight,
-        bounds.bottomLeft,
-      ][(i + 2) % 4];
+    bounds.topLeft,
+    bounds.topRight,
+    bounds.bottomRight,
+    bounds.bottomLeft,
+  ][(i + 2) % 4];
 
   // Touch targets are larger than what is drawn, so the small buttons and
   // handles stay easy to hit with a finger.
@@ -193,7 +201,10 @@ class SelectionController extends ChangeNotifier {
     final it = item;
     if (it != null) {
       final copy = it.copyWith(
-          id: document.takeStrokeId(), x: it.x + offset, y: it.y + offset);
+        id: document.takeStrokeId(),
+        x: it.x + offset,
+        y: it.y + offset,
+      );
       document.addItem(page, copy);
       selectItem(page, copy.id);
       return;

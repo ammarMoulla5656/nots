@@ -6,7 +6,10 @@ import 'package:flutter/material.dart';
 /// [center]: the direction gives the hue (0° = red, to the right, turning
 /// clockwise), the distance from the centre gives the saturation.
 ({double hue, double saturation}) wheelPick(
-    Offset p, Offset center, double radius) {
+  Offset p,
+  Offset center,
+  double radius,
+) {
   final d = p - center;
   final hue = (math.atan2(d.dy, d.dx) * 180 / math.pi + 360) % 360;
   final sat = radius <= 0 ? 0.0 : (d.distance / radius).clamp(0.0, 1.0);
@@ -61,10 +64,12 @@ class _WheelPainter extends CustomPainter {
       c,
       r,
       Paint()
-        ..shader = SweepGradient(colors: [
-          for (var h = 0; h <= 360; h += 30)
-            HSVColor.fromAHSV(1, h % 360.0, 1, 1).toColor(),
-        ]).createShader(rect),
+        ..shader = SweepGradient(
+          colors: [
+            for (var h = 0; h <= 360; h += 30)
+              HSVColor.fromAHSV(1, h % 360.0, 1, 1).toColor(),
+          ],
+        ).createShader(rect),
     );
     // White in the middle fading to full colour at the rim.
     canvas.drawCircle(
@@ -77,7 +82,10 @@ class _WheelPainter extends CustomPainter {
     );
     // Brightness below 100% darkens the whole wheel.
     canvas.drawCircle(
-        c, r, Paint()..color = Colors.black.withValues(alpha: 1 - color.value));
+      c,
+      r,
+      Paint()..color = Colors.black.withValues(alpha: 1 - color.value),
+    );
     canvas.drawCircle(
       c,
       r,
@@ -128,10 +136,7 @@ Future<Color?> showColorWheelDialog(BuildContext context, Color initial) {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              ColorWheel(
-                color: hsv,
-                onChanged: (v) => setState(() => hsv = v),
-              ),
+              ColorWheel(color: hsv, onChanged: (v) => setState(() => hsv = v)),
               const SizedBox(height: 12),
               Row(
                 children: [
@@ -157,11 +162,13 @@ Future<Color?> showColorWheelDialog(BuildContext context, Color initial) {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('إلغاء')),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(context, hsv.toColor()),
-              child: const Text('موافق')),
+            onPressed: () => Navigator.pop(context, hsv.toColor()),
+            child: const Text('موافق'),
+          ),
         ],
       ),
     ),

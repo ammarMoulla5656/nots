@@ -21,7 +21,8 @@ class ReaderPrefs extends ChangeNotifier {
 
   static Future<ReaderPrefs> open(String bookId) async {
     final dir = Directory(
-        p.join((await getApplicationSupportDirectory()).path, 'prefs'));
+      p.join((await getApplicationSupportDirectory()).path, 'prefs'),
+    );
     await dir.create(recursive: true);
     final f = File(p.join(dir.path, '$bookId.json'));
     var last = 1;
@@ -65,8 +66,9 @@ class ReaderPrefs extends ChangeNotifier {
     _timer?.cancel();
     final tmp = File('${_file.path}.tmp');
     await tmp.writeAsString(
-        jsonEncode({'last': lastPage, 'bookmarks': bookmarks}),
-        flush: true);
+      jsonEncode({'last': lastPage, 'bookmarks': bookmarks}),
+      flush: true,
+    );
     await tmp.rename(_file.path);
   }
 

@@ -99,9 +99,9 @@ class InkDocument extends ChangeNotifier {
     Map<int, List<Stroke>>? pages,
     Map<int, List<NoteItem>>? items,
     int nextStrokeId = 1,
-  })  : _pages = pages ?? {},
-        _items = items ?? {},
-        _nextId = nextStrokeId;
+  }) : _pages = pages ?? {},
+       _items = items ?? {},
+       _nextId = nextStrokeId;
 
   final Map<int, List<Stroke>> _pages;
   final Map<int, List<NoteItem>> _items;

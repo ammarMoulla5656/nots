@@ -150,8 +150,9 @@ class BookText {
       final n = _norm[p];
       var i = n.text.indexOf(q);
       while (i >= 0) {
-        hits.add(SearchHit(
-            p + 1, n.origIndex[i], n.origIndex[i + q.length - 1] + 1));
+        hits.add(
+          SearchHit(p + 1, n.origIndex[i], n.origIndex[i + q.length - 1] + 1),
+        );
         if (hits.length >= limit) return hits;
         i = n.text.indexOf(q, i + q.length);
       }
@@ -160,8 +161,10 @@ class BookText {
   }
 
   /// Text around a hit: (before, match, after), on one line.
-  ({String before, String match, String after}) snippet(SearchHit h,
-      {int context = 45}) {
+  ({String before, String match, String after}) snippet(
+    SearchHit h, {
+    int context = 45,
+  }) {
     final t = pages[h.page - 1];
     String clean(String s) => s.replaceAll(RegExp(r'\s+'), ' ');
     final from = (h.start - context).clamp(0, t.length);
@@ -174,12 +177,12 @@ class BookText {
   }
 
   String toJson() => jsonEncode({
-        'v': 1,
-        'source': source,
-        'offset': pageOffset,
-        'pages': pages,
-        'headings': [for (final h in headings) h.toJson()],
-      });
+    'v': 1,
+    'source': source,
+    'offset': pageOffset,
+    'pages': pages,
+    'headings': [for (final h in headings) h.toJson()],
+  });
 
   static BookText fromJson(String s) {
     final j = jsonDecode(s) as Map<String, dynamic>;
@@ -197,25 +200,28 @@ class BookText {
 
 String _xmlUnescape(String s) {
   if (!s.contains('&')) return s;
-  return s.replaceAllMapped(RegExp(r'&(#x[0-9a-fA-F]+|#\d+|amp|lt|gt|quot|apos);'), (m) {
-    final e = m.group(1)!;
-    switch (e) {
-      case 'amp':
-        return '&';
-      case 'lt':
-        return '<';
-      case 'gt':
-        return '>';
-      case 'quot':
-        return '"';
-      case 'apos':
-        return "'";
-    }
-    final code = e.startsWith('#x')
-        ? int.parse(e.substring(2), radix: 16)
-        : int.parse(e.substring(1));
-    return String.fromCharCode(code);
-  });
+  return s.replaceAllMapped(
+    RegExp(r'&(#x[0-9a-fA-F]+|#\d+|amp|lt|gt|quot|apos);'),
+    (m) {
+      final e = m.group(1)!;
+      switch (e) {
+        case 'amp':
+          return '&';
+        case 'lt':
+          return '<';
+        case 'gt':
+          return '>';
+        case 'quot':
+          return '"';
+        case 'apos':
+          return "'";
+      }
+      final code = e.startsWith('#x')
+          ? int.parse(e.substring(2), radix: 16)
+          : int.parse(e.substring(1));
+      return String.fromCharCode(code);
+    },
+  );
 }
 
 /// Heading level per paragraph style id, read from styles.xml: styles named
@@ -224,14 +230,17 @@ Map<String, int> _headingStyles(String? stylesXml) {
   final levels = <String, int>{};
   if (stylesXml != null) {
     final style = RegExp(
-        r'<w:style\b[^>]*w:styleId="([^"]+)"[^>]*>(.*?)</w:style>',
-        dotAll: true);
+      r'<w:style\b[^>]*w:styleId="([^"]+)"[^>]*>(.*?)</w:style>',
+      dotAll: true,
+    );
     for (final m in style.allMatches(stylesXml)) {
-      final name =
-          RegExp(r'<w:name w:val="([^"]+)"').firstMatch(m.group(2)!)?.group(1);
-      final lvl = RegExp(r'^heading (\d)$', caseSensitive: false)
-          .firstMatch(name ?? '')
+      final name = RegExp(r'<w:name w:val="([^"]+)"')
+          .firstMatch(m.group(2)!)
           ?.group(1);
+      final lvl = RegExp(
+        r'^heading (\d)$',
+        caseSensitive: false,
+      ).firstMatch(name ?? '')?.group(1);
       if (lvl != null) levels[m.group(1)!] = int.parse(lvl);
     }
   }
@@ -259,7 +268,10 @@ BookText parseDocx(Uint8List bytes, {String source = ''}) {
   final xml = utf8.decode(doc.content, allowMalformed: true);
   final stylesFile = zip.findFile('word/styles.xml');
   final headingStyles = _headingStyles(
-      stylesFile == null ? null : utf8.decode(stylesFile.content, allowMalformed: true));
+    stylesFile == null
+        ? null
+        : utf8.decode(stylesFile.content, allowMalformed: true),
+  );
 
   final pages = <StringBuffer>[StringBuffer()];
   final headings = <BookHeading>[];
@@ -291,8 +303,11 @@ BookText parseDocx(Uint8List bytes, {String source = ''}) {
       } else if (s.startsWith('<w:pageBreakBefore')) {
         if (pages.last.isNotEmpty) pages.add(StringBuffer());
       } else if (t.group(3) != null) {
-        level ??= headingStyles[t.group(3)!] ??
-            int.tryParse(RegExp(r'^Heading(\d)$').firstMatch(t.group(3)!)?.group(1) ?? '');
+        level ??=
+            headingStyles[t.group(3)!] ??
+            int.tryParse(
+              RegExp(r'^Heading(\d)$').firstMatch(t.group(3)!)?.group(1) ?? '',
+            );
       } else if (t.group(4) != null) {
         level ??= int.parse(t.group(4)!) + 1;
       }

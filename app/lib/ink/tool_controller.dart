@@ -134,7 +134,7 @@ class ToolController extends ChangeNotifier {
   /// Whether the width slider applies (pins, tape and marks have no size).
   bool get hasWidth =>
       _mode == ToolMode.pen ||
-      _mode == ToolMode.highlighter ||
+      (_mode == ToolMode.highlighter && _markStyle == MarkStyle.highlight) ||
       _mode == ToolMode.shape ||
       _mode == ToolMode.text;
 
@@ -194,8 +194,15 @@ class ToolController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Picks how the text-marking tool marks, with the usual colour of that
+  /// way of marking (yellow highlight, red line, orange comment, ...).
   void setMarkStyle(MarkStyle s) {
     _markStyle = s;
+    _highlighterColor = switch (s) {
+      MarkStyle.highlight => 0xFFFFEB3B,
+      MarkStyle.comment => 0xFFEF6C00,
+      _ => 0xFFD32F2F,
+    };
     notifyListeners();
   }
 

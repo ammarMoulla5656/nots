@@ -15,7 +15,8 @@ BookText _parseInBackground(({Uint8List bytes, String source}) a) =>
 class BookLinkStore {
   static Future<File> _fileFor(String bookId) async {
     final dir = Directory(
-        p.join((await getApplicationSupportDirectory()).path, 'links'));
+      p.join((await getApplicationSupportDirectory()).path, 'links'),
+    );
     await dir.create(recursive: true);
     return File(p.join(dir.path, '$bookId.json'));
   }
@@ -34,8 +35,10 @@ class BookLinkStore {
   /// Reads [docxPath] and links it to the book [bookId].
   static Future<BookText> link(String bookId, String docxPath) async {
     final bytes = await File(docxPath).readAsBytes();
-    final text = await compute(_parseInBackground,
-        (bytes: bytes, source: p.basename(docxPath)));
+    final text = await compute(_parseInBackground, (
+      bytes: bytes,
+      source: p.basename(docxPath),
+    ));
     final f = await _fileFor(bookId);
     final tmp = File('${f.path}.tmp');
     await tmp.writeAsString(text.toJson(), flush: true);

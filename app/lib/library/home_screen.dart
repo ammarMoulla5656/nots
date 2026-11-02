@@ -40,8 +40,9 @@ class _HomeScreenState extends State<HomeScreen> {
   /// path. Bring the files that still exist into the library, with their
   /// writing.
   Future<void> _migrateRecentList(LibraryStore lib) async {
-    final f = File(p.join(
-        (await getApplicationSupportDirectory()).path, 'recent.json'));
+    final f = File(
+      p.join((await getApplicationSupportDirectory()).path, 'recent.json'),
+    );
     if (!await f.exists()) return;
     try {
       final paths = (jsonDecode(await f.readAsString()) as List).cast<String>();
@@ -61,9 +62,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final lib = _library!;
     await lib.touch(b);
     if (!mounted) return;
-    await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => ReaderScreen(library: lib, book: b),
-    ));
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ReaderScreen(library: lib, book: b),
+      ),
+    );
     if (mounted) setState(() {});
   }
 
@@ -78,8 +81,9 @@ class _HomeScreenState extends State<HomeScreen> {
     if (path == null || !mounted) return;
     final ext = p.extension(files.first.name).toLowerCase();
     if (ext != '.pdf' && ext != '.nots') {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('اختر ملف PDF أو ملف نوتس (.nots).')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('اختر ملف PDF أو ملف نوتس (.nots).')),
+      );
       return;
     }
     setState(() => _busy = true);
@@ -92,8 +96,10 @@ class _HomeScreenState extends State<HomeScreen> {
           confirmReplace: _confirmReplace,
         );
       } else {
-        entry = await _library!.importPdf(path,
-            title: p.basenameWithoutExtension(files.first.name));
+        entry = await _library!.importPdf(
+          path,
+          title: p.basenameWithoutExtension(files.first.name),
+        );
       }
       if (mounted) await _open(entry);
     } catch (e) {
@@ -112,10 +118,17 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (context) => AlertDialog(
         title: Text('«$title» عليه كتابة في هذا الجهاز'),
         content: const Text(
-            'هل تستبدل الكتابة الموجودة هنا بالكتابة التي في الملف؟ إن اخترت «إبقاء» يُضاف الكتاب وتبقى كتابتك الحالية كما هي.'),
+          'هل تستبدل الكتابة الموجودة هنا بالكتابة التي في الملف؟ إن اخترت «إبقاء» يُضاف الكتاب وتبقى كتابتك الحالية كما هي.',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إبقاء كتابتي')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('استبدال')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('إبقاء كتابتي'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('استبدال'),
+          ),
         ],
       ),
     );
@@ -130,8 +143,14 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('اسم الكتاب'),
         content: TextField(controller: c, autofocus: true),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
-          FilledButton(onPressed: () => Navigator.pop(context, c.text.trim()), child: const Text('حفظ')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, c.text.trim()),
+            child: const Text('حفظ'),
+          ),
         ],
       ),
     );
@@ -152,11 +171,18 @@ class _HomeScreenState extends State<HomeScreen> {
             onChanged: (v) => setState(() => deleteWriting = v ?? false),
             title: const Text('احذف كتابتي عليه أيضاً'),
             subtitle: const Text(
-                'إن لم تحذفها تعود الكتابة تلقائياً متى أضفت الملف نفسه مرة أخرى.'),
+              'إن لم تحذفها تعود الكتابة تلقائياً متى أضفت الملف نفسه مرة أخرى.',
+            ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('تراجع')),
-            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('إزالة')),
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('تراجع'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('إزالة'),
+            ),
           ],
         ),
       ),
@@ -182,7 +208,10 @@ class _HomeScreenState extends State<HomeScreen> {
         onPressed: lib == null || _busy ? null : _add,
         icon: _busy
             ? const SizedBox(
-                width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
             : const Icon(Icons.add),
         label: const Text('إضافة كتاب'),
       ),
@@ -226,16 +255,31 @@ class _HomeScreenState extends State<HomeScreen> {
                     for (final b in books)
                       Card(
                         child: ListTile(
-                          leading: const Icon(Icons.menu_book_outlined, size: 32),
-                          title: Text(b.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+                          leading: const Icon(
+                            Icons.menu_book_outlined,
+                            size: 32,
+                          ),
+                          title: Text(
+                            b.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                           subtitle: Text(
-                              '${(b.size / 1048576).toStringAsFixed(1)} MB · ${_ago(b.lastOpened)}'),
+                            '${(b.size / 1048576).toStringAsFixed(1)} MB · ${_ago(b.lastOpened)}',
+                          ),
                           onTap: () => _open(b),
                           trailing: PopupMenuButton<String>(
-                            onSelected: (v) => v == 'rename' ? _rename(b) : _remove(b),
+                            onSelected: (v) =>
+                                v == 'rename' ? _rename(b) : _remove(b),
                             itemBuilder: (context) => const [
-                              PopupMenuItem(value: 'rename', child: Text('إعادة التسمية')),
-                              PopupMenuItem(value: 'remove', child: Text('إزالة من المكتبة')),
+                              PopupMenuItem(
+                                value: 'rename',
+                                child: Text('إعادة التسمية'),
+                              ),
+                              PopupMenuItem(
+                                value: 'remove',
+                                child: Text('إزالة من المكتبة'),
+                              ),
                             ],
                           ),
                         ),

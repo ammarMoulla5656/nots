@@ -31,9 +31,9 @@ class TocPanel extends StatefulWidget {
 
   /// Entries built from the linked book text.
   static List<TocEntry> fromBook(BookText book) => [
-        for (final h in book.headings)
-          (title: h.title, level: h.level, pdfPage: book.pdfPageOf(h.page)),
-      ];
+    for (final h in book.headings)
+      (title: h.title, level: h.level, pdfPage: book.pdfPageOf(h.page)),
+  ];
 
   @override
   State<TocPanel> createState() => _TocPanelState();
@@ -59,7 +59,8 @@ class _TocPanelState extends State<TocPanel> {
     // Open with the current section in view.
     final i = _currentIndex;
     _scroll = ScrollController(
-        initialScrollOffset: i <= 3 ? 0 : (i - 3) * _rowHeight);
+      initialScrollOffset: i <= 3 ? 0 : (i - 3) * _rowHeight,
+    );
   }
 
   @override
@@ -91,10 +92,12 @@ class _TocPanelState extends State<TocPanel> {
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Text(widget.title,
-                  style: theme.textTheme.bodySmall,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis),
+              child: Text(
+                widget.title,
+                style: theme.textTheme.bodySmall,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
             if (widget.entries.isNotEmpty)
               Padding(
@@ -129,10 +132,12 @@ class _TocPanelState extends State<TocPanel> {
                         return ListTile(
                           dense: true,
                           selected: isCurrent,
-                          selectedTileColor:
-                              theme.colorScheme.primaryContainer.withValues(alpha: 0.5),
+                          selectedTileColor: theme.colorScheme.primaryContainer
+                              .withValues(alpha: 0.5),
                           contentPadding: EdgeInsetsDirectional.only(
-                              start: 12.0 + 16 * (e.level - 1).clamp(0, 4), end: 12),
+                            start: 12.0 + 16 * (e.level - 1).clamp(0, 4),
+                            end: 12,
+                          ),
                           title: Text(
                             e.title,
                             maxLines: 1,
@@ -142,8 +147,10 @@ class _TocPanelState extends State<TocPanel> {
                               fontSize: e.level == 1 ? 15 : 14,
                             ),
                           ),
-                          trailing: Text('${e.pdfPage}',
-                              style: theme.textTheme.bodySmall),
+                          trailing: Text(
+                            '${e.pdfPage}',
+                            style: theme.textTheme.bodySmall,
+                          ),
                           onTap: () => widget.onOpen(e.pdfPage),
                         );
                       },
@@ -160,8 +167,11 @@ class _TocPanelState extends State<TocPanel> {
             else
               ListTile(
                 leading: const Icon(Icons.description_outlined),
-                title: Text(widget.linkedSource!,
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                title: Text(
+                  widget.linkedSource!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
                 subtitle: const Text('ملف النص المربوط'),
                 trailing: IconButton(
                   tooltip: 'إلغاء الربط',

@@ -16,9 +16,9 @@ List<Offset> shapePoints(ShapeKind kind, Offset a, Offset b) {
       final head = math.min(14.0, len * 0.4);
       const spread = 0.5; // ~28 degrees
       Offset rot(Offset d, double ang) => Offset(
-            d.dx * math.cos(ang) - d.dy * math.sin(ang),
-            d.dx * math.sin(ang) + d.dy * math.cos(ang),
-          );
+        d.dx * math.cos(ang) - d.dy * math.sin(ang),
+        d.dx * math.sin(ang) + d.dy * math.cos(ang),
+      );
       final h1 = b - rot(dir, spread) * head;
       final h2 = b - rot(dir, -spread) * head;
       return [a, b, h1, b, h2];
@@ -147,7 +147,13 @@ List<Offset>? snapShape(List<Offset> raw) {
   }
   rectErr /= pts.length * math.max(w, h);
   if (rectErr < 0.045 && sideHit.every((s) => s)) {
-    return [box.topLeft, box.topRight, box.bottomRight, box.bottomLeft, box.topLeft];
+    return [
+      box.topLeft,
+      box.topRight,
+      box.bottomRight,
+      box.bottomLeft,
+      box.topLeft,
+    ];
   }
   return null;
 }

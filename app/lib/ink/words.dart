@@ -51,7 +51,9 @@ List<WordBox> splitWords(String text, List<Rect?> rects) {
       }
       i++;
     }
-    if (box != null) words.add(WordBox(start, i, text.substring(start, i), box));
+    if (box != null) {
+      words.add(WordBox(start, i, text.substring(start, i), box));
+    }
   }
   return words;
 }
@@ -90,8 +92,12 @@ List<Rect> lineRects(List<WordBox> words) {
 /// stroke's polyline (PDF points); each segment is sampled every [step]
 /// points, and a word counts when a sample falls inside its box widened by
 /// [tolerance]. A stroke that touches no word returns an empty list.
-List<int> wordsAlongPath(List<WordBox> words, List<Offset> path,
-    {double tolerance = 1.5, double step = 1.5}) {
+List<int> wordsAlongPath(
+  List<WordBox> words,
+  List<Offset> path, {
+  double tolerance = 1.5,
+  double step = 1.5,
+}) {
   if (path.isEmpty || words.isEmpty) return const [];
   final hit = <int>{};
   void sample(Offset p) {

@@ -5,16 +5,16 @@ import 'package:flutter/material.dart';
 import 'note_items.dart';
 
 TextPainter _painterFor(NoteItem it, double scale) => TextPainter(
-      text: TextSpan(
-        text: it.text,
-        style: TextStyle(
-          color: Color(it.color),
-          fontSize: it.fontSize * scale,
-          height: 1.35,
-        ),
-      ),
-      textDirection: isRtlText(it.text) ? TextDirection.rtl : TextDirection.ltr,
-    );
+  text: TextSpan(
+    text: it.text,
+    style: TextStyle(
+      color: Color(it.color),
+      fontSize: it.fontSize * scale,
+      height: 1.35,
+    ),
+  ),
+  textDirection: isRtlText(it.text) ? TextDirection.rtl : TextDirection.ltr,
+);
 
 /// Width of the text itself: its longest line, wrapping at the item's width
 /// (the wrap limit). The box and its frame hug the words, not the limit.
@@ -44,7 +44,10 @@ double textHeightPt(NoteItem it) {
 /// words instead of a fixed width.
 double fitTextWidth(String text, double fontSize, {double maxWidth = 320}) {
   final tp = TextPainter(
-    text: TextSpan(text: text, style: TextStyle(fontSize: fontSize, height: 1.35)),
+    text: TextSpan(
+      text: text,
+      style: TextStyle(fontSize: fontSize, height: 1.35),
+    ),
     textDirection: isRtlText(text) ? TextDirection.rtl : TextDirection.ltr,
   )..layout(maxWidth: maxWidth);
   final w = tp.width;
@@ -107,7 +110,11 @@ class ItemsPainter extends CustomPainter {
   }
 
   Rect _px(Rect r) => Rect.fromLTRB(
-      r.left * scale, r.top * scale, r.right * scale, r.bottom * scale);
+    r.left * scale,
+    r.top * scale,
+    r.right * scale,
+    r.bottom * scale,
+  );
 
   void _paintMark(Canvas canvas, NoteItem it) {
     final color = Color(it.color);
@@ -121,7 +128,10 @@ class ItemsPainter extends CustomPainter {
           // Multiply: the page shows through as it is, so the letters keep
           // their colour and the highlight sits "under" them.
           canvas.drawRRect(
-            RRect.fromRectAndRadius(r.inflate(0.5 * scale), Radius.circular(2 * scale)),
+            RRect.fromRectAndRadius(
+              r.inflate(0.5 * scale),
+              Radius.circular(2 * scale),
+            ),
             Paint()
               ..color = color.withValues(alpha: 0.6)
               ..blendMode = BlendMode.multiply,
@@ -140,18 +150,34 @@ class ItemsPainter extends CustomPainter {
         case MarkStyle.strike:
           canvas.drawLine(r.centerLeft, r.centerRight, line);
         case MarkStyle.comment:
-          // Dotted underline, so the commented words stay readable.
+          // A commented word changes colour (lighten keeps the page white
+          // and turns the dark letters to the colour), and gets a dotted
+          // underline and a bubble.
+          canvas.drawRect(
+            r.inflate(0.4 * scale),
+            Paint()
+              ..color = color
+              ..blendMode = BlendMode.lighten,
+          );
           final y = r.bottom;
           final step = 3 * scale;
           for (var x = r.left; x < r.right; x += step * 2) {
-            canvas.drawLine(Offset(x, y), Offset(math.min(x + step, r.right), y), line);
+            canvas.drawLine(
+              Offset(x, y),
+              Offset(math.min(x + step, r.right), y),
+              line,
+            );
           }
       }
     }
     // A comment bubble at the start of the marked words (their right end:
     // the books are Arabic) whenever the mark carries a comment.
     if (it.text.isNotEmpty || it.style == MarkStyle.comment) {
-      final first = _px(it.rects.isEmpty ? Rect.fromLTWH(it.x, it.y, it.w, it.h) : it.rects.first);
+      final first = _px(
+        it.rects.isEmpty
+            ? Rect.fromLTWH(it.x, it.y, it.w, it.h)
+            : it.rects.first,
+      );
       final c = Offset(first.right + 3 * scale, first.top - 2 * scale);
       final rr = 4.5 * scale;
       canvas.drawCircle(c, rr, Paint()..color = const Color(0xFFEF6C00));
@@ -200,7 +226,9 @@ class ItemsPainter extends CustomPainter {
       canvas.drawRRect(r, Paint()..color = Color(it.color));
     } else {
       canvas.drawRRect(
-          r, Paint()..color = Color(it.color).withValues(alpha: 0.10));
+        r,
+        Paint()..color = Color(it.color).withValues(alpha: 0.10),
+      );
       canvas.drawRRect(
         r,
         Paint()

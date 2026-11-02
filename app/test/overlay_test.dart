@@ -694,4 +694,94 @@ void main() {
     await h.drag(const [Offset(110, 110), Offset(240, 110)]);
     expect(h.doc.itemsOf(1), isEmpty);
   });
+
+  group('one marking tool', () {
+    const words = [
+      WordBox(0, 4, 'كلمة', Rect.fromLTWH(200, 100, 60, 14)),
+      WordBox(5, 9, 'ثانية', Rect.fromLTWH(120, 100, 70, 14)),
+    ];
+
+    testWidgets('a tap marks the word in the chosen way; a second tap removes it',
+        (tester) async {
+      final h = _Harness(tester);
+      h.words = words;
+      h.tools
+        ..setMode(ToolMode.highlighter)
+        ..setMarkStyle(MarkStyle.strike);
+      await h.pump();
+      await tester.pump();
+
+      await h.drag(const [Offset(230, 107)]);
+      var m = h.doc.itemsOf(1).single;
+      expect(m.style, MarkStyle.strike);
+      expect(m.quote, 'كلمة');
+
+      await h.drag(const [Offset(230, 107)]); // the same word again
+      expect(h.doc.itemsOf(1), isEmpty);
+
+      // and it can be undone
+      h.doc.undo();
+      expect(h.doc.itemsOf(1), hasLength(1));
+    });
+
+    testWidgets('a tap on blank page draws nothing; underline over blank page '
+        'leaves no stroke', (tester) async {
+      final h = _Harness(tester);
+      h.words = words;
+      h.tools
+        ..setMode(ToolMode.highlighter)
+        ..setMarkStyle(MarkStyle.underline);
+      await h.pump();
+      await tester.pump();
+      await h.drag(const [Offset(50, 300)]);
+      await h.drag(const [Offset(50, 300), Offset(300, 300)]);
+      expect(h.doc.itemsOf(1), isEmpty);
+      expect(h.doc.strokeCount, 0);
+    });
+
+    testWidgets('a drag over words marks all of them with the style',
+        (tester) async {
+      final h = _Harness(tester);
+      h.words = words;
+      h.tools
+        ..setMode(ToolMode.highlighter)
+        ..setMarkStyle(MarkStyle.textColor);
+      await h.pump();
+      await tester.pump();
+      await h.drag(const [Offset(270, 107), Offset(150, 107), Offset(110, 107)]);
+      final m = h.doc.itemsOf(1).single;
+      expect(m.style, MarkStyle.textColor);
+      expect(m.quote, 'كلمة ثانية');
+      expect(m.color, 0xFFD32F2F);
+    });
+
+    testWidgets('comment style asks for the comment through the callback',
+        (tester) async {
+      final h = _Harness(tester);
+      h.words = words;
+      h.tools
+        ..setMode(ToolMode.highlighter)
+        ..setMarkStyle(MarkStyle.comment);
+      expect(h.tools.color, 0xFFEF6C00);
+      await h.pump();
+      await tester.pump();
+      await h.drag(const [Offset(230, 107)]);
+      expect(h.doc.itemsOf(1).single.style, MarkStyle.comment);
+    });
+
+    testWidgets('a tap on a mark that has a comment opens it instead of removing it',
+        (tester) async {
+      final h = _Harness(tester);
+      h.words = words;
+      h.doc.addItem(1, NoteItem.mark(
+          id: 9, lineRects: const [Rect.fromLTWH(200, 100, 60, 14)],
+          style: MarkStyle.comment, color: 0xFFEF6C00, comment: 'ملاحظة'));
+      h.tools.setMode(ToolMode.highlighter);
+      await h.pump();
+      await tester.pump();
+      await h.drag(const [Offset(230, 107)]);
+      expect(h.doc.itemsOf(1), hasLength(1));
+      expect(h.edited.single.id, 9);
+    });
+  });
 }

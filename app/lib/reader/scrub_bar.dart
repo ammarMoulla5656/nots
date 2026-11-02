@@ -58,73 +58,91 @@ class _ScrubBarState extends State<ScrubBar> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return LayoutBuilder(builder: (context, box) {
-      final height = box.maxHeight;
-      return ListenableBuilder(
-        listenable: widget.controller,
-        builder: (context, _) {
-          final c = widget.controller;
-          if (!c.isReady || c.pageCount < 2) return const SizedBox.shrink();
-          final count = c.pageCount;
-          final current = (_dragging ? _page : (c.pageNumber ?? 1)).clamp(1, count);
-          final y = _dragging
-              ? _dragY
-              : (count <= 1 ? 0.0 : (current - 1) / (count - 1) * (height - _thumbH));
-          return Stack(
-            key: _track,
-            clipBehavior: Clip.none,
-            children: [
-              if (_dragging)
-                Positioned(
-                  left: _width + 4,
-                  top: (y - 60).clamp(4.0, height - 190),
-                  child: _Preview(
-                      document: c.document, page: current, count: count),
-                ),
-              Positioned(
-                left: 0,
-                top: y,
-                width: _width,
-                height: _thumbH,
-                child: Listener(
-                  behavior: HitTestBehavior.opaque,
-                  onPointerDown: (e) {
-                    setState(() => _dragging = true);
-                    _update(e, height);
-                  },
-                  onPointerMove: (e) {
-                    if (_dragging) _update(e, height);
-                  },
-                  onPointerUp: (_) => setState(() => _dragging = false),
-                  onPointerCancel: (_) => setState(() => _dragging = false),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.primary,
-                      borderRadius: const BorderRadius.horizontal(
-                          right: Radius.circular(17)),
-                      boxShadow: const [
-                        BoxShadow(blurRadius: 3, color: Colors.black26)
-                      ],
+    return LayoutBuilder(
+      builder: (context, box) {
+        final height = box.maxHeight;
+        return ListenableBuilder(
+          listenable: widget.controller,
+          builder: (context, _) {
+            final c = widget.controller;
+            if (!c.isReady || c.pageCount < 2) return const SizedBox.shrink();
+            final count = c.pageCount;
+            final current = (_dragging ? _page : (c.pageNumber ?? 1)).clamp(
+              1,
+              count,
+            );
+            final y = _dragging
+                ? _dragY
+                : (count <= 1
+                      ? 0.0
+                      : (current - 1) / (count - 1) * (height - _thumbH));
+            return Stack(
+              key: _track,
+              clipBehavior: Clip.none,
+              children: [
+                if (_dragging)
+                  Positioned(
+                    left: _width + 4,
+                    top: (y - 60).clamp(4.0, height - 190),
+                    child: _Preview(
+                      document: c.document,
+                      page: current,
+                      count: count,
                     ),
-                    alignment: Alignment.center,
-                    child: Text('$current',
+                  ),
+                Positioned(
+                  left: 0,
+                  top: y,
+                  width: _width,
+                  height: _thumbH,
+                  child: Listener(
+                    behavior: HitTestBehavior.opaque,
+                    onPointerDown: (e) {
+                      setState(() => _dragging = true);
+                      _update(e, height);
+                    },
+                    onPointerMove: (e) {
+                      if (_dragging) _update(e, height);
+                    },
+                    onPointerUp: (_) => setState(() => _dragging = false),
+                    onPointerCancel: (_) => setState(() => _dragging = false),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primary,
+                        borderRadius: const BorderRadius.horizontal(
+                          right: Radius.circular(17),
+                        ),
+                        boxShadow: const [
+                          BoxShadow(blurRadius: 3, color: Colors.black26),
+                        ],
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        '$current',
                         style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600)),
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ],
-          );
-        },
-      );
-    });
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 }
 
 class _Preview extends StatelessWidget {
-  const _Preview({required this.document, required this.page, required this.count});
+  const _Preview({
+    required this.document,
+    required this.page,
+    required this.count,
+  });
 
   final PdfDocument document;
   final int page;
@@ -151,8 +169,10 @@ class _Preview extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 4),
-            Text('$page / $count',
-                style: const TextStyle(fontSize: 13, color: Colors.black87)),
+            Text(
+              '$page / $count',
+              style: const TextStyle(fontSize: 13, color: Colors.black87),
+            ),
           ],
         ),
       ),

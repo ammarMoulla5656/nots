@@ -15,17 +15,20 @@ import '../ink/stroke_painter.dart';
 
 /// Pages of [ink] that carry writing, marks or notes.
 Set<int> annotatedPages(InkDocument ink) => {
-      for (final e in ink.pages.entries)
-        if (e.value.isNotEmpty) e.key,
-      for (final e in ink.items.entries)
-        if (e.value.isNotEmpty) e.key,
-    };
+  for (final e in ink.pages.entries)
+    if (e.value.isNotEmpty) e.key,
+  for (final e in ink.items.entries)
+    if (e.value.isNotEmpty) e.key,
+};
 
 /// Renders [pageNumber] of [doc] with its writing on top. [pxPerPt] sets the
 /// resolution (3 ≈ 216 dpi). The caller disposes the returned image.
 Future<ui.Image> renderPageWithInk(
-    PdfDocument doc, InkDocument ink, int pageNumber,
-    {double pxPerPt = 3}) async {
+  PdfDocument doc,
+  InkDocument ink,
+  int pageNumber, {
+  double pxPerPt = 3,
+}) async {
   final page = doc.pages[pageNumber - 1];
   final w = (page.width * pxPerPt).round();
   final h = (page.height * pxPerPt).round();
@@ -58,7 +61,11 @@ Future<ui.Image> renderPageWithInk(
 }
 
 /// PNG of one page with its writing.
-Future<Uint8List> pagePng(PdfDocument doc, InkDocument ink, int pageNumber) async {
+Future<Uint8List> pagePng(
+  PdfDocument doc,
+  InkDocument ink,
+  int pageNumber,
+) async {
   final image = await renderPageWithInk(doc, ink, pageNumber);
   try {
     final data = await image.toByteData(format: ui.ImageByteFormat.png);
@@ -68,7 +75,11 @@ Future<Uint8List> pagePng(PdfDocument doc, InkDocument ink, int pageNumber) asyn
   }
 }
 
-Future<Uint8List> _pageJpeg(PdfDocument doc, InkDocument ink, int pageNumber) async {
+Future<Uint8List> _pageJpeg(
+  PdfDocument doc,
+  InkDocument ink,
+  int pageNumber,
+) async {
   final image = await renderPageWithInk(doc, ink, pageNumber, pxPerPt: 2.5);
   try {
     final rgba = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
@@ -108,8 +119,12 @@ Future<Uint8List> exportPdf(
       if (marked.contains(n)) {
         final page = doc.pages[n - 1];
         final jpeg = await _pageJpeg(doc, ink, n);
-        final one = await PdfDocument.createFromJpegData(jpeg,
-            width: page.width, height: page.height, sourceName: 'nots-page-$n');
+        final one = await PdfDocument.createFromJpegData(
+          jpeg,
+          width: page.width,
+          height: page.height,
+          sourceName: 'nots-page-$n',
+        );
         temps.add(one);
         pages.add(one.pages.first);
         progress?.call(++done, work);
@@ -138,21 +153,31 @@ Future<Uint8List> exportPackage({
   List<int> bookmarks = const [],
 }) async {
   final a = Archive()
-    ..add(ArchiveFile.bytes(
-      'manifest.json',
-      utf8.encode(jsonEncode({
-        'format': 'nots-package',
-        'version': 1,
-        'title': title,
-        'book': bookId,
-        'bookmarks': bookmarks,
-      })),
-    ))
+    ..add(
+      ArchiveFile.bytes(
+        'manifest.json',
+        utf8.encode(
+          jsonEncode({
+            'format': 'nots-package',
+            'version': 1,
+            'title': title,
+            'book': bookId,
+            'bookmarks': bookmarks,
+          }),
+        ),
+      ),
+    )
     ..add(ArchiveFile.bytes('book.pdf', await pdf.readAsBytes()))
-    ..add(ArchiveFile.bytes(
-      'ink.nots',
-      StrokeCodec.encodeDocument(ink.pages, ink.nextStrokeId, items: ink.items),
-    ));
+    ..add(
+      ArchiveFile.bytes(
+        'ink.nots',
+        StrokeCodec.encodeDocument(
+          ink.pages,
+          ink.nextStrokeId,
+          items: ink.items,
+        ),
+      ),
+    );
   if (linkJson != null) {
     a.add(ArchiveFile.bytes('link.json', utf8.encode(linkJson)));
   }
@@ -207,4 +232,3 @@ String exportFileName(String title, String ext) {
   final cut = base.length > 80 ? base.substring(0, 80).trim() : base;
   return '$cut$dotted';
 }
-

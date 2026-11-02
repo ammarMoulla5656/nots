@@ -49,7 +49,6 @@ typedef TextDialogResult = ({String text, bool delete, double? fontSize});
 class _ReaderScreenState extends State<ReaderScreen> {
   final _tools = ToolController();
   final _viewer = PdfViewerController();
-  final _toolbarOpen = ValueNotifier<bool>(true);
   final _words = <int, Future<List<WordBox>>>{};
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   InkStore? _store;
@@ -97,7 +96,19 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   /// Toolbar at the top of the page (default, like Notability) or bottom.
-  bool _toolbarTop = true;
+
+  /// The tools appear when the top edge of the page is tapped and go away by
+  /// themselves a few seconds after the last use.
+  bool _toolsShown = true;
+  Timer? _hideTimer;
+
+  void _showTools() {
+    _hideTimer?.cancel();
+    if (!_toolsShown) setState(() => _toolsShown = true);
+    _hideTimer = Timer(const Duration(seconds: 5), () {
+      if (mounted) setState(() => _toolsShown = false);
+    });
+  }
 
   /// Word boxes already loaded, per page, for instant taps.
   final _wordsReady = <int, List<WordBox>>{};
@@ -106,6 +117,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void initState() {
     super.initState();
     _tools.addListener(_onToolChanged);
+    _showTools();
     ReaderPrefs.open(widget.book.id).then((pr) {
       if (!mounted) {
         pr.dispose();
@@ -221,6 +233,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   ToolMode _lastMode = ToolMode.hand;
 
   void _onToolChanged() {
+    if (_toolsShown) _showTools(); // using a tool keeps the tools in view
     // Switching tool drops the selection; other changes (colour, size,
     // fingers on the screen) keep it.
     if (_tools.mode != _lastMode) {
@@ -236,7 +249,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _store?.dispose();
     _selection?.dispose();
     _tools.dispose();
-    _toolbarOpen.dispose();
+    _hideTimer?.cancel();
     _prefs?.dispose();
     super.dispose();
   }
@@ -514,6 +527,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final items = store.document.itemsOf(page.pageNumber);
     for (var i = items.length - 1; i >= 0; i--) {
       final it = items[i];
+      if (it.kind == ItemKind.mark && itemContains(it, pt) && it.text.isEmpty) {
+        // A second tap on a marked word takes the mark off.
+        store.document.removeItem(page.pageNumber, it.id);
+        return true;
+      }
       if ((it.kind == ItemKind.pin || it.kind == ItemKind.mark) &&
           itemContains(it, pt)) {
         _previewItem(page.pageNumber, it);
@@ -1423,8 +1441,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
                           _export();
                         case 'finger':
                           _tools.setFingerDraws(!_tools.fingerDraws);
-                        case 'toolbar':
-                          setState(() => _toolbarTop = !_toolbarTop);
                         case 'link':
                           _linkDocx();
                         case 'unlink':
@@ -1448,14 +1464,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
                           'الإصبع يرسم (أطفئه ليكتب القلم وحده ويحرّك الإصبعُ الصفحة)',
                         ),
                       ),
-                      PopupMenuItem(
-                        value: 'toolbar',
-                        child: Text(
-                          _toolbarTop
-                              ? 'شريط الأدوات في الأسفل'
-                              : 'شريط الأدوات في الأعلى',
-                        ),
-                      ),
                       if (_book == null)
                         const PopupMenuItem(
                           value: 'link',
@@ -1475,51 +1483,70 @@ class _ReaderScreenState extends State<ReaderScreen> {
           ? Center(child: Text('تعذّر فتح ملف الكتابة: $_error'))
           : store == null || _selection == null
           ? const Center(child: CircularProgressIndicator())
-          : Column(
+          : Stack(
               children: [
-                // The tools sit in their own strip above (or below) the
-                // page, so they never cover the text.
-                if (_toolbarTop && !_clean) _toolbar(store),
-                Expanded(
-                  child: Stack(
-                    children: [
-                      Positioned.fill(child: _viewerArea()),
-                      if (_search != null && _book != null)
-                        Positioned(
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          child: _searchBanner(context),
-                        ),
-                      if (!_clean)
-                        Positioned(
-                          left: 0,
-                          top: 0,
-                          bottom: 0,
-                          width: 60,
-                          child: ScrubBar(controller: _viewer),
-                        ),
-                      if (_clean)
-                        Positioned(
-                          top: 8,
-                          right: 8,
-                          child: Material(
-                            color: Colors.black.withValues(alpha: 0.35),
-                            shape: const CircleBorder(),
-                            child: IconButton(
-                              tooltip: 'إظهار الأدوات',
-                              iconSize: 20,
-                              visualDensity: VisualDensity.compact,
-                              color: Colors.white,
-                              icon: const Icon(Icons.fullscreen_exit),
-                              onPressed: () => _setClean(false),
-                            ),
-                          ),
-                        ),
-                    ],
+                Positioned.fill(child: _viewerArea()),
+                if (_search != null && _book != null)
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: _searchBanner(context),
+                  ),
+                if (!_clean)
+                  Positioned(
+                    left: 0,
+                    top: 0,
+                    bottom: 0,
+                    width: 60,
+                    child: ScrubBar(controller: _viewer),
+                  ),
+                if (_clean)
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Material(
+                      color: Colors.black.withValues(alpha: 0.35),
+                      shape: const CircleBorder(),
+                      child: IconButton(
+                        tooltip: 'إظهار الأدوات',
+                        iconSize: 20,
+                        visualDensity: VisualDensity.compact,
+                        color: Colors.white,
+                        icon: const Icon(Icons.fullscreen_exit),
+                        onPressed: () => _setClean(false),
+                      ),
+                    ),
+                  ),
+                // A tap on the top edge brings the tools.
+                Positioned(
+                  top: 0,
+                  left: 70,
+                  right: 70,
+                  height: 36,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTap: _showTools,
                   ),
                 ),
-                if (!_toolbarTop && !_clean) _toolbar(store),
+                Positioned(
+                  top: _search != null ? 62 : 4,
+                  left: 8,
+                  right: 8,
+                  child: IgnorePointer(
+                    ignoring: !_toolsShown,
+                    child: AnimatedOpacity(
+                      opacity: _toolsShown ? 1 : 0,
+                      duration: const Duration(milliseconds: 180),
+                      child: Listener(
+                        // Any touch on the tools keeps them in view.
+                        onPointerDown: (_) => _showTools(),
+                        onPointerMove: (_) => _showTools(),
+                        child: _toolbar(store),
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
     );
@@ -1529,8 +1556,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
     tools: _tools,
     document: store.document,
     selection: _selection!,
-    open: _toolbarOpen,
-    atTop: _toolbarTop,
     onToggleRuler: _toggleRuler,
   );
 
@@ -1587,7 +1612,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
 const _modeIcons = {
   ToolMode.hand: (Icons.pan_tool_alt_outlined, 'تحريك'),
   ToolMode.pen: (Icons.edit, 'قلم'),
-  ToolMode.highlighter: (Icons.border_color, 'تظليل حر'),
+  ToolMode.highlighter: (Icons.border_color, 'تعليم النص'),
   ToolMode.shape: (Icons.category_outlined, 'أشكال'),
   ToolMode.text: (Icons.text_fields, 'نص'),
   ToolMode.pin: (Icons.push_pin_outlined, 'ملاحظة'),
@@ -1600,8 +1625,6 @@ class _Toolbar extends StatelessWidget {
     required this.tools,
     required this.document,
     required this.selection,
-    required this.open,
-    required this.atTop,
     required this.onToggleRuler,
   });
 
@@ -1610,49 +1633,12 @@ class _Toolbar extends StatelessWidget {
   final ToolController tools;
   final InkDocument document;
   final SelectionController selection;
-  final ValueNotifier<bool> open;
-  final bool atTop;
 
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: Listenable.merge([tools, selection, open, document]),
+      listenable: Listenable.merge([tools, selection, document]),
       builder: (context, _) {
-        if (!open.value) {
-          // Tools hidden: a slim strip shows the current tool and brings the
-          // toolbar back.
-          final (icon, label) = _modeIcons[tools.mode]!;
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            child: Material(
-              color: Theme.of(context).colorScheme.surfaceContainerHigh,
-              borderRadius: BorderRadius.circular(16),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(16),
-                onTap: () => open.value = true,
-                child: Tooltip(
-                  message: 'إظهار الأدوات ($label)',
-                  child: SizedBox(
-                    height: 28,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(icon, size: 17),
-                        const SizedBox(width: 6),
-                        Icon(
-                          atTop
-                              ? Icons.keyboard_arrow_down
-                              : Icons.keyboard_arrow_up,
-                          size: 20,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          );
-        }
         final options = _options(context);
         // Every tool is visible at once: the row wraps to a second line on
         // narrow screens instead of hiding tools off to the side.
@@ -1681,28 +1667,16 @@ class _Toolbar extends StatelessWidget {
               selected: r != null,
             ),
           ),
-          const SizedBox(height: 24, child: VerticalDivider()),
-          _icon(
-            context,
-            atTop ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-            'إخفاء الأدوات',
-            () => open.value = false,
-          ),
         ]);
         final opts = options == null ? null : _bar(context, options);
         return Padding(
           padding: const EdgeInsets.fromLTRB(8, 3, 8, 3),
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            children: atTop
-                ? [
-                    main,
-                    if (opts != null) ...[const SizedBox(height: 4), opts],
-                  ]
-                : [
-                    if (opts != null) ...[opts, const SizedBox(height: 4)],
-                    main,
-                  ],
+            children: [
+              main,
+              if (opts != null) ...[const SizedBox(height: 4), opts],
+            ],
           ),
         );
       },
@@ -1821,11 +1795,12 @@ class _Toolbar extends StatelessWidget {
           _chip(label, tools.penKind == kind, () => tools.setPenKind(kind)),
         divider,
       ],
-      if (mode == ToolMode.word) ...[
+      if (mode == ToolMode.highlighter) ...[
         for (final (style, label) in [
           (MarkStyle.highlight, 'تظليل'),
           (MarkStyle.underline, 'تسطير'),
           (MarkStyle.strike, 'شطب'),
+          (MarkStyle.textColor, 'لون الخط'),
           (MarkStyle.comment, 'تعليق'),
         ])
           _chip(

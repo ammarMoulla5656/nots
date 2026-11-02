@@ -79,22 +79,21 @@ class NoteItem {
     MarkStyle? style,
     List<Rect>? rects,
     String? quote,
-  }) =>
-      NoteItem(
-        id: id ?? this.id,
-        kind: kind,
-        x: x ?? this.x,
-        y: y ?? this.y,
-        w: w ?? this.w,
-        h: h ?? this.h,
-        text: text ?? this.text,
-        color: color ?? this.color,
-        fontSize: fontSize ?? this.fontSize,
-        revealed: revealed ?? this.revealed,
-        style: style ?? this.style,
-        rects: rects ?? this.rects,
-        quote: quote ?? this.quote,
-      );
+  }) => NoteItem(
+    id: id ?? this.id,
+    kind: kind,
+    x: x ?? this.x,
+    y: y ?? this.y,
+    w: w ?? this.w,
+    h: h ?? this.h,
+    text: text ?? this.text,
+    color: color ?? this.color,
+    fontSize: fontSize ?? this.fontSize,
+    revealed: revealed ?? this.revealed,
+    style: style ?? this.style,
+    rects: rects ?? this.rects,
+    quote: quote ?? this.quote,
+  );
 
   /// Area that reacts to touches, in PDF points. Pins get a little slack so
   /// they are easy to hit; text uses [measuredHeight] from layout.
@@ -107,7 +106,11 @@ class NoteItem {
         return Rect.fromLTWH(x, y, w, h);
       case ItemKind.text:
         return Rect.fromLTWH(
-            x, y, w, measuredHeight > 0 ? measuredHeight : fontSize * 1.35);
+          x,
+          y,
+          w,
+          measuredHeight > 0 ? measuredHeight : fontSize * 1.35,
+        );
     }
   }
 

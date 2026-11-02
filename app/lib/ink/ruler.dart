@@ -24,12 +24,12 @@ class Ruler {
   static const cm = 72 / 2.54;
 
   Ruler copyWith({int? page, Offset? center, double? angle}) => Ruler(
-        page: page ?? this.page,
-        center: center ?? this.center,
-        angle: angle ?? this.angle,
-        length: length,
-        thickness: thickness,
-      );
+    page: page ?? this.page,
+    center: center ?? this.center,
+    angle: angle ?? this.angle,
+    length: length,
+    thickness: thickness,
+  );
 
   Offset get direction => Offset(math.cos(angle), math.sin(angle));
   Offset get normal => Offset(-math.sin(angle), math.cos(angle));
@@ -43,13 +43,13 @@ class Ruler {
     );
   }
 
-  Offset fromLocal(Offset l) =>
-      center + direction * l.dx + normal * l.dy;
+  Offset fromLocal(Offset l) => center + direction * l.dx + normal * l.dy;
 
   /// Whether [p] is on the ruler's body (widened by [slack]).
   bool contains(Offset p, {double slack = 0}) {
     final l = toLocal(p);
-    return l.dx.abs() <= length / 2 + slack && l.dy.abs() <= thickness / 2 + slack;
+    return l.dx.abs() <= length / 2 + slack &&
+        l.dy.abs() <= thickness / 2 + slack;
   }
 
   /// The edge a stroke starting at [p] would follow: [p] must be within

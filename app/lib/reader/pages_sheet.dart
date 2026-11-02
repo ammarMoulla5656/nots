@@ -42,9 +42,14 @@ class _PagesSheetState extends State<PagesSheet> {
   void _scrollToCurrent() {
     if (!_scroll.hasClients || _filter != _Filter.all) return;
     final width = _scroll.position.viewportDimension;
-    final columns = (MediaQuery.sizeOf(context).width / 120).floor().clamp(2, 10);
+    final columns = (MediaQuery.sizeOf(context).width / 120).floor().clamp(
+      2,
+      10,
+    );
     final row = (widget.currentPage - 1) ~/ columns;
-    _scroll.jumpTo((row * _cell - width / 3).clamp(0, _scroll.position.maxScrollExtent));
+    _scroll.jumpTo(
+      (row * _cell - width / 3).clamp(0, _scroll.position.maxScrollExtent),
+    );
   }
 
   @override
@@ -54,16 +59,19 @@ class _PagesSheetState extends State<PagesSheet> {
   }
 
   List<int> get _pages => switch (_filter) {
-        _Filter.all => [for (var i = 1; i <= widget.pageCount; i++) i],
-        _Filter.bookmarks => widget.bookmarks.toList()..sort(),
-        _Filter.annotated => widget.annotated.toList()..sort(),
-      };
+    _Filter.all => [for (var i = 1; i <= widget.pageCount; i++) i],
+    _Filter.bookmarks => widget.bookmarks.toList()..sort(),
+    _Filter.annotated => widget.annotated.toList()..sort(),
+  };
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final pages = _pages;
-    final columns = (MediaQuery.sizeOf(context).width / 120).floor().clamp(2, 10);
+    final columns = (MediaQuery.sizeOf(context).width / 120).floor().clamp(
+      2,
+      10,
+    );
     return SafeArea(
       child: Column(
         children: [
@@ -71,13 +79,18 @@ class _PagesSheetState extends State<PagesSheet> {
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
             child: SegmentedButton<_Filter>(
               segments: [
-                const ButtonSegment(value: _Filter.all, label: Text('كل الصفحات')),
+                const ButtonSegment(
+                  value: _Filter.all,
+                  label: Text('كل الصفحات'),
+                ),
                 ButtonSegment(
-                    value: _Filter.bookmarks,
-                    label: Text('العلامات (${widget.bookmarks.length})')),
+                  value: _Filter.bookmarks,
+                  label: Text('العلامات (${widget.bookmarks.length})'),
+                ),
                 ButtonSegment(
-                    value: _Filter.annotated,
-                    label: Text('المكتوب عليها (${widget.annotated.length})')),
+                  value: _Filter.annotated,
+                  label: Text('المكتوب عليها (${widget.annotated.length})'),
+                ),
               ],
               selected: {_filter},
               showSelectedIcon: false,
@@ -87,9 +100,11 @@ class _PagesSheetState extends State<PagesSheet> {
           Expanded(
             child: pages.isEmpty
                 ? Center(
-                    child: Text(_filter == _Filter.bookmarks
-                        ? 'لا توجد علامات بعد. أضفها من قائمة «المزيد».'
-                        : 'لا توجد صفحات مكتوب عليها بعد.'),
+                    child: Text(
+                      _filter == _Filter.bookmarks
+                          ? 'لا توجد علامات بعد. أضفها من قائمة «المزيد».'
+                          : 'لا توجد صفحات مكتوب عليها بعد.',
+                    ),
                   )
                 : GridView.builder(
                     controller: _scroll,
@@ -130,15 +145,21 @@ class _PagesSheetState extends State<PagesSheet> {
                                       const Positioned(
                                         top: 0,
                                         right: 4,
-                                        child: Icon(Icons.bookmark,
-                                            color: Colors.red, size: 22),
+                                        child: Icon(
+                                          Icons.bookmark,
+                                          color: Colors.red,
+                                          size: 22,
+                                        ),
                                       ),
                                     if (widget.annotated.contains(n))
                                       const Positioned(
                                         bottom: 2,
                                         left: 2,
-                                        child: Icon(Icons.edit,
-                                            color: Colors.blue, size: 16),
+                                        child: Icon(
+                                          Icons.edit,
+                                          color: Colors.blue,
+                                          size: 16,
+                                        ),
                                       ),
                                   ],
                                 ),

@@ -20,8 +20,9 @@ class BookSearchPage extends StatefulWidget {
 }
 
 class _BookSearchPageState extends State<BookSearchPage> {
-  late final TextEditingController _query =
-      TextEditingController(text: widget.initialQuery);
+  late final TextEditingController _query = TextEditingController(
+    text: widget.initialQuery,
+  );
   Timer? _debounce;
   List<SearchHit> _hits = const [];
   int _ms = 0;
@@ -108,17 +109,21 @@ class _BookSearchPageState extends State<BookSearchPage> {
                 final section = book.sectionOf(h.page)?.title;
                 return ListTile(
                   title: Text.rich(
-                    TextSpan(children: [
-                      TextSpan(text: s.before),
-                      TextSpan(
-                        text: s.match,
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          backgroundColor: Colors.yellow.withValues(alpha: 0.6),
+                    TextSpan(
+                      children: [
+                        TextSpan(text: s.before),
+                        TextSpan(
+                          text: s.match,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            backgroundColor: Colors.yellow.withValues(
+                              alpha: 0.6,
+                            ),
+                          ),
                         ),
-                      ),
-                      TextSpan(text: s.after),
-                    ]),
+                        TextSpan(text: s.after),
+                      ],
+                    ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -127,8 +132,11 @@ class _BookSearchPageState extends State<BookSearchPage> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  onTap: () => Navigator.pop<SearchPick>(
-                      context, (query: _query.text, hits: _hits, index: i)),
+                  onTap: () => Navigator.pop<SearchPick>(context, (
+                    query: _query.text,
+                    hits: _hits,
+                    index: i,
+                  )),
                 );
               },
             ),

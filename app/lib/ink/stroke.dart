@@ -42,34 +42,39 @@ class Stroke {
   final double width;
   final List<StrokePoint> points;
 
-  Stroke copyWith(
-          {int? id, int? color, double? width, List<StrokePoint>? points}) =>
-      Stroke(
-        id: id ?? this.id,
-        tool: tool,
-        color: color ?? this.color,
-        width: width ?? this.width,
-        points: points ?? this.points,
-      );
+  Stroke copyWith({
+    int? id,
+    int? color,
+    double? width,
+    List<StrokePoint>? points,
+  }) => Stroke(
+    id: id ?? this.id,
+    tool: tool,
+    color: color ?? this.color,
+    width: width ?? this.width,
+    points: points ?? this.points,
+  );
 
   /// Scaled by [factor] around [anchor] (PDF points); the line gets
   /// proportionally thicker or thinner.
   Stroke scaled(double factor, ui.Offset anchor) => copyWith(
-        width: math.max(0.05, width * factor),
-        points: [
-          for (final p in points)
-            StrokePoint(
-              anchor.dx + (p.x - anchor.dx) * factor,
-              anchor.dy + (p.y - anchor.dy) * factor,
-              p.pressure,
-              p.t,
-            ),
-        ],
-      );
+    width: math.max(0.05, width * factor),
+    points: [
+      for (final p in points)
+        StrokePoint(
+          anchor.dx + (p.x - anchor.dx) * factor,
+          anchor.dy + (p.y - anchor.dy) * factor,
+          p.pressure,
+          p.t,
+        ),
+    ],
+  );
 
-  Stroke translated(double dx, double dy) => copyWith(points: [
-        for (final p in points) StrokePoint(p.x + dx, p.y + dy, p.pressure, p.t),
-      ]);
+  Stroke translated(double dx, double dy) => copyWith(
+    points: [
+      for (final p in points) StrokePoint(p.x + dx, p.y + dy, p.pressure, p.t),
+    ],
+  );
 
   /// Bounding box in PDF points, including half the stroke width.
   ui.Rect get bounds {
@@ -104,7 +109,11 @@ class Stroke {
   static double _sq(double v) => v * v;
 
   static double _segmentDistance(
-      double px, double py, StrokePoint a, StrokePoint b) {
+    double px,
+    double py,
+    StrokePoint a,
+    StrokePoint b,
+  ) {
     final dx = b.x - a.x;
     final dy = b.y - a.y;
     final lenSq = dx * dx + dy * dy;
@@ -163,7 +172,8 @@ class StrokeCodec {
     Map<int, List<Stroke>> pages,
     int nextStrokeId,
     Map<int, List<NoteItem>> items,
-  }) decodeDocument(Uint8List data) {
+  })
+  decodeDocument(Uint8List data) {
     final r = _Reader(data);
     for (final b in _magic) {
       if (r.byte() != b) throw const FormatException('Not a NOTS ink file');
@@ -178,7 +188,9 @@ class StrokeCodec {
     for (var i = 0; i < pageCount; i++) {
       final pageNumber = r.varint();
       final strokeCount = r.varint();
-      pages[pageNumber] = [for (var j = 0; j < strokeCount; j++) _readStroke(r)];
+      pages[pageNumber] = [
+        for (var j = 0; j < strokeCount; j++) _readStroke(r),
+      ];
     }
     final items = <int, List<NoteItem>>{};
     if (version >= 2) {
@@ -247,8 +259,12 @@ class StrokeCodec {
       final n = r.varint();
       rects = [
         for (var i = 0; i < n; i++)
-          ui.Rect.fromLTWH(r.zigzag() / _scale, r.zigzag() / _scale,
-              r.varint() / _scale, r.varint() / _scale),
+          ui.Rect.fromLTWH(
+            r.zigzag() / _scale,
+            r.zigzag() / _scale,
+            r.varint() / _scale,
+            r.varint() / _scale,
+          ),
       ];
       quote = utf8.decode(r.bytes(r.varint()));
     }
@@ -304,7 +320,13 @@ class StrokeCodec {
       t += r.varint();
       points.add(StrokePoint(qx / _scale, qy / _scale, pressure, t));
     }
-    return Stroke(id: id, tool: tool, color: color, width: width, points: points);
+    return Stroke(
+      id: id,
+      tool: tool,
+      color: color,
+      width: width,
+      points: points,
+    );
   }
 }
 
@@ -343,7 +365,9 @@ class _Reader {
   var _pos = 0;
 
   int byte() {
-    if (_pos >= _data.length) throw const FormatException('Unexpected end of ink data');
+    if (_pos >= _data.length) {
+      throw const FormatException('Unexpected end of ink data');
+    }
     return _data[_pos++];
   }
 

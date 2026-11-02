@@ -41,7 +41,8 @@ void paintStroke(Canvas canvas, Stroke s, double scale) {
   }
 
   final pressures = pts.map((p) => p.pressure);
-  final varies = !isHighlighter &&
+  final varies =
+      !isHighlighter &&
       (pressures.reduce((a, b) => a > b ? a : b) -
               pressures.reduce((a, b) => a < b ? a : b)) >
           0.05;
@@ -70,7 +71,8 @@ void paintStroke(Canvas canvas, Stroke s, double scale) {
 void _paintCalligraphy(Canvas canvas, Stroke s, double scale) {
   final pts = s.points;
   const angle = -math.pi / 4; // nib tilted 45 degrees, rising to the right
-  final half = Offset(math.cos(angle), math.sin(angle)) * (s.width * scale * 1.1);
+  final half =
+      Offset(math.cos(angle), math.sin(angle)) * (s.width * scale * 1.1);
   final fill = Paint()
     ..color = Color(s.color)
     ..style = PaintingStyle.fill
@@ -184,7 +186,13 @@ class SelectionPainter extends CustomPainter {
 
   static const _blue = Color(0xFF1E88E5);
 
-  void _icon(Canvas canvas, IconData icon, Offset center, double size, Color c) {
+  void _icon(
+    Canvas canvas,
+    IconData icon,
+    Offset center,
+    double size,
+    Color c,
+  ) {
     final tp = TextPainter(
       text: TextSpan(
         text: String.fromCharCode(icon.codePoint),
@@ -221,10 +229,18 @@ class SelectionPainter extends CustomPainter {
     if (bounds != null) {
       final u = unit();
       final px = u * scale; // layout pixels per screen pixel
-      final geo = SelectionGeometry(bounds, u,
-          canEdit: canEdit(), canResize: canResize());
+      final geo = SelectionGeometry(
+        bounds,
+        u,
+        canEdit: canEdit(),
+        canResize: canResize(),
+      );
       Rect toPx(Rect r) => Rect.fromLTRB(
-          r.left * scale, r.top * scale, r.right * scale, r.bottom * scale);
+        r.left * scale,
+        r.top * scale,
+        r.right * scale,
+        r.bottom * scale,
+      );
       final r = toPx(geo.frame);
       // Thin frame and small controls: they must not hide the writing.
       canvas.drawRect(r, Paint()..color = _blue.withValues(alpha: 0.05));
@@ -238,7 +254,10 @@ class SelectionPainter extends CustomPainter {
       if (canResize()) {
         for (final c in geo.corners) {
           final h = Rect.fromCenter(
-              center: c * scale, width: 7 * px, height: 7 * px);
+            center: c * scale,
+            width: 7 * px,
+            height: 7 * px,
+          );
           canvas.drawRect(h, Paint()..color = Colors.white);
           canvas.drawRect(
             h,
@@ -251,7 +270,11 @@ class SelectionPainter extends CustomPainter {
       }
       const rr = SelectionGeometry.buttonRadiusPx;
       final close = geo.closeCenter * scale;
-      canvas.drawCircle(close, rr * px, Paint()..color = const Color(0xFFD32F2F));
+      canvas.drawCircle(
+        close,
+        rr * px,
+        Paint()..color = const Color(0xFFD32F2F),
+      );
       _icon(canvas, Icons.close, close, 13 * px, Colors.white);
       if (canEdit()) {
         final edit = geo.editCenter * scale;

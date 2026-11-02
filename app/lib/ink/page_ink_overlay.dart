@@ -413,7 +413,8 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
 
     final ruler = tools.ruler.value;
     if (ruler != null && ruler.page == widget.pageNumber && tools.drawing) {
-      final writes = tools.mode == ToolMode.pen || tools.mode == ToolMode.highlighter;
+      final writes =
+          tools.mode == ToolMode.pen || tools.mode == ToolMode.highlighter;
       final side = writes && !_penErases(e)
           ? ruler.edgeSideNear(p, 12 * _unit)
           : null;
@@ -494,7 +495,11 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
             id: -1,
             tool: tools.strokeTool,
             color: tools.color,
-            width: tools.width,
+            width:
+                tools.mode == ToolMode.highlighter &&
+                    tools.markStyle != MarkStyle.highlight
+                ? 2
+                : tools.width,
             points: [
               if (_rulerSide != null)
                 () {
@@ -666,16 +671,21 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
       final a1 = _ptrPos[_rulerPtr];
       final b1 = _ptrPos[_rulerPtrB];
       if (a1 != null && b1 != null) {
-        widget.tools.ruler.value =
-            _rulerBase!.twoFingers(_rulerA0, _rulerB0, a1, b1);
+        widget.tools.ruler.value = _rulerBase!.twoFingers(
+          _rulerA0,
+          _rulerB0,
+          a1,
+          b1,
+        );
       }
       return;
     }
     if (e.pointer != _activePointer || _consumed) return;
     final p = _pt(e);
     if (_rulerPtr != null) {
-      widget.tools.ruler.value =
-          _rulerBase!.copyWith(center: _rulerBase!.center + (p - _rulerFrom));
+      widget.tools.ruler.value = _rulerBase!.copyWith(
+        center: _rulerBase!.center + (p - _rulerFrom),
+      );
       return;
     }
     if (_resizeHandle != null) {
@@ -785,28 +795,60 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     }
   }
 
-  /// A highlighter stroke that passes over text becomes a highlight of the
-  /// words it touched (drawn under the letters, like the word highlighter);
-  /// over pictures or empty page it stays a free stroke. Returns true when
-  /// the stroke was turned into a word highlight.
-  bool _snapHighlight(int page, Stroke cur) {
+  /// The text-marking tool (the toolbar's highlighter): a stroke over text
+  /// marks the words it passed over in the chosen way (highlight, underline,
+  /// strike, font colour, comment); a tap marks the word under it, or
+  /// removes the mark that is already there. A highlight over pictures or
+  /// empty page stays a free stroke. Returns true when the stroke was used
+  /// up (no free stroke is left).
+  bool _applyMarkup(int page, Stroke cur) {
     if (cur.tool != InkTool.highlighter) return false;
+    final tools = widget.tools;
+    final style = tools.markStyle;
     final words = _words;
-    if (words == null || words.isEmpty) return false;
     final path = [for (final p in cur.points) Offset(p.x, p.y)];
-    final idx = wordsAlongPath(words, path);
-    if (idx.isEmpty) return false;
+    var length = 0.0;
+    for (var i = 1; i < path.length; i++) {
+      length += (path[i] - path[i - 1]).distance;
+    }
     final doc = widget.document;
-    doc.addItem(
-      page,
-      NoteItem.mark(
-        id: doc.takeStrokeId(),
-        lineRects: lineRects([for (final i in idx) words[i]]),
-        style: MarkStyle.highlight,
-        color: cur.color,
-        quote: idx.map((i) => words[i].text).join(' '),
-      ),
+    var idx = const <int>[];
+    if (length < 6 * _unit) {
+      // A tap: take the mark off, or mark the word.
+      final mark = _hitItem(path.first, {ItemKind.mark});
+      if (mark != null) {
+        if (mark.text.isEmpty) {
+          doc.removeItem(page, mark.id);
+        } else {
+          unawaited(widget.onEditItem(page, mark));
+        }
+        return true;
+      }
+      final w = words == null
+          ? null
+          : wordAt(words, path.first, tolerance: 3 * _unit);
+      if (w == null) return true; // a tap on blank page draws nothing
+      idx = [w];
+    } else if (words != null && words.isNotEmpty) {
+      idx = wordsAlongPath(words, path);
+    }
+    if (idx.isEmpty) {
+      // Over a picture or blank page only a highlight may stay as a stroke.
+      return style != MarkStyle.highlight;
+    }
+    final draft = NoteItem.mark(
+      id: doc.takeStrokeId(),
+      lineRects: lineRects([for (final i in idx) words![i]]),
+      style: style,
+      color: cur.color,
+      quote: idx.map((i) => words![i].text).join(' '),
     );
+    final create = widget.onCreateMark;
+    if (create != null) {
+      unawaited(create(page, draft));
+    } else {
+      doc.addItem(page, draft);
+    }
     return true;
   }
 
@@ -948,7 +990,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     } else if (_shapeStart != null &&
         _current!.bounds.longestSide < _current!.width + 3) {
       // A tap with the shape tool draws nothing.
-    } else if (_current != null && _snapHighlight(page, _current!)) {
+    } else if (_current != null && _applyMarkup(page, _current!)) {
       // The highlighter went over text: it became a highlight of those words.
     } else if (_current != null) {
       final cur = _current!;
@@ -1195,11 +1237,17 @@ class _RulerPainter extends CustomPainter {
         final tp = TextPainter(
           text: TextSpan(
             text: '${i.abs()}',
-            style: TextStyle(color: const Color(0xFF0D47A1), fontSize: 8 * scale),
+            style: TextStyle(
+              color: const Color(0xFF0D47A1),
+              fontSize: 8 * scale,
+            ),
           ),
           textDirection: TextDirection.ltr,
         )..layout();
-        tp.paint(canvas, Offset(x - tp.width / 2, h / 2 - len - tp.height - scale));
+        tp.paint(
+          canvas,
+          Offset(x - tp.width / 2, h / 2 - len - tp.height - scale),
+        );
         tp.dispose();
       }
     }

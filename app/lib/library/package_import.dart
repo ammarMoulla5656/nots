@@ -23,7 +23,8 @@ Future<BookEntry> importPackage(
     final pdf = File(p.join(dir.path, 'book.pdf'));
     await pdf.writeAsBytes(pkg.pdf, flush: true);
     final entry = await library.importPdf(pdf.path, title: pkg.title);
-    if (!await InkStore.hasWriting(entry.id) || await confirmReplace(entry.title)) {
+    if (!await InkStore.hasWriting(entry.id) ||
+        await confirmReplace(entry.title)) {
       await InkStore.writeRaw(entry.id, pkg.ink);
     }
     final link = pkg.linkJson;

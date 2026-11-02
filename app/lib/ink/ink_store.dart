@@ -66,7 +66,8 @@ class InkStore {
       } on FormatException {
         // Keep the unreadable file for inspection instead of overwriting it.
         await file.rename(
-            '${file.path}.corrupt-${DateTime.now().millisecondsSinceEpoch}');
+          '${file.path}.corrupt-${DateTime.now().millisecondsSinceEpoch}',
+        );
       }
     }
     return InkStore._(file, doc);
@@ -97,16 +98,17 @@ class InkStore {
             if (x.value.isNotEmpty) x.key,
           for (final x in d.items.entries)
             if (x.value.isNotEmpty) x.key,
-        }.toList()
-          ..sort();
+        }.toList()..sort();
         if (pages.isEmpty) continue;
-        out.add(OrphanInk(
-          key: key,
-          modified: await e.lastModified(),
-          pages: pages,
-          strokes: d.pages.values.fold(0, (n, l) => n + l.length),
-          items: d.items.values.fold(0, (n, l) => n + l.length),
-        ));
+        out.add(
+          OrphanInk(
+            key: key,
+            modified: await e.lastModified(),
+            pages: pages,
+            strokes: d.pages.values.fold(0, (n, l) => n + l.length),
+            items: d.items.values.fold(0, (n, l) => n + l.length),
+          ),
+        );
       } on FormatException {
         // Not readable: not offered.
       }
@@ -126,7 +128,8 @@ class InkStore {
     if (!await from.exists()) return false;
     if (await to.exists()) {
       final d = StrokeCodec.decodeDocument(await to.readAsBytes());
-      final hasWriting = d.pages.values.any((l) => l.isNotEmpty) ||
+      final hasWriting =
+          d.pages.values.any((l) => l.isNotEmpty) ||
           d.items.values.any((l) => l.isNotEmpty);
       if (hasWriting) return false;
       await to.delete();
