@@ -15,6 +15,7 @@ import '../book/book_text.dart';
 import '../export/exporter.dart';
 import '../ink/ink_document.dart';
 import '../ink/ink_store.dart';
+import '../ink/marks.dart';
 import '../ink/item_painter.dart';
 import '../library/library_store.dart';
 import '../ink/note_items.dart';
@@ -25,13 +26,14 @@ import '../ink/shapes.dart';
 import '../ink/stroke.dart';
 import '../ink/tool_controller.dart';
 import '../ink/words.dart';
-import '../ui/color_wheel.dart';
+import '../ui/color_palette.dart';
 import 'pages_sheet.dart';
 import 'reader_prefs.dart';
 import 'scrub_bar.dart';
 import 'search_highlight.dart';
 import 'reader_zoom.dart';
 import 'search_page.dart';
+import 'selection_menu.dart';
 import 'toc_panel.dart';
 import 'touch_navigator.dart';
 
@@ -77,6 +79,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// Last page read and bookmarks of this book.
   ReaderPrefs? _prefs;
   bool _restored = false;
+
+  /// The colours offered in the tools and the text selection menu.
+  final _palette = ColorPalette();
+  static const _commentColor = 0xFF0D47A1;
 
   /// Full screen: the phone's own status and navigation bars hidden too.
   bool _fullScreen = false;
@@ -136,6 +142,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void initState() {
     super.initState();
     _tools.addListener(_onToolChanged);
+    _palette.load();
     _showTools();
     ReaderPrefs.open(widget.book.id).then((pr) {
       if (!mounted) {
@@ -359,6 +366,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _hideTimer?.cancel();
     _prefs?.dispose();
     _searchShown.dispose();
+    _palette.dispose();
     super.dispose();
   }
 
@@ -504,7 +512,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         // A text box is as wide as its text, so its frame fits the words.
         w: isText ? fitTextWidth(text, size) : 0,
         text: text,
-        color: isText ? _tools.color : 0xFF0D47A1,
+        color: _tools.color,
         fontSize: size,
       ),
     );
@@ -946,36 +954,31 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   // ---- text selection menu: mark the selected words ----
 
-  /// Adds highlight / underline / strike / comment to the menu that appears
-  /// when the user selects text, next to "Select all" and "Copy".
-  void _selectionMenu(
+  /// The menu over selected text: the colours, the ways of marking and
+  /// copying. No "Select all": a whole book selected by one slip of the
+  /// finger is of no use and slow to undo.
+  Widget? _selectionMenu(
+    BuildContext context,
     PdfViewerContextMenuBuilderParams params,
-    List<ContextMenuButtonItem> items,
   ) {
     final delegate = params.textSelectionDelegate;
-    // No "Select all": a whole book selected by one slip of the finger is of
-    // no use and slow to undo.
-    items.removeWhere((i) => i.type == ContextMenuButtonType.selectAll);
+    if (!delegate.hasSelectedText) return null;
+
     // Copying takes the book text of the selected words, not the PDF's
     // letters.
-    final copy = items.indexWhere((i) => i.type == ContextMenuButtonType.copy);
-    if (copy >= 0 && (_book?.embedded ?? false)) {
-      items[copy] = ContextMenuButtonItem(
-        type: ContextMenuButtonType.copy,
-        onPressed: () async {
-          final text = await _selectedBookText(
-            await delegate.getSelectedTextRanges(),
-          );
-          if (text == null) {
-            await delegate.copyTextSelection();
-          } else {
-            _copy(text);
-          }
-          await delegate.clearTextSelection();
-          params.dismissContextMenu();
-        },
+    Future<void> copy() async {
+      final text = await _selectedBookText(
+        await delegate.getSelectedTextRanges(),
       );
+      if (text == null) {
+        await delegate.copyTextSelection();
+      } else {
+        _copy(text);
+      }
+      await delegate.clearTextSelection();
+      params.dismissContextMenu();
     }
+
     Future<void> mark(MarkStyle style, int color) async {
       final ranges = await delegate.getSelectedTextRanges();
       final doc = _store?.document;
@@ -1012,24 +1015,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         return;
       }
       for (final (page, d) in drafts) {
-        // Applying the same mark to words that already have it takes it off.
-        final same = [
-          for (final it in doc.itemsOf(page))
-            if (it.kind == ItemKind.mark &&
-                it.style == style &&
-                _coverage(d.rects, it.rects) > 0)
-              it,
-        ];
-        final covered = same.isEmpty
-            ? 0.0
-            : _coverage(d.rects, [for (final it in same) ...it.rects]);
-        if (covered > 0.5) {
-          for (final it in same) {
-            doc.removeItem(page, it.id);
-          }
-        } else {
-          doc.addItem(page, d);
-        }
+        applyMark(doc, page, d);
       }
       _repaintPages(); // the menu is gone: the page must come back sharp
     }
@@ -1066,33 +1052,27 @@ class _ReaderScreenState extends State<ReaderScreen> {
       if (text.isNotEmpty) _copy(text);
     }
 
-    items.insertAll(0, [
-      ContextMenuButtonItem(
-        type: ContextMenuButtonType.custom,
-        label: 'تسطير',
-        onPressed: () => mark(MarkStyle.underline, 0xFFD32F2F),
-      ),
-      ContextMenuButtonItem(
-        type: ContextMenuButtonType.custom,
-        label: 'شطب',
-        onPressed: () => mark(MarkStyle.strike, 0xFFD32F2F),
-      ),
-      ContextMenuButtonItem(
-        type: ContextMenuButtonType.custom,
-        label: 'لون الخط',
-        onPressed: () => mark(MarkStyle.textColor, 0xFFD32F2F),
-      ),
-      ContextMenuButtonItem(
-        type: ContextMenuButtonType.custom,
-        label: 'تعليق',
-        onPressed: () => mark(MarkStyle.comment, 0xFF0D47A1),
-      ),
-      ContextMenuButtonItem(
-        type: ContextMenuButtonType.custom,
-        label: 'نسخ الفقرة',
-        onPressed: copyParagraph,
-      ),
-    ]);
+    // A colour picked in the menu is kept for the next marks. A comment is
+    // dark blue unless a colour is picked for it.
+    void markWith(MarkStyle style, int? picked) {
+      if (picked != null) _palette.setMarkColor(picked);
+      final usual = style == MarkStyle.comment
+          ? _commentColor
+          : _palette.markColor;
+      mark(style, picked ?? usual);
+    }
+
+    return SelectionMenu(
+      palette: _palette,
+      actions: [
+        (label: 'تسطير', onPressed: (c) => markWith(MarkStyle.underline, c)),
+        (label: 'شطب', onPressed: (c) => markWith(MarkStyle.strike, c)),
+        (label: 'لون الخط', onPressed: (c) => markWith(MarkStyle.textColor, c)),
+        (label: 'تعليق', onPressed: (c) => markWith(MarkStyle.comment, c)),
+        (label: 'نسخ الفقرة', onPressed: (_) => copyParagraph()),
+        if (delegate.isCopyAllowed) (label: 'نسخ', onPressed: (_) => copy()),
+      ],
+    );
   }
 
   /// One box per letter of a selected text range, in page points (y down).
@@ -1112,23 +1092,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
       );
     }
     return chars;
-  }
-
-  /// The share (0..1) of the area of [rects] that [others] cover.
-  static double _coverage(List<Rect> rects, List<Rect> others) {
-    var total = 0.0, covered = 0.0;
-    for (final r in rects) {
-      total += r.width * r.height;
-      var best = 0.0;
-      for (final o in others) {
-        final i = r.intersect(o);
-        if (i.width > 0 && i.height > 0) {
-          best = math.max(best, i.width * i.height);
-        }
-      }
-      covered += best;
-    }
-    return total <= 0 ? 0 : covered / total;
   }
 
   /// The book text of the words a PDF text selection covers, or null when
@@ -1880,6 +1843,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     tools: _tools,
     document: store.document,
     selection: _selection!,
+    palette: _palette,
     onToggleRuler: _toggleRuler,
   );
 
@@ -1906,7 +1870,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
             sizeDelegateProvider: const ReaderZoom(),
             pageOverlaysBuilder: _overlays,
             onGeneralTap: _onGeneralTap,
-            customizeContextMenuItems: _selectionMenu,
+            buildContextMenu: _selectionMenu,
             // Momentum scrolling: flicks carry on.
             scrollPhysics: PdfViewerParams.getScrollPhysics(context),
             onViewerReady: (doc, _) {
@@ -1945,6 +1909,7 @@ class _Toolbar extends StatelessWidget {
     required this.tools,
     required this.document,
     required this.selection,
+    required this.palette,
     required this.onToggleRuler,
   });
 
@@ -1953,6 +1918,7 @@ class _Toolbar extends StatelessWidget {
   final ToolController tools;
   final InkDocument document;
   final SelectionController selection;
+  final ColorPalette palette;
 
   @override
   Widget build(BuildContext context) {
@@ -2161,8 +2127,8 @@ class _Toolbar extends StatelessWidget {
     ];
   }
 
-  /// One colour circle: it shows the current colour and opens the colour
-  /// wheel (with a light-to-dark slider) to change it.
+  /// One colour circle: it shows the current colour and opens the list of
+  /// colours to change it.
   Widget _colorButton(
     BuildContext context,
     int color,
@@ -2172,8 +2138,8 @@ class _Toolbar extends StatelessWidget {
       message: 'اللون',
       child: GestureDetector(
         onTap: () async {
-          final c = await showColorWheelDialog(context, Color(color));
-          if (c != null) onPicked(c.toARGB32());
+          final c = await showColorListDialog(context, palette, color);
+          if (c != null) onPicked(c);
         },
         child: Container(
           margin: const EdgeInsets.symmetric(horizontal: 6),

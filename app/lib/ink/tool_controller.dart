@@ -29,6 +29,7 @@ class ToolController extends ChangeNotifier {
   int _penColor = 0xFF1A1A1A;
   int _highlighterColor = 0xFFFFEB3B;
   int _markColor = 0xFFFFEB3B;
+  int _pinColor = 0xFF0D47A1;
   double _penWidth = 1.6;
   double _highlighterWidth = 14;
   double _textSize = 14;
@@ -113,6 +114,7 @@ class ToolController extends ChangeNotifier {
   int get color => switch (_mode) {
     ToolMode.highlighter => _highlighterColor,
     ToolMode.word => _markColor,
+    ToolMode.pin => _pinColor,
     _ => _penColor,
   };
 
@@ -149,45 +151,6 @@ class ToolController extends ChangeNotifier {
       _mode == ToolMode.shape ||
       _mode == ToolMode.text;
 
-  final List<int> _customPen = [];
-  final List<int> _customHighlighter = [];
-
-  /// Remembers a colour chosen with the colour dialog (last 5 per tool).
-  void addCustomColor(int c) {
-    final list = _mode == ToolMode.highlighter || _mode == ToolMode.word
-        ? _customHighlighter
-        : _customPen;
-    list.remove(c);
-    list.add(c);
-    if (list.length > 5) list.removeAt(0);
-    setColor(c);
-  }
-
-  static const penColors = [
-    0xFF1A1A1A,
-    0xFFD32F2F,
-    0xFF1565C0,
-    0xFF2E7D32,
-    0xFFEF6C00,
-  ];
-  static const highlighterColors = [
-    0xFFFFEB3B,
-    0xFF76FF03,
-    0xFFFF80AB,
-    0xFF40C4FF,
-  ];
-
-  List<int> get palette => switch (_mode) {
-    ToolMode.highlighter => [...highlighterColors, ..._customHighlighter],
-    ToolMode.word => [
-      ...highlighterColors,
-      0xFFD32F2F,
-      0xFF1565C0,
-      ..._customHighlighter,
-    ],
-    _ => [...penColors, ..._customPen],
-  };
-
   void setMode(ToolMode m) {
     if (_mode == m) return;
     _mode = m;
@@ -223,6 +186,8 @@ class ToolController extends ChangeNotifier {
         _highlighterColor = c;
       case ToolMode.word:
         _markColor = c;
+      case ToolMode.pin:
+        _pinColor = c;
       default:
         _penColor = c;
     }

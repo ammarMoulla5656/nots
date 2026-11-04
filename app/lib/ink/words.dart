@@ -92,6 +92,27 @@ List<Rect> lineRects(List<WordBox> words) {
   return lines;
 }
 
+/// [rects] (one per text line) without the parts under [cut]: on a line that
+/// a cut crosses, what sticks out on either side of it stays.
+List<Rect> rectsMinus(List<Rect> rects, List<Rect> cut) {
+  const sliver = 1.5; // less than this is the edge of a word, not a word
+  var out = rects;
+  for (final c in cut) {
+    out = [
+      for (final r in out)
+        if (!r.overlaps(c) || !sameLine(r, c))
+          r
+        else ...[
+          if (c.left - r.left > sliver)
+            Rect.fromLTRB(r.left, r.top, c.left, r.bottom),
+          if (r.right - c.right > sliver)
+            Rect.fromLTRB(c.right, r.top, r.right, r.bottom),
+        ],
+    ];
+  }
+  return out;
+}
+
 /// Indices of the words a stroke passed over, in reading order. [path] is the
 /// stroke's polyline (PDF points); each segment is sampled every [step]
 /// points, and a word counts when a sample falls inside its box widened by

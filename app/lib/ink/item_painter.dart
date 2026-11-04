@@ -125,12 +125,16 @@ class ItemsPainter extends CustomPainter {
     final rects = it.rects.map(_px).toList();
     // All lines of a mark are filled as one shape, so where two lines touch
     // the colour is not laid on twice.
-    Path area(double grow, [double radius = 0]) {
+    Path area(double grow, {double tall = 0, double radius = 0}) {
       final path = Path();
       for (final r in rects) {
-        path.addRRect(
-          RRect.fromRectAndRadius(r.inflate(grow), Radius.circular(radius)),
+        final box = Rect.fromLTRB(
+          r.left - grow,
+          r.top - grow - r.height * tall,
+          r.right + grow,
+          r.bottom + grow + r.height * tall,
         );
+        path.addRRect(RRect.fromRectAndRadius(box, Radius.circular(radius)));
       }
       return path;
     }
@@ -140,7 +144,7 @@ class ItemsPainter extends CustomPainter {
         // Multiply: the page shows through as it is, so the letters keep
         // their colour and the highlight sits "under" them.
         canvas.drawPath(
-          area(0.5 * scale, 2 * scale),
+          area(0.5 * scale, radius: 2 * scale),
           Paint()
             ..color = color.withValues(alpha: 0.6)
             ..blendMode = BlendMode.multiply,
@@ -149,31 +153,14 @@ class ItemsPainter extends CustomPainter {
         // Screen turns black letters into the colour and leaves the white
         // page white, and the soft edges of the letters blend between the
         // two exactly as if the letters had been printed in that colour, so
-        // they stay as sharp as the rest of the page.
+        // they stay as sharp as the rest of the page. Taller than the line:
+        // the tails and vowel marks of the letters stick out of its box.
         canvas.drawPath(
-          area(0.4 * scale),
+          area(0.4 * scale, tall: 0.25),
           Paint()
             ..color = color
             ..blendMode = BlendMode.screen,
         );
-        if (it.style == MarkStyle.comment) {
-          // and a light dotted underline.
-          final dots = Paint()
-            ..color = color.withValues(alpha: 0.75)
-            ..strokeWidth = 1 * scale
-            ..strokeCap = StrokeCap.round;
-          final step = 2.5 * scale;
-          for (final r in rects) {
-            final y = r.bottom + 1 * scale;
-            for (var x = r.left; x < r.right; x += step * 2) {
-              canvas.drawLine(
-                Offset(x, y),
-                Offset(math.min(x + step, r.right), y),
-                dots,
-              );
-            }
-          }
-        }
       case MarkStyle.underline:
         for (final r in rects) {
           canvas.drawLine(r.bottomLeft, r.bottomRight, line);
@@ -182,26 +169,6 @@ class ItemsPainter extends CustomPainter {
         for (final r in rects) {
           canvas.drawLine(r.centerLeft, r.centerRight, line);
         }
-    }
-    // A comment bubble at the start of the marked words (their right end:
-    // the books are Arabic) whenever the mark carries a comment.
-    if (it.text.isNotEmpty || it.style == MarkStyle.comment) {
-      final first = _px(
-        it.rects.isEmpty
-            ? Rect.fromLTWH(it.x, it.y, it.w, it.h)
-            : it.rects.first,
-      );
-      final c = Offset(first.right + 3 * scale, first.top - 2 * scale);
-      final rr = 4.5 * scale;
-      canvas.drawCircle(c, rr, Paint()..color = Color(it.color));
-      canvas.drawCircle(
-        c,
-        rr,
-        Paint()
-          ..color = Colors.white
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1 * scale,
-      );
     }
   }
 
