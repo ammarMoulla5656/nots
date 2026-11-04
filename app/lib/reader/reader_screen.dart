@@ -76,9 +76,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _searchShown.value = pick;
   }
 
-  /// Last page read and bookmarks of this book.
+  /// Last place read and bookmarks of this book.
   ReaderPrefs? _prefs;
   bool _restored = false;
+
+  /// Saves the place shortly after the page stops moving.
+  Timer? _placeTimer;
+
+  /// Keeps everything on disk when the app leaves the screen: Android may
+  /// end it from there without warning.
+  late final AppLifecycleListener _lifecycle;
 
   /// The colours offered in the tools and the text selection menu.
   final _palette = ColorPalette();
@@ -144,6 +151,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _tools.addListener(_onToolChanged);
     _palette.load();
     _showTools();
+    _lifecycle = AppLifecycleListener(onHide: _saveNow);
     ReaderPrefs.open(widget.book.id).then((pr) {
       if (!mounted) {
         pr.dispose();
@@ -360,6 +368,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     }
     _tools.removeListener(_onToolChanged);
+    _lifecycle.dispose();
+    _viewer.removeListener(_onViewMoved);
+    _placeTimer?.cancel();
+    _capturePlace();
     _store?.dispose();
     _selection?.dispose();
     _tools.dispose();
@@ -370,15 +382,57 @@ class _ReaderScreenState extends State<ReaderScreen> {
     super.dispose();
   }
 
-  /// Reopen the book on the page last read (once both the viewer and the
-  /// saved position are ready).
+  /// Reopen the book exactly where it was left, at the same zoom (once both
+  /// the viewer and the saved place are ready).
   void _restorePage() {
     final pr = _prefs;
     if (_restored || pr == null || !_viewer.isReady) return;
     _restored = true;
-    if (pr.lastPage > 1 && pr.lastPage <= _viewer.pageCount) {
+    _viewer.addListener(_onViewMoved);
+    final pos = pr.position;
+    if (pos != null && pos.page >= 1 && pos.page <= _viewer.pageCount) {
+      final zoom = pos
+          .zoomFor(_viewer.coverScale)
+          .clamp(_viewer.minScale, _viewer.maxScale);
+      _viewer.goTo(
+        _viewer.calcMatrixFor(
+          pos.centerIn(_viewer.layout.pageLayouts[pos.page - 1]),
+          zoom: zoom,
+        ),
+        duration: Duration.zero,
+      );
+    } else if (pr.lastPage > 1 && pr.lastPage <= _viewer.pageCount) {
+      // Saved by a version that kept only the page.
       _viewer.goToPage(pageNumber: pr.lastPage, duration: Duration.zero);
     }
+  }
+
+  void _onViewMoved() {
+    _placeTimer?.cancel();
+    _placeTimer = Timer(const Duration(milliseconds: 500), _capturePlace);
+  }
+
+  void _capturePlace() {
+    final pr = _prefs;
+    if (pr == null || !_restored || !_viewer.isReady) return;
+    final n = _viewer.pageNumber;
+    if (n == null) return;
+    pr.setPosition(
+      ReadingPosition.capture(
+        page: n,
+        pageRect: _viewer.layout.pageLayouts[n - 1],
+        center: _viewer.centerPosition,
+        zoom: _viewer.currentZoom,
+        fit: _viewer.coverScale,
+      ),
+    );
+  }
+
+  void _saveNow() {
+    _placeTimer?.cancel();
+    _capturePlace();
+    unawaited(_prefs?.flush());
+    unawaited(_store?.flush());
   }
 
   Set<int> get _annotatedPages {

@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The library's catalogue and books, and Google Drive. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="nots"
         android:name="${applicationName}"
@@ -40,6 +42,17 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- To tell whether the device has Google services, and a browser
+             that can show the sign-in page over the app. -->
+        <package android:name="com.google.android.gms"/>
+        <intent>
+            <action android:name="android.support.customtabs.action.CustomTabsService"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <category android:name="android.intent.category.BROWSABLE"/>
+            <data android:scheme="https"/>
         </intent>
     </queries>
 </manifest>

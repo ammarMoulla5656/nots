@@ -176,6 +176,27 @@ class InkStore {
     }
   }
 
+  /// The saved writing of [bookId] as it is, or null.
+  static Future<Uint8List?> rawBytes(String bookId) async {
+    final f = File(p.join((await _dir()).path, '$bookId.nots'));
+    return await f.exists() ? f.readAsBytes() : null;
+  }
+
+  /// When the writing of [bookId] last changed, or null.
+  static Future<DateTime?> modifiedAt(String bookId) async {
+    final f = File(p.join((await _dir()).path, '$bookId.nots'));
+    return await f.exists() ? f.lastModified() : null;
+  }
+
+  /// Keeps the writing of [bookId] beside its file before it is replaced by
+  /// a newer version from another device. Such a copy is never read again by
+  /// the app; it is there so that no writing is ever lost.
+  static Future<void> keepCopy(String bookId) async {
+    final f = File(p.join((await _dir()).path, '$bookId.nots'));
+    if (!await f.exists()) return;
+    await f.copy('${f.path}.older-${DateTime.now().millisecondsSinceEpoch}');
+  }
+
   /// Replaces the saved writing of [bookId] with an encoded document
   /// (validated first).
   static Future<void> writeRaw(String bookId, Uint8List bytes) async {

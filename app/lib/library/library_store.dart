@@ -16,6 +16,11 @@ class BookEntry {
     required this.size,
     required this.added,
     required this.lastOpened,
+    this.catalogId,
+    this.part,
+    this.author = '',
+    this.subject = '',
+    this.cover = '',
   });
 
   /// Content fingerprint of the PDF. The ink, the linked Word text and the
@@ -28,13 +33,28 @@ class BookEntry {
   final DateTime added;
   DateTime lastOpened;
 
-  Map<String, Object> toJson() => {
+  /// The book and part of the server's library this came from; null for a
+  /// file the user added.
+  String? catalogId;
+  int? part;
+  String author;
+  String subject;
+
+  /// Path of the cover on the server.
+  String cover;
+
+  Map<String, Object?> toJson() => {
     'id': id,
     'title': title,
     'file': fileName,
     'size': size,
     'added': added.toIso8601String(),
     'opened': lastOpened.toIso8601String(),
+    if (catalogId != null) 'catalog': catalogId,
+    if (part != null) 'part': part,
+    if (author.isNotEmpty) 'author': author,
+    if (subject.isNotEmpty) 'subject': subject,
+    if (cover.isNotEmpty) 'cover': cover,
   };
 
   static BookEntry fromJson(Map<String, dynamic> j) => BookEntry(
@@ -44,6 +64,11 @@ class BookEntry {
     size: j['size'] as int,
     added: DateTime.parse(j['added'] as String),
     lastOpened: DateTime.parse(j['opened'] as String),
+    catalogId: j['catalog'] as String?,
+    part: j['part'] as int?,
+    author: j['author'] as String? ?? '',
+    subject: j['subject'] as String? ?? '',
+    cover: j['cover'] as String? ?? '',
   );
 }
 
@@ -106,6 +131,9 @@ class LibraryStore extends ChangeNotifier {
 
   Set<String> get ids => {for (final b in _books) b.id};
 
+  /// Folder of the app's own data.
+  Directory get root => _root;
+
   String pathOf(BookEntry b) => p.join(_root.path, 'books', '${b.id}.pdf');
 
   BookEntry? byId(String id) {
@@ -115,10 +143,43 @@ class LibraryStore extends ChangeNotifier {
     return null;
   }
 
+  /// The library's copy of part [part] of the catalogue book [catalogId].
+  BookEntry? byCatalog(String catalogId, int part) {
+    for (final b in _books) {
+      if (b.catalogId == catalogId && b.part == part) return b;
+    }
+    return null;
+  }
+
+  /// Marks [b] as part [part] of the catalogue book [catalogId].
+  Future<void> linkCatalog(
+    BookEntry b, {
+    required String catalogId,
+    required int part,
+    required String title,
+    String author = '',
+    String subject = '',
+    String cover = '',
+  }) async {
+    b
+      ..catalogId = catalogId
+      ..part = part
+      ..title = title
+      ..author = author
+      ..subject = subject
+      ..cover = cover;
+    await _save();
+    notifyListeners();
+  }
+
   /// Copies [sourcePath] into the library (once per distinct content) and
   /// returns its entry. Opening the same book again, from any path, gives
   /// the same entry and therefore the same writing.
-  Future<BookEntry> importPdf(String sourcePath, {String? title}) async {
+  Future<BookEntry> importPdf(
+    String sourcePath, {
+    String? title,
+    String? fileName,
+  }) async {
     final src = File(sourcePath);
     final id = await fingerprintFile(src);
     final now = DateTime.now();
@@ -133,7 +194,7 @@ class LibraryStore extends ChangeNotifier {
       entry = BookEntry(
         id: id,
         title: title ?? p.basenameWithoutExtension(sourcePath),
-        fileName: p.basename(sourcePath),
+        fileName: fileName ?? p.basename(sourcePath),
         size: await src.length(),
         added: now,
         lastOpened: now,

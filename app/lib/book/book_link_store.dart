@@ -99,6 +99,18 @@ class BookLinkStore {
     return await f.exists() ? f.readAsString() : null;
   }
 
+  /// The saved link of [bookId] when the user made it by hand. A word map
+  /// is left out: it comes again with the PDF.
+  static Future<String?> handLinkedJson(String bookId) async {
+    final raw = await rawJson(bookId);
+    if (raw == null) return null;
+    try {
+      return (await compute(_parseJson, raw)).embedded ? null : raw;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Saves a link received in a package, unless the book already has one.
   static Future<void> saveRawIfMissing(String bookId, String json) async {
     BookText.fromJson(json); // validate

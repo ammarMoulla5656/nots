@@ -45,7 +45,19 @@ jobs:
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/nots.jks"
           echo "NOTS_KEYSTORE=$RUNNER_TEMP/nots.jks" >> "$GITHUB_ENV"
 
-      - run: flutter build apk --release
+      # The names and information of the books ship with the app: the current
+      # catalogue goes in; when the server cannot be reached, the committed one.
+      - name: Current catalogue
+        run: |
+          curl -fsS -m 60 https://alhikmeh.org/alhawzaapp/publiclibdata/nots/catalog.txt -o catalog.new \
+            && grep -q nots-catalog catalog.new && mv catalog.new assets/catalog.txt \
+            || echo "::warning::Catalogue not fetched; building with the committed one."
+
+      - run: >-
+          flutter build apk --release
+          --dart-define=GOOGLE_WEB_CLIENT_ID=${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+          --dart-define=GOOGLE_BROWSER_CLIENT_ID=${{ secrets.GOOGLE_BROWSER_CLIENT_ID }}
+          --dart-define=GOOGLE_BROWSER_CLIENT_SECRET=${{ secrets.GOOGLE_BROWSER_CLIENT_SECRET }}
         env:
           NOTS_KEYSTORE_PASSWORD: ${{ secrets.NOTS_KEYSTORE_PASSWORD }}
           NOTS_KEY_ALIAS: nots

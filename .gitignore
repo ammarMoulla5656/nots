@@ -5,3 +5,10 @@ app/docs/
 pdf/
 جيد/
 build/
+/*.pdf
+/*.epub
+_apk/
+__pycache__/
+# Google OAuth client files: never pushed
+client_secret_*.json
+app/google_defines.json
