@@ -1,4 +1,4 @@
-import 'dart:ui' as ui;
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -102,7 +102,11 @@ class HeroButton extends StatelessWidget {
     required this.tooltip,
     required this.onPressed,
     this.dot = false,
+    this.photo,
   });
+
+  /// A picture shown in place of the icon (the account's).
+  final String? photo;
 
   final IconData icon;
   final String tooltip;
@@ -127,8 +131,20 @@ class HeroButton extends StatelessWidget {
             child: Stack(
               alignment: Alignment.center,
               children: [
-                Icon(icon, size: 21, color: Colors.white),
-                if (dot)
+                if (photo != null)
+                  ClipOval(
+                    child: Image(
+                      image: ResizeImage(NetworkImage(photo!), width: 96),
+                      width: 32,
+                      height: 32,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) =>
+                          Icon(icon, size: 21, color: Colors.white),
+                    ),
+                  )
+                else
+                  Icon(icon, size: 21, color: Colors.white),
+                if (dot && photo == null)
                   Positioned(
                     top: 8,
                     left: 9,
@@ -177,21 +193,16 @@ class Glass extends StatelessWidget {
           BoxShadow(color: Color(0x0F16233A), blurRadius: 2, offset: Offset(0, 1)),
         ],
       ),
-      child: ClipRRect(
-        borderRadius: r,
-        child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: Brand.surface.withValues(alpha: opacity),
-              borderRadius: r,
-              border: Border.all(
-                color: Colors.white.withValues(alpha: Brand.dark ? 0.1 : 0.6),
-              ),
-            ),
-            child: Padding(padding: padding, child: child),
-          ),
+      // No blur behind: blurring what scrolls under the bars costs every
+      // frame, and weak phones stutter. An almost opaque surface looks the
+      // same on a page.
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Brand.surface.withValues(alpha: math.max(opacity, 0.95)),
+          borderRadius: r,
+          border: Border.all(color: Colors.white.withValues(alpha: 0.6)),
         ),
+        child: Padding(padding: padding, child: child),
       ),
     );
   }

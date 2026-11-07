@@ -98,8 +98,8 @@ void main() {
   group('the tools', () {
     test('every tool is in the bar or the box, once', () {
       final l = ToolLayout();
-      expect({...l.bar, ...l.box}.length, ReaderTool.values.length);
-      expect(l.bar.length + l.box.length, ReaderTool.values.length);
+      expect({...l.bar, ...l.box}.length, ReaderTool.values.where((t) => t.offered).length);
+      expect(l.bar.length + l.box.length, ReaderTool.values.where((t) => t.offered).length);
     });
 
     test('a tool moves between the bar and the box, and back', () {
@@ -133,7 +133,7 @@ void main() {
       final c = ToolLayout();
       await c.load();
       expect(c.bar, [ReaderTool.pen, ReaderTool.hand]);
-      expect(c.box.length + c.bar.length, ReaderTool.values.length);
+      expect(c.box.length + c.bar.length, ReaderTool.values.where((t) => t.offered).length);
       expect(c.box.first, ReaderTool.shape);
     });
   });

@@ -10,9 +10,10 @@ import '../ui/theme.dart';
 import 'book_widgets.dart';
 import 'library_store.dart';
 
-enum BookSort { recent, title, author, subject }
+enum BookSort { mine, recent, title, author, subject }
 
 const bookSortNames = {
+  BookSort.mine: 'ترتيبي (اضغط مطولاً على الكتاب واسحبه)',
   BookSort.recent: 'آخر ما فُتح',
   BookSort.title: 'العنوان',
   BookSort.author: 'المؤلف',
@@ -60,7 +61,7 @@ class BooksTab extends StatefulWidget {
 class _BooksTabState extends State<BooksTab> {
   String _category = 'الكل';
   String _query = '';
-  BookSort _sort = BookSort.recent;
+  BookSort _sort = BookSort.mine;
 
   @override
   void initState() {
@@ -93,6 +94,8 @@ class _BooksTabState extends State<BooksTab> {
     ];
     int byTitle(BookEntry a, BookEntry b) => a.title.compareTo(b.title);
     switch (_sort) {
+      case BookSort.mine:
+        out.sort((a, b) => a.rank.compareTo(b.rank));
       case BookSort.recent:
         break; // the library's own order
       case BookSort.title:
@@ -167,6 +170,7 @@ class _BooksTabState extends State<BooksTab> {
           listenable: widget.account,
           builder: (_, _) => HeroButton(
             icon: Icons.person_outline,
+            photo: widget.account.photo,
             tooltip: 'الحساب',
             dot: widget.account.linked,
             onPressed: widget.onAccount,
@@ -344,13 +348,21 @@ class _BooksTabState extends State<BooksTab> {
                   count: shown.length,
                   itemBuilder: (context, i) {
                     final b = shown[i];
-                    return BookGridItem(
+                    final item = BookGridItem(
                       book: b,
                       subtitle: _subtitle(b),
                       progress: widget.progress.shareOf(b.id),
                       inAccountOnly: !lib.isOnDevice(b),
                       onTap: () => widget.onOpen(b),
                       onMore: () => widget.onMore(b),
+                    );
+                    if (_sort != BookSort.mine) return item;
+                    return _Movable(
+                      book: b,
+                      onDrop: (moved) => lib
+                          .moveBook(moved, before: b)
+                          .then((_) => widget.sync.requestSoon()),
+                      child: item,
                     );
                   },
                 ),
@@ -413,3 +425,46 @@ class ChoiceSheet<T> extends StatelessWidget {
 
 /// The "size" part of a book line: its megabytes, when known.
 String sizeLine(BookEntry b) => b.size > 0 ? formatSize(b.size) : '';
+
+/// In "my order" a book is held down and dragged onto another: it takes
+/// that book's place, and the rest move along.
+class _Movable extends StatelessWidget {
+  const _Movable({required this.book, required this.onDrop, required this.child});
+
+  final BookEntry book;
+  final void Function(BookEntry moved) onDrop;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, c) => DragTarget<BookEntry>(
+        onWillAcceptWithDetails: (d) => d.data.id != book.id,
+        onAcceptWithDetails: (d) => onDrop(d.data),
+        builder: (context, incoming, _) => LongPressDraggable<BookEntry>(
+          data: book,
+          feedback: SizedBox(
+            width: c.maxWidth,
+            height: c.maxHeight,
+            child: Opacity(
+              opacity: 0.85,
+              child: Material(color: Colors.transparent, child: child),
+            ),
+          ),
+          childWhenDragging: Opacity(opacity: 0.25, child: child),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: incoming.isEmpty ? Colors.transparent : Brand.blue,
+                width: 2,
+              ),
+            ),
+            child: child,
+          ),
+        ),
+      ),
+    );
+  }
+}

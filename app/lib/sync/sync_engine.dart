@@ -189,7 +189,29 @@ class _Synced {
 ///   (see merge.dart). What was agreed last is kept as the merge's base.
 /// - Removing a book everywhere leaves a mark in Drive that the other
 ///   devices follow, unless they changed the book since.
+/// A small thing kept in the account besides the books: the app's settings,
+/// the arrangement of the tools, the order and the last readings of the
+/// books. Each is one small file on Drive, sent only when it changed.
+class SyncedPref {
+  SyncedPref(this.name, {required this.read, required this.write});
+
+  /// The file's name on Drive.
+  final String name;
+
+  /// What this device holds now, or null when it has nothing yet.
+  final Future<Uint8List?> Function() read;
+
+  /// Takes what another device sent.
+  final Future<void> Function(Uint8List bytes) write;
+}
+
+const _prefPrefix = 'pref-';
+
 class SyncEngine extends ChangeNotifier {
+  /// The settings kept in the account (set by the app).
+  List<SyncedPref> prefs = const [];
+  Map<String, DriveFile> _prefFiles = {};
+
   SyncEngine(
     this._library, {
     required this.isLinked,
@@ -382,10 +404,12 @@ class SyncEngine extends ChangeNotifier {
   Future<void> _fetchRemote(DriveClient drive) async {
     final files = await drive.list();
     DriveFile? settings;
+    final prefFiles = <String, DriveFile>{};
     final pdfs = <String, DriveFile>{};
     final gone = <String, DriveFile>{};
     for (final f in files) {
       if (f.name == _settingsName) settings = f;
+      if (f.name.startsWith(_prefPrefix)) prefFiles[f.name] = f;
       if (f.name.startsWith(_pdfPrefix)) {
         final id = p.basenameWithoutExtension(f.name);
         pdfs[id.substring(_pdfPrefix.length)] = f;
@@ -395,6 +419,7 @@ class SyncEngine extends ChangeNotifier {
       }
     }
     _settings = settings;
+    _prefFiles = prefFiles;
     _gone = gone;
     _pdfs
       ..clear()
@@ -435,6 +460,9 @@ class SyncEngine extends ChangeNotifier {
     }
     try {
       await _syncSettings(drive);
+      for (final pref in prefs) {
+        await _syncPref(drive, pref);
+      }
     } on DriveException catch (e) {
       if (e.storageFull) driveFull = true;
     }
@@ -694,6 +722,36 @@ class SyncEngine extends ChangeNotifier {
       );
       _settings = sent;
       _state[_settingsKey] = _Synced(sent.id, hash!, sent.modified);
+    }
+  }
+
+  /// The same as [_syncSettings], for one of [prefs]: what changed on
+  /// another device comes here; what changed here goes up.
+  Future<void> _syncPref(DriveClient drive, SyncedPref pref) async {
+    final name = '$_prefPrefix${pref.name}';
+    final key = '@$name';
+    final mine = await pref.read();
+    final hash = mine == null ? null : sha256.convert(mine).toString();
+    final st = _state[key];
+    final r = _prefFiles[name];
+    if (r != null && r.modified != st?.remoteTime) {
+      final bytes = await drive.download(r.id);
+      await pref.write(bytes);
+      final now = await pref.read();
+      _state[key] = _Synced(
+        r.id,
+        now == null ? '' : sha256.convert(now).toString(),
+        r.modified,
+      );
+    } else if (mine != null && hash != st?.hash && !driveFull) {
+      final sent = await drive.upload(
+        id: r?.id,
+        name: name,
+        description: '',
+        bytes: mine,
+      );
+      _prefFiles[name] = sent;
+      _state[key] = _Synced(sent.id, hash!, sent.modified);
     }
   }
 

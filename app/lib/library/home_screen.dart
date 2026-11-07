@@ -14,7 +14,9 @@ import '../catalog/download_manager.dart';
 import '../ink/ink_store.dart';
 import '../notes/note_pdf.dart';
 import '../notes/paper.dart';
+import '../reader/reader_prefs.dart';
 import '../reader/reader_screen.dart';
+import '../reader/tool_layout.dart';
 import '../sync/drive_client.dart';
 import '../sync/google_account.dart';
 import '../sync/sync_engine.dart';
@@ -103,6 +105,31 @@ class _HomeScreenState extends State<HomeScreen> {
     _sync = sync;
     _downloads = DownloadManager(lib, lib.root, afterImport: sync.afterImport);
     sync.fetchCatalogBook = _fetchFromLibrary;
+    // Everything the user set goes to the account with the books.
+    Future<SyncedPref> fileIn(
+      String name,
+      Future<Directory> Function() dir,
+      Future<void> Function() reload,
+    ) async => SyncedPref(
+      name,
+      read: () async {
+        final f = File(p.join((await dir()).path, name));
+        return await f.exists() ? f.readAsBytes() : null;
+      },
+      write: (bytes) async {
+        final d = await dir();
+        await d.create(recursive: true);
+        await File(p.join(d.path, name)).writeAsBytes(bytes, flush: true);
+        await reload();
+      },
+    );
+    sync.prefs = [
+      await fileIn('settings.json', AppSettings.dirProvider, AppSettings.instance.load),
+      await fileIn('tools.json', ToolLayout.dirProvider, ToolLayout.instance.load),
+      SyncedPref('reading.json', read: () async => lib.readingBytes(), write: lib.applyReading),
+    ];
+    AppSettings.instance.addListener(sync.requestSoon);
+    ToolLayout.instance.addListener(sync.requestSoon);
     if (!mounted) return;
     setState(() => _library = lib);
     unawaited(catalog.refresh());
@@ -192,10 +219,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _showHistory() async {
     final lib = _library!;
-    final books = [
-      for (final b in lib.books)
-        if (!b.isNote) b,
-    ].take(historyCount).toList();
+    final books = lib.recentlyRead(count: historyCount);
     unawaited(_progress.load(books.map((b) => b.id)));
     final picked = await showNotsSheet<BookEntry>(
       context,
@@ -309,6 +333,11 @@ class _HomeScreenState extends State<HomeScreen> {
               child: ActionRows(
                 rows: [
                   ActionRow(
+                    Icons.info_outline,
+                    b.isNote ? 'معلومات الملاحظة' : 'معلومات الكتاب',
+                    () => Navigator.pop(context, 'info'),
+                  ),
+                  ActionRow(
                     Icons.edit_outlined,
                     'إعادة التسمية',
                     () => Navigator.pop(context, 'rename'),
@@ -326,8 +355,72 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
+    if (r == 'info') await _showInfo(b);
     if (r == 'rename') await _rename(b);
     if (r == 'remove') await _remove(b);
+  }
+
+  /// What is known about a book, in a small window.
+  Future<void> _showInfo(BookEntry b) async {
+    final c = b.catalogId == null ? null : _catalog.byId(b.catalogId!);
+    String date(DateTime? d) => d == null
+        ? 'لم يُفتح بعد'
+        : '${d.year}/${d.month}/${d.day}';
+    final pages = (await ReaderPrefs.peekProgress(b.id))?.count;
+    final rows = <(String, String)>[
+      ('العنوان', b.title),
+      if (b.author.isNotEmpty && !b.isNote) ('المؤلف', b.author),
+      if (c != null && c.investigator.isNotEmpty) ('المحقق', c.investigator),
+      if (b.subject.isNotEmpty && !b.isNote) ('التصنيف', b.subject),
+      if (c != null && c.publisher.isNotEmpty) ('الناشر', c.publisher),
+      if (c != null && c.edition.isNotEmpty) ('الطبعة', c.edition),
+      if (b.part != null && (c?.partsCount ?? 1) > 1)
+        ('الجزء', '${b.part} من ${c!.partsCount}'),
+      if (pages != null && pages > 0) ('الصفحات', '$pages'),
+      ('الحجم', '${(b.size / (1024 * 1024)).toStringAsFixed(1)} م.ب'),
+      ('أُضيف', date(b.added)),
+      ('آخر قراءة', date(b.readAt)),
+      ('المكان', _library!.isOnDevice(b) ? 'على هذا الجهاز' : 'في حسابك فقط'),
+    ];
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(b.isNote ? 'معلومات الملاحظة' : 'معلومات الكتاب'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final (k, v) in rows)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 5),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: 84,
+                        child: Text(k, style: TextStyle(color: Brand.muted)),
+                      ),
+                      Expanded(
+                        child: Text(
+                          v,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إغلاق'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _rename(BookEntry b) async {

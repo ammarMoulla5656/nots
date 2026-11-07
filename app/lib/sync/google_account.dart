@@ -8,6 +8,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:google_sign_in_platform_interface/google_sign_in_platform_interface.dart'
+    show
+        AuthorizationRequestDetails,
+        ClientAuthorizationTokensForScopesParameters,
+        GoogleSignInPlatform;
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
@@ -205,6 +210,10 @@ class GoogleAccount extends ChangeNotifier {
   static const _kMode = 'google.mode';
   static const _kEmail = 'google.email';
   static const _kRefresh = 'google.refresh';
+  static const _kPhoto = 'google.photo';
+
+  /// The picture of the Google account, when it has one.
+  String? photo;
 
   String? _mode;
   String? _email;
@@ -223,7 +232,29 @@ class GoogleAccount extends ChangeNotifier {
     _mode = await _storage.read(key: _kMode);
     _email = await _storage.read(key: _kEmail);
     _refresh = await _storage.read(key: _kRefresh);
+    photo = await _storage.read(key: _kPhoto);
     notifyListeners();
+    if (linked) unawaited(loadPhoto());
+  }
+
+  /// Asks Drive for the account's picture (kept, so it shows offline too).
+  Future<void> loadPhoto() async {
+    try {
+      final token = await accessToken();
+      final r = await http.get(
+        Uri.parse('https://www.googleapis.com/drive/v3/about?fields=user(photoLink)'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (r.statusCode != 200) return;
+      final link = ((jsonDecode(r.body) as Map<String, dynamic>)['user']
+          as Map<String, dynamic>?)?['photoLink'] as String?;
+      if (link == null || link == photo || !linked) return;
+      photo = link;
+      await _storage.write(key: _kPhoto, value: link);
+      notifyListeners();
+    } on Object {
+      // Without the picture the usual icon stays.
+    }
   }
 
   Future<void> _remember() async {
@@ -231,6 +262,7 @@ class GoogleAccount extends ChangeNotifier {
     await _storage.write(key: _kEmail, value: _email);
     await _storage.write(key: _kRefresh, value: _refresh);
     notifyListeners();
+    unawaited(loadPhoto());
   }
 
   Future<bool> _hasGoogleServices() async {
@@ -337,7 +369,8 @@ class GoogleAccount extends ChangeNotifier {
         // Forget it here all the same.
       }
     }
-    _mode = _email = _refresh = _token = null;
+    _mode = _email = _refresh = _token = photo = null;
+    await _storage.delete(key: _kPhoto);
     _native = null;
     await _storage.delete(key: _kMode);
     await _storage.delete(key: _kEmail);
@@ -371,13 +404,31 @@ class GoogleAccount extends ChangeNotifier {
     if (renew && held != null) {
       await gs.authorizationClient.clearAuthorizationToken(accessToken: held);
     }
-    _native ??= await gs.attemptLightweightAuthentication();
-    final auth = await _native?.authorizationClient.authorizationForScopes([
-      GoogleConfig.driveScope,
-    ]);
-    if (auth == null) throw RelinkNeeded();
-    _token = auth.accessToken;
+    // The account linked before is asked for by its address, without any
+    // window: Google's "light sign-in" showed the account chooser at every
+    // start on a phone with two accounts.
+    final String? token;
+    if (_native != null) {
+      token = (await _native!.authorizationClient.authorizationForScopes([
+        GoogleConfig.driveScope,
+      ]))?.accessToken;
+    } else {
+      token = (await GoogleSignInPlatform.instance
+              .clientAuthorizationTokensForScopes(
+                ClientAuthorizationTokensForScopesParameters(
+                  request: AuthorizationRequestDetails(
+                    scopes: [GoogleConfig.driveScope],
+                    userId: null,
+                    email: _email,
+                    promptIfUnauthorized: false,
+                  ),
+                ),
+              ))
+          ?.accessToken;
+    }
+    if (token == null) throw RelinkNeeded();
+    _token = token;
     _tokenEnds = DateTime.now().add(const Duration(minutes: 45));
-    return auth.accessToken;
+    return token;
   }
 }

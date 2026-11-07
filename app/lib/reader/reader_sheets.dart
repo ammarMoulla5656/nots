@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 
 import '../ink/tool_controller.dart';
 import '../library/home_sheets.dart';
-import '../ui/app_settings.dart';
 import '../ui/brand_widgets.dart';
 import '../ui/theme.dart';
 import 'toc_panel.dart';
@@ -200,11 +199,6 @@ class ReaderMenuSheet extends StatelessWidget {
                   subtitle: '$marked صفحة',
                 ),
                 ActionRow(Icons.grid_view, 'كل الصفحات', () => pick('pages')),
-                ActionRow(
-                  Icons.settings_outlined,
-                  'إعدادات الأدوات',
-                  () => pick('tools'),
-                ),
                 if (isBook && !linked)
                   ActionRow(
                     Icons.link,
@@ -220,27 +214,6 @@ class ReaderMenuSheet extends StatelessWidget {
                   ),
               ],
             ),
-            if (isBook && Brand.dark) ...[
-              const SizedBox(height: 12),
-              ListenableBuilder(
-                listenable: AppSettings.instance,
-                builder: (context, _) => Card(
-                  clipBehavior: Clip.antiAlias,
-                  child: ListTile(
-                    leading: const Icon(Icons.nights_stay_outlined),
-                    title: const Text('صفحات الكتاب ليلية'),
-                    subtitle: const Text('تُقلب ألوان الصفحة: كتابة فاتحة على أرضية داكنة'),
-                    trailing: Switch(
-                      value: AppSettings.instance.nightPages,
-                      onChanged: AppSettings.instance.setNightPages,
-                    ),
-                    onTap: () => AppSettings.instance.setNightPages(
-                      !AppSettings.instance.nightPages,
-                    ),
-                  ),
-                ),
-              ),
-            ],
           ],
         ),
       ),

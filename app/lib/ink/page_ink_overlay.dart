@@ -117,22 +117,34 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
   int? _wordA;
   int? _wordB;
 
-  // Laser: the trail being drawn and the one fading away (not kept).
-  final _laser = <({Offset p, int t})>[];
+  // Laser: a pen whose lines vanish a moment after the pen is lifted, and
+  // are never kept. Only its own painter repaints, and only while a line is
+  // drawn or fading.
+  final _laserLines = <({List<Offset> pts, int end})>[];
+  List<Offset>? _laserNow;
   bool _laserDown = false;
   Timer? _laserTimer;
-  static const _laserLife = 900;
+  final _laserTick = ValueNotifier<int>(0);
+  static const laserHold = 700, laserFade = 350;
 
   void _laserAdd(Offset p) {
-    _laser.add((p: p, t: DateTime.now().millisecondsSinceEpoch));
-    _laserTimer ??= Timer.periodic(const Duration(milliseconds: 16), (_) {
+    (_laserNow ??= <Offset>[]).add(p);
+    _laserTick.value++;
+  }
+
+  void _laserEnd() {
+    final line = _laserNow;
+    _laserNow = null;
+    if (line == null) return;
+    _laserLines.add((pts: line, end: DateTime.now().millisecondsSinceEpoch));
+    _laserTimer ??= Timer.periodic(const Duration(milliseconds: 33), (_) {
       final now = DateTime.now().millisecondsSinceEpoch;
-      _laser.removeWhere((q) => now - q.t > _laserLife);
-      if (_laser.isEmpty && !_laserDown) {
+      _laserLines.removeWhere((l) => now - l.end > laserHold + laserFade);
+      if (_laserLines.isEmpty) {
         _laserTimer?.cancel();
         _laserTimer = null;
       }
-      if (mounted) _live.value++;
+      if (mounted) _laserTick.value++;
     });
   }
 
@@ -239,6 +251,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     _snapTimer?.cancel();
     _hoverTimer?.cancel();
     _laserTimer?.cancel();
+    _laserTick.dispose();
     _live.dispose();
     super.dispose();
   }
@@ -407,6 +420,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     _rulerRef = null;
     _rulerPtr = null;
     _textTap = null;
+    if (_laserDown) _laserEnd();
     _laserDown = false;
   }
 
@@ -1165,6 +1179,21 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     return Stack(
       fit: StackFit.expand,
       children: [
+        // The colouring of words lies under the writing: a line written
+        // near a coloured word keeps its own colour.
+        IgnorePointer(
+          child: CustomPaint(
+            painter: ItemsPainter(
+              items: () => [
+                for (final it in widget.document.itemsOf(widget.pageNumber))
+                  if (it.kind == ItemKind.mark) it,
+              ],
+              preview: () => _itemPreview,
+              scale: scale,
+              repaint: Listenable.merge([revision, _live]),
+            ),
+          ),
+        ),
         IgnorePointer(
           child: RepaintBoundary(
             child: CustomPaint(
@@ -1184,7 +1213,10 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
         IgnorePointer(
           child: CustomPaint(
             painter: ItemsPainter(
-              items: () => widget.document.itemsOf(widget.pageNumber),
+              items: () => [
+                for (final it in widget.document.itemsOf(widget.pageNumber))
+                  if (it.kind != ItemKind.mark) it,
+              ],
               preview: () => _itemPreview,
               scale: scale,
               repaint: Listenable.merge([revision, _live, ImageItems.instance]),
@@ -1230,11 +1262,12 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
         IgnorePointer(
           child: CustomPaint(
             painter: _LaserPainter(
-              trail: () => _laser,
+              lines: () => _laserLines,
+              current: () => _laserNow,
               color: () => Color(widget.tools.color),
               scale: scale,
               unit: () => _unit,
-              repaint: _live,
+              repaint: _laserTick,
             ),
           ),
         ),
@@ -1336,59 +1369,56 @@ class _RectsPreviewPainter extends CustomPainter {
   bool shouldRepaint(_RectsPreviewPainter old) => old.scale != scale;
 }
 
-/// The laser: a glowing trail whose older part has faded.
+/// The laser: lines like a pen's, each fading out a moment after the pen
+/// is lifted. One plain path per line: cheap to draw on any phone.
 class _LaserPainter extends CustomPainter {
   _LaserPainter({
-    required this.trail,
+    required this.lines,
+    required this.current,
     required this.color,
     required this.scale,
     required this.unit,
     required Listenable repaint,
   }) : super(repaint: repaint);
 
-  final List<({Offset p, int t})> Function() trail;
+  final List<({List<Offset> pts, int end})> Function() lines;
+  final List<Offset>? Function() current;
   final Color Function() color;
   final double scale;
   final double Function() unit;
 
+  void _line(Canvas canvas, List<Offset> pts, Paint paint) {
+    if (pts.length == 1) {
+      canvas.drawCircle(pts.first * scale, paint.strokeWidth / 2,
+          Paint()..color = paint.color);
+      return;
+    }
+    final path = Path()..moveTo(pts.first.dx * scale, pts.first.dy * scale);
+    for (final p in pts.skip(1)) {
+      path.lineTo(p.dx * scale, p.dy * scale);
+    }
+    canvas.drawPath(path, paint);
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
-    final pts = trail();
-    if (pts.isEmpty) return;
     final now = DateTime.now().millisecondsSinceEpoch;
     final c = color();
-    final w = 5 * scale * unit();
-    for (var i = 1; i < pts.length; i++) {
-      final a = (1 - (now - pts[i].t) / _PageInkOverlayState._laserLife)
-          .clamp(0.0, 1.0);
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.2 * scale * unit()
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    for (final l in lines()) {
+      final gone = now - l.end - _PageInkOverlayState.laserHold;
+      final a = gone <= 0
+          ? 1.0
+          : (1 - gone / _PageInkOverlayState.laserFade).clamp(0.0, 1.0);
       if (a <= 0) continue;
-      final from = pts[i - 1].p * scale, to = pts[i].p * scale;
-      canvas.drawLine(
-        from,
-        to,
-        Paint()
-          ..color = c.withValues(alpha: a * 0.5)
-          ..strokeWidth = w * 2.6
-          ..strokeCap = StrokeCap.round
-          ..maskFilter = MaskFilter.blur(BlurStyle.normal, w * 1.4),
-      );
-      canvas.drawLine(
-        from,
-        to,
-        Paint()
-          ..color = c.withValues(alpha: a)
-          ..strokeWidth = w
-          ..strokeCap = StrokeCap.round,
-      );
+      _line(canvas, l.pts, paint..color = c.withValues(alpha: a));
     }
-    final head = pts.last;
-    final a = (1 - (now - head.t) / _PageInkOverlayState._laserLife)
-        .clamp(0.0, 1.0);
-    canvas.drawCircle(
-      head.p * scale,
-      w * 0.9,
-      Paint()..color = Colors.white.withValues(alpha: a),
-    );
+    final now2 = current();
+    if (now2 != null && now2.isNotEmpty) _line(canvas, now2, paint..color = c);
   }
 
   @override

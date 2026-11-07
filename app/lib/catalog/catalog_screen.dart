@@ -162,6 +162,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
               listenable: widget.account,
               builder: (_, _) => HeroButton(
                 icon: Icons.person_outline,
+            photo: widget.account.photo,
                 tooltip: 'الحساب',
                 dot: widget.account.linked,
                 onPressed: widget.onAccount,

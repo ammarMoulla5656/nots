@@ -72,6 +72,7 @@ class NotesTab extends StatelessWidget {
           listenable: account,
           builder: (_, _) => HeroButton(
             icon: Icons.person_outline,
+            photo: account.photo,
             tooltip: 'الحساب',
             dot: account.linked,
             onPressed: onAccount,

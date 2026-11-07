@@ -27,7 +27,17 @@ class BookEntry {
     this.subject = '',
     this.cover = '',
     this.offloaded = false,
-  });
+    this.readAt,
+    double? rank,
+  }) : rank = rank ?? -added.millisecondsSinceEpoch.toDouble();
+
+  /// When the book was last opened to read; null until it is (a download is
+  /// not a reading). The "last 10 books" come from this.
+  DateTime? readAt;
+
+  /// Place in "my order": smaller comes first. A new book gets the place
+  /// before every other one; the user may then move it anywhere.
+  double rank;
 
   /// Content fingerprint of the PDF. The ink, the linked Word text and the
   /// reading position are stored under this id, so they follow the book
@@ -69,6 +79,8 @@ class BookEntry {
     if (subject.isNotEmpty) 'subject': subject,
     if (cover.isNotEmpty) 'cover': cover,
     if (offloaded) 'offloaded': true,
+    if (readAt != null) 'read': readAt!.toIso8601String(),
+    'rank': rank,
   };
 
   static BookEntry fromJson(Map<String, dynamic> j) => BookEntry(
@@ -84,6 +96,8 @@ class BookEntry {
     subject: j['subject'] as String? ?? '',
     cover: j['cover'] as String? ?? '',
     offloaded: j['offloaded'] as bool? ?? false,
+    readAt: j['read'] == null ? null : DateTime.parse(j['read'] as String),
+    rank: (j['rank'] as num?)?.toDouble(),
   );
 }
 
@@ -240,7 +254,54 @@ class LibraryStore extends ChangeNotifier {
   }
 
   Future<void> touch(BookEntry b) async {
-    b.lastOpened = DateTime.now();
+    b.lastOpened = b.readAt = DateTime.now();
+    await _save();
+    notifyListeners();
+  }
+
+  /// The order of the books and when each was last read, for the account.
+  Uint8List readingBytes() => utf8.encode(
+    jsonEncode({
+      for (final b in _books)
+        b.id: {'rank': b.rank, if (b.readAt != null) 'read': b.readAt!.toIso8601String()},
+    }),
+  );
+
+  /// Takes the order and last readings sent by another device: the later
+  /// reading wins, the order comes as it was sent.
+  Future<void> applyReading(Uint8List bytes) async {
+    final j = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    for (final b in _books) {
+      final e = j[b.id] as Map<String, dynamic>?;
+      if (e == null) continue;
+      b.rank = (e['rank'] as num?)?.toDouble() ?? b.rank;
+      final read = e['read'] == null ? null : DateTime.parse(e['read'] as String);
+      if (read != null && (b.readAt == null || read.isAfter(b.readAt!))) {
+        b.readAt = read;
+      }
+    }
+    await _save();
+    notifyListeners();
+  }
+
+  /// The books really opened to read, the last one first, at most [count].
+  List<BookEntry> recentlyRead({int count = 10}) {
+    final read = [
+      for (final b in _books)
+        if (b.readAt != null && !b.isNote) b,
+    ]..sort((a, b) => b.readAt!.compareTo(a.readAt!));
+    return read.take(count).toList();
+  }
+
+  /// [b] goes just before [before] in "my order" (to the end when null).
+  Future<void> moveBook(BookEntry b, {BookEntry? before}) async {
+    final list = List.of(_books)..sort((x, y) => x.rank.compareTo(y.rank));
+    list.remove(b);
+    final i = before == null ? list.length : list.indexOf(before);
+    list.insert(i < 0 ? list.length : i, b);
+    for (var k = 0; k < list.length; k++) {
+      list[k].rank = k.toDouble();
+    }
     await _save();
     notifyListeners();
   }

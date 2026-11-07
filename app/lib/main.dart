@@ -10,7 +10,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await pdfrxFlutterInitialize();
   await AppSettings.instance.load();
-  Brand.dark = AppSettings.instance.darkMode;
+  Brand.dark = false;
   runApp(const NotsApp());
 }
 
@@ -37,7 +37,7 @@ class _NotsAppState extends State<NotsApp> {
   /// The colours are read as screens are built, so a change of look builds
   /// them all again, keeping what each one is showing.
   void _onSettings() {
-    final dark = AppSettings.instance.darkMode;
+    const dark = false;
     if (dark == Brand.dark) return;
     setState(() => Brand.dark = dark);
     WidgetsBinding.instance.addPostFrameCallback((_) {

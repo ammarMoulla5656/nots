@@ -294,7 +294,17 @@ class _SyncSheetState extends State<SyncSheet> {
             color: Colors.white.withValues(alpha: 0.16),
             shape: BoxShape.circle,
           ),
-          child: const Icon(Icons.person_outline, color: Colors.white),
+          clipBehavior: Clip.antiAlias,
+          child: _account.photo != null && _account.linked
+              ? Image(
+                  image: ResizeImage(NetworkImage(_account.photo!), width: 144),
+                  fit: BoxFit.cover,
+                  width: 48,
+                  height: 48,
+                  errorBuilder: (_, _, _) =>
+                      const Icon(Icons.person_outline, color: Colors.white),
+                )
+              : const Icon(Icons.person_outline, color: Colors.white),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -344,14 +354,6 @@ class _SyncSheetState extends State<SyncSheet> {
         clipBehavior: Clip.antiAlias,
         child: Column(
           children: [
-            _switchRow(
-              Icons.dark_mode_outlined,
-              'الوضع الليلي',
-              'ألوان هادئة للعين في الظلام',
-              s.darkMode,
-              s.setDarkMode,
-            ),
-            const Divider(),
             _switchRow(
               Icons.touch_app_outlined,
               'الإصبع يرسم',

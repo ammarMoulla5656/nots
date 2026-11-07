@@ -170,11 +170,13 @@ class ReaderBars extends StatelessWidget {
                 BarButton(
                   icon: Icons.undo,
                   tooltip: 'تراجع',
+                  color: Brand.gold,
                   onPressed: document.canUndo ? document.undo : null,
                 ),
                 BarButton(
                   icon: Icons.redo,
                   tooltip: 'إعادة',
+                  color: Brand.gold,
                   onPressed: document.canRedo ? document.redo : null,
                 ),
               ],
@@ -747,20 +749,34 @@ class PagePill extends StatelessWidget {
 /// While the bars are away: a small round button showing the tool in use
 /// brings them back.
 class ToolDot extends StatelessWidget {
-  const ToolDot({super.key, required this.icon, required this.onTap});
+  const ToolDot({super.key, required this.icon, required this.onTap, this.color});
 
   final IconData icon;
   final VoidCallback onTap;
 
+  /// The colour of the tool in use, when it writes.
+  final Color? color;
+
+  /// The small tab at the top that brings the bars back: the tool in use
+  /// and an arrow, as it always was.
   @override
-  Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
-    child: Glass(
-      radius: 22,
-      child: SizedBox(
-        width: 44,
-        height: 44,
-        child: Icon(icon, size: 21, color: Brand.blue),
+  Widget build(BuildContext context) => Material(
+    color: Brand.surface.withValues(alpha: 0.92),
+    elevation: 2,
+    shape: const StadiumBorder(),
+    child: InkWell(
+      customBorder: const StadiumBorder(),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: color ?? Brand.blue),
+            const SizedBox(width: 4),
+            Icon(Icons.keyboard_arrow_down, size: 18, color: Brand.muted),
+          ],
+        ),
       ),
     ),
   );

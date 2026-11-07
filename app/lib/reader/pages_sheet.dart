@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
 
@@ -36,10 +38,17 @@ class _PagesSheetState extends State<PagesSheet> {
   late final ScrollController _scroll;
   final _goto = TextEditingController();
 
-  static const _cell = 150.0; // thumbnail height incl. label
+  /// The pages one under the other, each as wide as fits (up to 340).
+  double _pageWidth(BuildContext context) =>
+      math.min(_sheetWidth(context) - 32, 340);
 
-  int _columns(BuildContext context) =>
-      (MediaQuery.sizeOf(context).width / 120).floor().clamp(2, 10);
+  double _cellOf(BuildContext context) => _pageWidth(context) * 1.42 + 24;
+
+  int _columns(BuildContext context) => 1;
+
+  /// The sheet is at most 600 wide (on a tablet).
+  double _sheetWidth(BuildContext context) =>
+      math.min(MediaQuery.sizeOf(context).width, 600);
 
   @override
   void initState() {
@@ -52,8 +61,9 @@ class _PagesSheetState extends State<PagesSheet> {
     if (!_scroll.hasClients || widget.mode != PagesMode.all) return;
     final width = _scroll.position.viewportDimension;
     final row = (widget.currentPage - 1) ~/ _columns(context);
+    final cell = _cellOf(context) + 12;
     _scroll.jumpTo(
-      (row * _cell - width / 3).clamp(0, _scroll.position.maxScrollExtent),
+      (row * cell - width / 6).clamp(0, _scroll.position.maxScrollExtent),
     );
   }
 
@@ -137,12 +147,18 @@ class _PagesSheetState extends State<PagesSheet> {
                   )
                 : GridView.builder(
                     controller: _scroll,
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                    padding: EdgeInsets.symmetric(
+                      horizontal:
+                          (_sheetWidth(context) -
+                              _pageWidth(context)) /
+                          2,
+                      vertical: 8,
+                    ),
                     gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: _columns(context),
-                      mainAxisExtent: _cell,
+                      mainAxisExtent: _cellOf(context),
                       crossAxisSpacing: 10,
-                      mainAxisSpacing: 10,
+                      mainAxisSpacing: 12,
                     ),
                     itemCount: pages.length,
                     itemBuilder: (context, i) {
@@ -170,7 +186,7 @@ class _PagesSheetState extends State<PagesSheet> {
                                     PdfPageView(
                                       document: widget.document,
                                       pageNumber: n,
-                                      maximumDpi: 40,
+                                      maximumDpi: 60,
                                     ),
                                     if (widget.bookmarks.contains(n))
                                       const Positioned(

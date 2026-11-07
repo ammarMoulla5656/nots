@@ -69,7 +69,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
   final _layout = ToolLayout.instance;
   ReaderPop _pop = ReaderPop.none;
   double _viewWidth = 400;
-  double _reserveTop = 112;
+  double _reserveTop = 0;
+  bool? _reserveWide;
   final _viewer = PdfViewerController();
   final _words = <int, Future<List<WordBox>>>{};
   InkStore? _store;
@@ -171,25 +172,42 @@ class _ReaderScreenState extends State<ReaderScreen> {
     ),
   );
 
+  /// The bars come with a tap in the page (or on the small tab at the top)
+  /// and go away by themselves a few seconds after the last use, leaving the
+  /// whole screen to the page, as they always did.
+  Timer? _hideTimer;
+  static const _barsLinger = Duration(seconds: 5);
+  bool _immersive = false;
+
   void _showTools() {
+    _hideTimer?.cancel();
     if (!_toolsShown) setState(() => _toolsShown = true);
-    _systemBars(true);
+    _hideTimer = Timer(_barsLinger, _hideTools);
+    if (_immersive) _systemBars(true);
   }
 
-  /// The clean screen: the bars and panels go, and the phone's own status
-  /// and navigation bars with them; only the page is left.
   void _hideTools() {
+    _hideTimer?.cancel();
     if (!mounted) return;
-    if (_toolsShown || _pop != ReaderPop.none) {
-      setState(() {
-        _toolsShown = false;
-        _pop = ReaderPop.none;
-      });
+    // Something chosen keeps its bar (delete, copy, colour); an open panel
+    // (colours, the box) stays until it is used or closed.
+    if ((_selection?.active ?? false) || _pop != ReaderPop.none) {
+      _hideTimer = Timer(_barsLinger, _hideTools);
+      return;
     }
+    if (_toolsShown) setState(() => _toolsShown = false);
+  }
+
+  /// "The clean screen" from the menu: the bars go at once, and the phone's
+  /// own status and navigation bars with them, until the page is tapped.
+  void _cleanScreen() {
+    if (_pop != ReaderPop.none) setState(() => _pop = ReaderPop.none);
+    _hideTools();
     _systemBars(false);
   }
 
   void _systemBars(bool shown) {
+    _immersive = !shown;
     SystemChrome.setEnabledSystemUIMode(
       shown ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky,
     );
@@ -200,7 +218,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void _onSettings() {
     _tools.setFingerDraws(AppSettings.instance.fingerDraws);
     unawaited(AppSettings.instance.applyAwake(reading: true));
-    if (mounted) setState(() {}); // the night pages may have been switched
   }
 
   /// Word boxes already loaded, per page, for instant taps.
@@ -210,6 +227,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void initState() {
     super.initState();
     _tools.addListener(_onToolChanged);
+    _showTools();
     _palette.load();
     AppSettings.instance.addListener(_onSettings);
     unawaited(_layout.load());
@@ -421,6 +439,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   ToolMode _lastMode = ToolMode.hand;
 
   void _onToolChanged() {
+    if (_toolsShown) _showTools(); // using a tool keeps the tools in view
     // Switching tool drops the selection; other changes (colour, size,
     // fingers on the screen) keep it.
     if (_tools.mode != _lastMode) {
@@ -431,6 +450,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   @override
   void dispose() {
+    _hideTimer?.cancel();
+    _pageNow.dispose();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     AppSettings.instance.removeListener(_onSettings);
     unawaited(AppSettings.instance.applyAwake(reading: false));
@@ -475,7 +496,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
+  /// The page in view; changes only when another page comes.
+  final _pageNow = ValueNotifier<int>(1);
+
   void _onViewMoved() {
+    _pageNow.value = _viewer.pageNumber ?? _pageNow.value;
     _placeTimer?.cancel();
     _placeTimer = Timer(const Duration(milliseconds: 500), _capturePlace);
   }
@@ -1507,10 +1532,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   /// Name of the sheet's page and the number of pages, for the pill.
   Widget _pagePill() => ListenableBuilder(
-    listenable: _viewer,
+    listenable: _pageNow,
     builder: (context, _) => _viewer.isReady
         ? PagePill(
-            page: _viewer.pageNumber ?? 1,
+            page: _pageNow.value,
             count: _viewer.pageCount,
             onTap: () => _openPages(PagesMode.all),
           )
@@ -1605,7 +1630,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   Widget _bars(BuildContext context) {
     final bars = ListenableBuilder(
-      listenable: Listenable.merge([_viewer, ?_prefs]),
+      listenable: Listenable.merge([_pageNow, ?_prefs]),
       builder: (context, _) => ReaderBars(
         tools: _tools,
         layout: _layout,
@@ -1614,7 +1639,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         isBook: _isBook,
         bookmarked:
             _viewer.isReady &&
-            (_prefs?.isBookmarked(_viewer.pageNumber ?? 1) ?? false),
+            (_prefs?.isBookmarked(_pageNow.value) ?? false),
         boxOpen: _pop == ReaderPop.box,
         onBack: () => Navigator.of(context).maybePop(),
         onMasdar: _openMasdar,
@@ -1644,10 +1669,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// place of this one.
   Future<void> _showRecent() async {
     final lib = widget.library;
-    final books = [
-      for (final b in lib.books)
-        if (!b.isNote) b,
-    ].take(10).toList();
+    final books = lib.recentlyRead();
     final progress = ReadProgress();
     unawaited(progress.load(books.map((b) => b.id)));
     final picked = await showNotsSheet<BookEntry>(
@@ -1710,7 +1732,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       case 'pages':
         await _openPages(PagesMode.all);
       case 'clean':
-        _hideTools();
+        _cleanScreen();
       case 'tools':
         await _openSettings();
       case 'link':
@@ -1816,7 +1838,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final pad = MediaQuery.paddingOf(context);
     final wide = size.width >= wideBars;
     _viewWidth = size.width;
-    _reserveTop = pad.top + (wide ? 60 : 112);
+    final reserve = pad.top + (wide ? 60 : 112);
+    if (wide != _reserveWide || reserve > _reserveTop) {
+      _reserveTop = reserve;
+      _reserveWide = wide;
+    }
     final belowBars = pad.top + (wide ? 56 : 108);
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle(
@@ -1871,18 +1897,22 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   // the tool in use brings them back (as does a tap on the
                   // page with the hand tool).
                   Positioned(
-                    top: pad.top + 4,
-                    left: 14,
-                    child: IgnorePointer(
-                      ignoring: _toolsShown,
-                      child: AnimatedOpacity(
-                        opacity: _toolsShown ? 0 : 0.9,
-                        duration: const Duration(milliseconds: 200),
-                        child: ListenableBuilder(
-                          listenable: _tools,
-                          builder: (context, _) => ToolDot(
-                            icon: _currentTool.icon,
-                            onTap: _showTools,
+                    top: pad.top + 2,
+                    left: 0,
+                    right: 0,
+                    child: Center(
+                      child: IgnorePointer(
+                        ignoring: _toolsShown,
+                        child: AnimatedOpacity(
+                          opacity: _toolsShown ? 0 : 1,
+                          duration: const Duration(milliseconds: 200),
+                          child: ListenableBuilder(
+                            listenable: _tools,
+                            builder: (context, _) => ToolDot(
+                              icon: _currentTool.icon,
+                              color: _tools.drawing ? Color(_tools.color) : null,
+                              onTap: _showTools,
+                            ),
                           ),
                         ),
                       ),
@@ -1895,13 +1925,18 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     child: IgnorePointer(
                       ignoring: !_toolsShown,
                       child: AnimatedSlide(
-                        offset: _toolsShown ? Offset.zero : const Offset(0, -0.4),
+                        offset: _toolsShown ? Offset.zero : const Offset(0, -1),
                         duration: const Duration(milliseconds: 220),
                         curve: Curves.easeOutCubic,
                         child: AnimatedOpacity(
                           opacity: _toolsShown ? 1 : 0,
                           duration: const Duration(milliseconds: 200),
-                          child: _bars(context),
+                          child: Listener(
+                            // Any touch on the bars keeps them in view.
+                            onPointerDown: (_) => _showTools(),
+                            onPointerMove: (_) => _showTools(),
+                            child: _bars(context),
+                          ),
                         ),
                       ),
                     ),
@@ -1924,17 +1959,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
       // and only the page is left.
       child: Listener(
         onPointerDown: (_) {
-          // Selecting needs its bar (delete, copy, colour): it keeps them.
-          if (_tools.drawing &&
-              !_tools.multiTouch &&
-              _tools.mode != ToolMode.lasso) {
-            _hideTools();
+          // A touch on the page while a panel is open closes the panel.
+          if (_tools.drawing && _pop != ReaderPop.none) {
+            setState(() => _pop = ReaderPop.none);
           }
         },
         child: ListenableBuilder(
           listenable: _tools,
-          builder: (context, _) => _nightPages(
-            PdfViewer.file(
+          builder: (context, _) => _cachedViewer(
+            wide,
+            () => PdfViewer.file(
             widget.library.pathOf(widget.book),
             controller: _viewer,
             params: PdfViewerParams(
@@ -1947,6 +1981,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 viewWidth: () => _viewWidth,
               ),
               backgroundColor: wide ? Brand.desk : Brand.paper,
+            // Few rendered pages are kept: weak phones stay light.
+            maxImageBytesCachedOnMemory: 48 * 1024 * 1024,
               pageDropShadow: wide
                   ? const BoxShadow(
                       color: Color(0x2916233A),
@@ -1988,22 +2024,18 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
-  /// In the night look a book's pages (and what is written on them) are
-  /// turned over: light on deep navy instead of black on white. A note keeps
-  /// the paper its maker chose.
-  Widget _nightPages(Widget viewer) {
-    if (!Brand.dark || !AppSettings.instance.nightPages || widget.book.isNote) {
-      return viewer;
+  Widget? _viewerWidget;
+  (bool, bool)? _viewerKey;
+
+  /// The same viewer widget while nothing it depends on changed, so Flutter
+  /// does not touch it at all.
+  Widget _cachedViewer(bool wide, Widget Function() build) {
+    final key = (_tools.drawing, wide);
+    if (_viewerWidget == null || key != _viewerKey) {
+      _viewerKey = key;
+      _viewerWidget = build();
     }
-    return ColorFiltered(
-      colorFilter: const ColorFilter.matrix(<double>[
-        -0.86, 0, 0, 0, 228, //
-        0, -0.86, 0, 0, 231, //
-        0, 0, -0.86, 0, 238, //
-        0, 0, 0, 1, 0,
-      ]),
-      child: viewer,
-    );
+    return _viewerWidget!;
   }
 }
 

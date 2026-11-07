@@ -212,13 +212,14 @@ void main() {
 
     final n3 = await note();
     await open(n3);
-    await step('clean screen: bars go when writing starts, the round button brings them back', () async {
+    await step('bars: stay while writing, go by themselves after a few seconds, the tab brings them back', () async {
       await _tap(t, find.byTooltip('قلم'));
       await _tap(t, find.byTooltip('قلم'));
       await _stroke(t, const Offset(80, 250), const Offset(300, 250));
+      expect(find.byTooltip('مربع الأدوات').hitTestable().evaluate(), isNotEmpty);
+      await _settle(t, 5800);
       expect(find.byTooltip('مربع الأدوات').hitTestable().evaluate(), isEmpty);
-      expect(find.byType(ToolDot).hitTestable().evaluate(), isNotEmpty);
-      await _shot(t, '01_clean_screen');
+      await _shot(t, '01_bars_away');
       await _wake(t);
       expect(find.byTooltip('مربع الأدوات').hitTestable().evaluate(), isNotEmpty);
     });
@@ -366,11 +367,13 @@ void main() {
     await close();
     await open(book, wait: 3500);
     await step('book: contents sheet shows the real contents', () async {
+      await _wake(t);
       await _tap(t, find.byTooltip('الفهرس'));
       expect(find.textContaining('كتاب الطهارة'), findsWidgets);
       await _closeSheet(t);
     });
     await step('book: bookmark is saved', () async {
+      await _wake(t);
       await _tap(t, find.byTooltip('وضع علامة على الصفحة'));
       await close();
       final pr = await ReaderPrefs.open(book.id);
@@ -379,11 +382,12 @@ void main() {
     });
     await open(book, wait: 3500);
     await step('book: go to a page by its number', () async {
+      await _wake(t);
       await _tap(t, find.byType(PagePill));
       await t.enterText(find.byType(TextField), '35');
       await _tap(t, find.text('انتقال'));
       await _settle(t, 1500);
-      expect(find.descendant(of: find.byType(PagePill), matching: find.textContaining('35')), findsOneWidget);
+      expect(find.descendant(of: find.byType(PagePill), matching: find.textContaining('35')), findsWidgets);
       await _shot(t, '06_page_35');
     });
     await step('book: highlighter marks the words it passes over', () async {
@@ -397,13 +401,15 @@ void main() {
     });
     await step('book: the menu offers export, written pages, marks, pages, tools, clean screen', () async {
       await open(book, wait: 3000);
+      await _wake(t);
       await _tap(t, find.byTooltip('المزيد'));
-      for (final s in ['الشاشة الصافية', 'تصدير ومشاركة', 'المكتوب عليها', 'العلامات', 'كل الصفحات', 'إعدادات الأدوات']) {
+      for (final s in ['الشاشة الصافية', 'تصدير ومشاركة', 'المكتوب عليها', 'العلامات', 'كل الصفحات']) {
         expect(find.text(s), findsWidgets, reason: s);
       }
       await _shot(t, '07_menu');
       await _tap(t, find.text('الشاشة الصافية'));
       expect(find.byTooltip('مربع الأدوات').hitTestable().evaluate(), isEmpty);
+      expect(find.text('إعدادات الأدوات'), findsNothing);
     });
     await step('book: export sheet lists the five ways', () async {
       await _wake(t);
@@ -413,28 +419,6 @@ void main() {
       expect(find.text('ملف نوتس (.nots)'), findsOneWidget);
       await _shot(t, '08_export');
       await _closeSheet(t);
-    });
-
-    // ---- the night
-    await step('night: the book page turns dark and the screen follows', () async {
-      await close();
-      Brand.dark = true;
-      AppSettings.instance.darkMode = true;
-      await open(book, wait: 3500);
-      final page = await _brightness(const Rect.fromLTWH(10, 300, 40, 100));
-      await _shot(t, '09_night');
-      expect(page, lessThan(90), reason: 'page brightness $page');
-      Brand.dark = false;
-      AppSettings.instance.darkMode = false;
-    });
-    await step('night: a note keeps the paper its maker chose', () async {
-      final light = await note(const PaperStyle(kind: PaperKind.blank, paper: 0xFFFFF4CC, line: 0xFFB9C7DA));
-      await close();
-      Brand.dark = true;
-      await open(light);
-      final paper = await _brightness(const Rect.fromLTWH(10, 300, 40, 100));
-      Brand.dark = false;
-      expect(paper, greaterThan(200));
     });
 
     // ---- a tablet

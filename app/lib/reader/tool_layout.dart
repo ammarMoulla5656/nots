@@ -53,6 +53,9 @@ enum ReaderTool {
 
   /// Only a book's words can be marked: a note has none.
   bool get forBooksOnly => this == word;
+
+  /// The words tool is no longer offered: the highlighter marks words too.
+  bool get offered => this != word;
 }
 
 /// Which tools are in the bar and which in the box, in order. Kept across
@@ -78,7 +81,6 @@ class ToolLayout extends ChangeNotifier {
     ReaderTool.text,
     ReaderTool.pin,
     ReaderTool.tape,
-    ReaderTool.word,
     ReaderTool.ruler,
     ReaderTool.image,
   ];
@@ -114,8 +116,10 @@ class ToolLayout extends ChangeNotifier {
       _bar = [for (final t in bar) if (seen.add(t)) t];
       _box = [for (final t in box) if (seen.add(t)) t];
       for (final t in ReaderTool.values) {
-        if (seen.add(t)) _box.add(t);
+        if (t.offered && seen.add(t)) _box.add(t);
       }
+      _bar.removeWhere((t) => !t.offered);
+      _box.removeWhere((t) => !t.offered);
       notifyListeners();
     } on Object {
       // A damaged file brings back the usual arrangement.
