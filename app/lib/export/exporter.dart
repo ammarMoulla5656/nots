@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart';
 import 'package:image/image.dart' as img;
 import 'package:pdfrx/pdfrx.dart';
 
+import '../ink/image_items.dart';
 import '../ink/ink_document.dart';
 import '../ink/item_painter.dart';
 import '../ink/stroke.dart';
@@ -29,6 +30,7 @@ Future<ui.Image> renderPageWithInk(
   int pageNumber, {
   double pxPerPt = 3,
 }) async {
+  await ImageItems.instance.preload(ink.itemsOf(pageNumber));
   final page = doc.pages[pageNumber - 1];
   final w = (page.width * pxPerPt).round();
   final h = (page.height * pxPerPt).round();

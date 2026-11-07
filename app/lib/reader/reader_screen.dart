@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:gal/gal.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
@@ -13,25 +14,33 @@ import 'package:share_plus/share_plus.dart';
 import '../book/book_link_store.dart';
 import '../book/book_text.dart';
 import '../export/exporter.dart';
-import '../ink/ink_document.dart';
+import '../ink/image_items.dart';
 import '../ink/ink_store.dart';
 import '../ink/marks.dart';
 import '../ink/item_painter.dart';
 import '../library/library_store.dart';
+import '../sync/conflicts.dart';
 import '../ink/note_items.dart';
 import '../ink/page_ink_overlay.dart';
 import '../ink/ruler.dart';
 import '../ink/selection.dart';
-import '../ink/shapes.dart';
-import '../ink/stroke.dart';
 import '../ink/tool_controller.dart';
 import '../ink/words.dart';
+import '../library/home_sheets.dart' show ActionRow, ActionRows, HistorySheet;
+import '../library/book_widgets.dart' show ReadProgress;
+import '../ui/app_settings.dart';
+import '../ui/brand_widgets.dart';
 import '../ui/color_palette.dart';
+import '../ui/theme.dart';
+import 'conflict_bar.dart';
 import 'pages_sheet.dart';
+import 'reader_chrome.dart';
 import 'reader_prefs.dart';
+import 'reader_zoom.dart';
+import 'reader_sheets.dart';
+import 'tool_layout.dart';
 import 'scrub_bar.dart';
 import 'search_highlight.dart';
-import 'reader_zoom.dart';
 import 'search_page.dart';
 import 'selection_menu.dart';
 import 'toc_panel.dart';
@@ -47,15 +56,26 @@ class ReaderScreen extends StatefulWidget {
   State<ReaderScreen> createState() => _ReaderScreenState();
 }
 
-/// Result of the text dialog. [fontSize] is null for pins and comments.
-typedef TextDialogResult = ({String text, bool delete, double? fontSize});
+/// Result of the text sheet. [fontSize] is null for pins and comments.
+typedef TextDialogResult = TextEntry;
+
+/// The Masdar app, which the reader can open.
+const masdarPackage = 'iq.alhikmeh.the_source';
 
 class _ReaderScreenState extends State<ReaderScreen> {
-  final _tools = ToolController();
+  late final _tools = ToolController(
+    fingerDraws: AppSettings.instance.fingerDraws,
+  );
+  final _layout = ToolLayout.instance;
+  ReaderPop _pop = ReaderPop.none;
+  double _viewWidth = 400;
+  double _reserveTop = 112;
   final _viewer = PdfViewerController();
   final _words = <int, Future<List<WordBox>>>{};
-  final _scaffoldKey = GlobalKey<ScaffoldState>();
   InkStore? _store;
+
+  /// Pages written on from two devices, waiting for the user.
+  ConflictSession? _conflicts;
   SelectionController? _selection;
   Object? _error;
 
@@ -91,16 +111,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
   final _palette = ColorPalette();
   static const _commentColor = 0xFF0D47A1;
 
-  /// Full screen: the phone's own status and navigation bars hidden too.
-  bool _fullScreen = false;
-
-  void _setFullScreen(bool v) {
-    setState(() => _fullScreen = v);
-    SystemChrome.setEnabledSystemUIMode(
-      v ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
-    );
-  }
-
   void _toggleRuler() {
     if (_tools.ruler.value != null) {
       _tools.ruler.value = null;
@@ -122,25 +132,76 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (!_tools.drawing) _tools.setMode(ToolMode.pen);
   }
 
-  /// The title bar and the tools (together, "the bars") come with a tap in
-  /// the page (or on the small tab at the top) and go away by themselves a
-  /// few seconds after the last use, leaving the whole screen to the page.
+  /// The bars (back, tools, buttons) and the page number come with a tap in
+  /// the page (or on the small round button), and go as soon as writing
+  /// starts, leaving the whole screen to the page.
   bool _toolsShown = true;
-  Timer? _hideTimer;
-  static const _barsLinger = Duration(seconds: 5);
 
-  void _showTools() {
-    _hideTimer?.cancel();
-    if (!_toolsShown) setState(() => _toolsShown = true);
-    _hideTimer = Timer(_barsLinger, _hideTools);
+  Future<void> _openConflicts(InkStore store) async {
+    final waiting = await ConflictStore.load(widget.book.id);
+    if (!mounted || waiting.isEmpty) return;
+    final old = _conflicts;
+    setState(() {
+      _conflicts = ConflictSession(widget.book.id, store.document, waiting);
+    });
+    old?.dispose();
   }
 
+  void _conflictSettled(PageConflict c) {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: const Text('اعتُمدت هذه الصفحة.'),
+        action: SnackBarAction(
+          label: 'تراجع',
+          onPressed: () => _conflicts?.reopen(c),
+        ),
+      ),
+    );
+  }
+
+  Widget _conflictBar(ConflictSession session) => ListenableBuilder(
+    listenable: Listenable.merge([session, _viewer]),
+    builder: (context, _) => ConflictBar(
+      session: session,
+      page: _viewer.isReady ? (_viewer.pageNumber ?? 1) : 1,
+      onGoTo: (n) => _viewer.goToPage(pageNumber: n),
+      onAccepted: _conflictSettled,
+    ),
+  );
+
+  void _showTools() {
+    if (!_toolsShown) setState(() => _toolsShown = true);
+    _systemBars(true);
+  }
+
+  /// The clean screen: the bars and panels go, and the phone's own status
+  /// and navigation bars with them; only the page is left.
   void _hideTools() {
-    _hideTimer?.cancel();
-    if (mounted && _toolsShown) setState(() => _toolsShown = false);
+    if (!mounted) return;
+    if (_toolsShown || _pop != ReaderPop.none) {
+      setState(() {
+        _toolsShown = false;
+        _pop = ReaderPop.none;
+      });
+    }
+    _systemBars(false);
+  }
+
+  void _systemBars(bool shown) {
+    SystemChrome.setEnabledSystemUIMode(
+      shown ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky,
+    );
   }
 
   void _toggleTools() => _toolsShown ? _hideTools() : _showTools();
+
+  void _onSettings() {
+    _tools.setFingerDraws(AppSettings.instance.fingerDraws);
+    unawaited(AppSettings.instance.applyAwake(reading: true));
+    if (mounted) setState(() {}); // the night pages may have been switched
+  }
 
   /// Word boxes already loaded, per page, for instant taps.
   final _wordsReady = <int, List<WordBox>>{};
@@ -150,14 +211,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
     super.initState();
     _tools.addListener(_onToolChanged);
     _palette.load();
-    _showTools();
+    AppSettings.instance.addListener(_onSettings);
+    unawaited(_layout.load());
+    unawaited(AppSettings.instance.applyAwake(reading: true));
     _lifecycle = AppLifecycleListener(onHide: _saveNow);
     ReaderPrefs.open(widget.book.id).then((pr) {
       if (!mounted) {
         pr.dispose();
         return;
       }
-      _prefs = pr;
+      setState(() => _prefs = pr);
       _restorePage();
     });
     BookLinkStore.open(widget.book.id, widget.library.pathOf(widget.book)).then(
@@ -261,8 +324,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
       }
       setState(() {
         _store = s;
-        _selection = SelectionController(s.document);
+        _selection = SelectionController(s.document)
+          ..addListener(() {
+            // Something chosen: its bar must be on the screen.
+            if (_selection?.active ?? false) _showTools();
+          });
       });
+      unawaited(_openConflicts(s));
       if (s.document.strokeCount == 0 &&
           s.document.items.values.every((l) => l.isEmpty)) {
         unawaited(_offerOrphans());
@@ -353,7 +421,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
   ToolMode _lastMode = ToolMode.hand;
 
   void _onToolChanged() {
-    if (_toolsShown) _showTools(); // using a tool keeps the tools in view
     // Switching tool drops the selection; other changes (colour, size,
     // fingers on the screen) keep it.
     if (_tools.mode != _lastMode) {
@@ -364,10 +431,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   @override
   void dispose() {
-    if (_fullScreen) {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    }
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    AppSettings.instance.removeListener(_onSettings);
+    unawaited(AppSettings.instance.applyAwake(reading: false));
     _tools.removeListener(_onToolChanged);
+    _conflicts?.dispose();
     _lifecycle.dispose();
     _viewer.removeListener(_onViewMoved);
     _placeTimer?.cancel();
@@ -375,7 +443,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _store?.dispose();
     _selection?.dispose();
     _tools.dispose();
-    _hideTimer?.cancel();
     _prefs?.dispose();
     _searchShown.dispose();
     _palette.dispose();
@@ -388,6 +455,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final pr = _prefs;
     if (_restored || pr == null || !_viewer.isReady) return;
     _restored = true;
+    pr.setPageCount(_viewer.pageCount);
     _viewer.addListener(_onViewMoved);
     final pos = pr.position;
     if (pos != null && pos.page >= 1 && pos.page <= _viewer.pageCount) {
@@ -446,21 +514,18 @@ class _ReaderScreenState extends State<ReaderScreen> {
     };
   }
 
-  Future<void> _openPages() async {
+  Future<void> _openPages(PagesMode mode) async {
     if (!_viewer.isReady) return;
-    final page = await showModalBottomSheet<int>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (_) => FractionallySizedBox(
-        heightFactor: 0.85,
-        child: PagesSheet(
-          document: _viewer.document,
-          pageCount: _viewer.pageCount,
-          currentPage: _viewer.pageNumber ?? 1,
-          bookmarks: _prefs?.bookmarks.toSet() ?? const {},
-          annotated: _annotatedPages,
-        ),
+    final page = await showNotsSheet<int>(
+      context,
+      tall: true,
+      builder: (_) => PagesSheet(
+        document: _viewer.document,
+        pageCount: _viewer.pageCount,
+        currentPage: _viewer.pageNumber ?? 1,
+        bookmarks: _prefs?.bookmarks.toSet() ?? const {},
+        annotated: _annotatedPages,
+        mode: mode,
       ),
     );
     if (page != null) await _viewer.goToPage(pageNumber: page);
@@ -517,6 +582,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (store == null || selection == null) return const [];
     final book = _book;
     return [
+      if (_prefs != null) _BookmarkRibbon(prefs: _prefs!, page: page.pageNumber),
       if (book != null && book.embedded)
         SearchHighlight(
           search: _searchShown,
@@ -658,59 +724,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// delete buttons; the keyboard opens only when the user chooses to edit.
   Future<void> _previewItem(int page, NoteItem item) async {
     final isMark = item.kind == ItemKind.mark;
-    final quote = isMark ? item.quote.trim() : '';
     final action = await _repaintAfter(
-      showDialog<String>(
-        context: context,
-        builder: (context) {
-          final theme = Theme.of(context);
-          return AlertDialog(
-            contentPadding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
-            actionsPadding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-            content: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 420, maxHeight: 360),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (quote.isNotEmpty) ...[
-                      Text(
-                        '«$quote»',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: Color(item.color),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                    ],
-                    SelectableText(
-                      item.text.isEmpty ? 'لا يوجد تعليق بعد.' : item.text,
-                      style: theme.textTheme.bodyLarge?.copyWith(height: 1.6),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            actions: [
-              IconButton(
-                tooltip: 'حذف',
-                icon: const Icon(Icons.delete_outline),
-                onPressed: () => Navigator.pop(context, 'delete'),
-              ),
-              IconButton(
-                tooltip: 'تعديل',
-                icon: const Icon(Icons.edit_outlined),
-                onPressed: () => Navigator.pop(context, 'edit'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('إغلاق'),
-              ),
-            ],
-          );
-        },
+      showNotsSheet<String>(
+        context,
+        builder: (_) => NoteViewSheet(
+          text: item.text,
+          quote: isMark ? item.quote.trim() : '',
+          color: item.color,
+        ),
       ),
     );
     if (action == null || !mounted) return;
@@ -791,47 +812,53 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Future<void> _export() async {
     final store = _store;
     if (store == null || !_viewer.isReady) return;
-    final choice = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
+    final marked = annotatedPages(store.document).length;
+    final choice = await showNotsSheet<String>(
+      context,
       builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('صورة هذه الصفحة إلى المعرض'),
-              subtitle: const Text('تُحفظ مباشرة في معرض الصور مع كتابتك'),
-              onTap: () => Navigator.pop(context, 'gal-page'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.collections_outlined),
-              title: const Text('صور الصفحات المكتوب عليها إلى المعرض'),
-              subtitle: Text('${annotatedPages(store.document).length} صفحة'),
-              onTap: () => Navigator.pop(context, 'gal-marked'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.picture_as_pdf_outlined),
-              title: const Text('PDF: الصفحات المكتوب عليها'),
-              subtitle: Text(
-                '${annotatedPages(store.document).length} صفحة مع كتابتك',
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SheetHeader('تصدير ومشاركة'),
+              ActionRows(
+                rows: [
+                  ActionRow(
+                    Icons.photo_outlined,
+                    'صورة هذه الصفحة إلى المعرض',
+                    () => Navigator.pop(context, 'gal-page'),
+                    subtitle: 'تُحفظ مباشرة في معرض الصور مع كتابتك',
+                  ),
+                  ActionRow(
+                    Icons.collections_outlined,
+                    'صور الصفحات المكتوب عليها إلى المعرض',
+                    () => Navigator.pop(context, 'gal-marked'),
+                    subtitle: '$marked صفحة',
+                  ),
+                  ActionRow(
+                    Icons.picture_as_pdf_outlined,
+                    'PDF: الصفحات المكتوب عليها',
+                    () => Navigator.pop(context, 'pdf-marked'),
+                    subtitle: '$marked صفحة مع كتابتك',
+                  ),
+                  ActionRow(
+                    Icons.menu_book_outlined,
+                    'PDF: الكتاب كاملاً مع كتابتك',
+                    () => Navigator.pop(context, 'pdf-all'),
+                  ),
+                  ActionRow(
+                    Icons.inventory_2_outlined,
+                    'ملف نوتس (.nots)',
+                    () => Navigator.pop(context, 'nots'),
+                    subtitle:
+                        'الكتاب وكتابتك وربط Word والعلامات: يُفتح في التطبيق على أي جهاز وتكمل عليه',
+                  ),
+                ],
               ),
-              onTap: () => Navigator.pop(context, 'pdf-marked'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.menu_book_outlined),
-              title: const Text('PDF: الكتاب كاملاً مع كتابتك'),
-              onTap: () => Navigator.pop(context, 'pdf-all'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.inventory_2_outlined),
-              title: const Text('ملف نوتس (.nots)'),
-              subtitle: const Text(
-                'الكتاب وكتابتك وربط Word والعلامات: يُفتح في نوتس على أي جهاز وتكمل عليه',
-              ),
-              onTap: () => Navigator.pop(context, 'nots'),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -840,18 +867,30 @@ class _ReaderScreenState extends State<ReaderScreen> {
     showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        content: Row(
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(width: 16),
-            Expanded(
-              child: ValueListenableBuilder(
-                valueListenable: progress,
-                builder: (_, v, _) => Text(v),
+      barrierColor: const Color(0x6B091630),
+      builder: (_) => Dialog(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        child: Center(
+          child: SizedBox(
+            width: 250,
+            child: Glass(
+              radius: 20,
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ValueListenableBuilder(
+                    valueListenable: progress,
+                    builder: (_, v, _) =>
+                        Text(v, style: const TextStyle(fontSize: 14)),
+                  ),
+                  const SizedBox(height: 12),
+                  const LinearProgressIndicator(minHeight: 5),
+                ],
               ),
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -874,14 +913,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
             '$title - صفحة $n',
             'x',
           ).replaceFirst(RegExp(r'\.x$'), '');
-          await Gal.putImageBytes(png, album: 'نوتس', name: base);
+          await Gal.putImageBytes(png, album: 'قلم المصدر', name: base);
         }
         if (!mounted) return;
         Navigator.of(context).pop();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'تم حفظ ${pages.length} صورة في المعرض (ألبوم نوتس).',
+              'تم حفظ ${pages.length} صورة في المعرض (ألبوم قلم المصدر).',
             ),
           ),
         );
@@ -943,36 +982,33 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// stated, or Android names it ".bin".
   Future<void> _saveOrShare(Uint8List bytes, String name) async {
     final mime = _mimeOf(name);
-    final action = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
+    final action = await showNotsSheet<String>(
+      context,
       builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Text(
-                name,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleSmall,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SheetHeader('الملف جاهز'),
+              ActionRows(
+                rows: [
+                  ActionRow(
+                    Icons.save_alt,
+                    'حفظ في الجهاز',
+                    () => Navigator.pop(context, 'save'),
+                    subtitle: 'اختر المجلد، ويبقى الاسم والامتداد كما هما',
+                  ),
+                  ActionRow(
+                    Icons.ios_share,
+                    'مشاركة',
+                    () => Navigator.pop(context, 'share'),
+                  ),
+                ],
               ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.save_alt),
-              title: const Text('حفظ في الجهاز'),
-              subtitle: const Text(
-                'اختر المجلد، ويبقى الاسم والامتداد كما هما',
-              ),
-              onTap: () => Navigator.pop(context, 'save'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.share),
-              title: const Text('مشاركة'),
-              onTap: () => Navigator.pop(context, 'share'),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1191,103 +1227,18 @@ class _ReaderScreenState extends State<ReaderScreen> {
     bool allowDelete = false,
     double? fontSize,
     int? color,
-  }) {
-    final controller = TextEditingController(text: initial);
-    var size = fontSize;
-    final range = ToolController.textSizeRange;
-    return _repaintAfter(
-      showDialog<TextDialogResult>(
-        context: context,
-        builder: (context) => StatefulBuilder(
-          builder: (context, setState) => AlertDialog(
-            title: Text(title, style: const TextStyle(fontSize: 18)),
-            content: SizedBox(
-              width: 380,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: controller,
-                    autofocus: true,
-                    minLines: 3,
-                    maxLines: 8,
-                    style: size == null
-                        ? null
-                        : TextStyle(
-                            fontSize: size!.clamp(12.0, 34.0),
-                            color: color == null ? null : Color(color),
-                          ),
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  if (size != null) ...[
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        IconButton(
-                          tooltip: 'أصغر',
-                          icon: const Icon(Icons.text_decrease),
-                          onPressed: () => setState(
-                            () => size = math.max(range.min, size! - 2),
-                          ),
-                        ),
-                        Expanded(
-                          child: Slider(
-                            min: range.min,
-                            max: range.max,
-                            value: size!.clamp(range.min, range.max),
-                            onChanged: (v) => setState(() => size = v),
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: 'أكبر',
-                          icon: const Icon(Icons.text_increase),
-                          onPressed: () => setState(
-                            () => size = math.min(range.max, size! + 2),
-                          ),
-                        ),
-                        SizedBox(
-                          width: 36,
-                          child: Text(
-                            '${size!.round()}',
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            actions: [
-              if (allowDelete)
-                TextButton(
-                  onPressed: () => Navigator.pop(context, (
-                    text: initial,
-                    delete: true,
-                    fontSize: size,
-                  )),
-                  child: const Text('حذف'),
-                ),
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('إلغاء'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, (
-                  text: controller.text,
-                  delete: false,
-                  fontSize: size,
-                )),
-                child: const Text('حفظ'),
-              ),
-            ],
-          ),
-        ),
+  }) => _repaintAfter(
+    showNotsSheet<TextDialogResult>(
+      context,
+      builder: (_) => TextEntrySheet(
+        title: title,
+        initial: initial,
+        allowDelete: allowDelete,
+        fontSize: fontSize,
+        color: color,
       ),
-    ).whenComplete(controller.dispose);
-  }
+    ),
+  );
 
   /// [dialog], then has the viewer draw the pages again.
   ///
@@ -1312,38 +1263,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
       Future.delayed(Duration(milliseconds: ms), () {
         if (mounted && _viewer.isReady) _viewer.invalidate();
       });
-    }
-  }
-
-  Future<void> _askPage() async {
-    final controller = TextEditingController();
-    final count = _viewer.pageCount;
-    final n = await showDialog<int>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('الانتقال إلى صفحة (1 – $count)'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          keyboardType: TextInputType.number,
-          onSubmitted: (v) => Navigator.pop(context, int.tryParse(v)),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('إلغاء'),
-          ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.pop(context, int.tryParse(controller.text)),
-            child: const Text('انتقال'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    if (n != null && n >= 1 && n <= count) {
-      await _viewer.goToPage(pageNumber: n);
     }
   }
 
@@ -1586,665 +1505,526 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
-  /// Title bar text: the current section (from the linked text or the PDF
-  /// outline) and the file name.
-  Widget _title(BuildContext context) {
+  /// Name of the sheet's page and the number of pages, for the pill.
+  Widget _pagePill() => ListenableBuilder(
+    listenable: _viewer,
+    builder: (context, _) => _viewer.isReady
+        ? PagePill(
+            page: _viewer.pageNumber ?? 1,
+            count: _viewer.pageCount,
+            onTap: () => _openPages(PagesMode.all),
+          )
+        : const SizedBox.shrink(),
+  );
+
+  bool get _isBook => !widget.book.isNote;
+
+  /// A tool was chosen, in the bar or in the box.
+  void _onTool(ReaderTool t) {
+    if (t == ReaderTool.ruler) {
+      _toggleRuler();
+      setState(() => _pop = ReaderPop.none);
+      return;
+    }
+    if (t == ReaderTool.image) {
+      setState(() => _pop = ReaderPop.none);
+      unawaited(_addPicture());
+      return;
+    }
+    final same = _tools.mode == t.mode;
+    _tools.setMode(t.mode!);
+    setState(() {
+      // Choosing a tool brings its options (colours first of all); choosing
+      // it again takes them away.
+      _pop = t.hasOptions
+          ? (same && _pop == ReaderPop.options
+                ? ReaderPop.none
+                : ReaderPop.options)
+          : ReaderPop.none;
+    });
+  }
+
+  ReaderTool get _currentTool {
+    for (final t in ReaderTool.values) {
+      if (t.mode != null && t.mode == _tools.mode) return t;
+    }
+    return ReaderTool.hand;
+  }
+
+  Future<void> _recolorSelection() async {
+    final sel = _selection;
+    if (sel == null) return;
+    final c = await showColorListDialog(
+      context,
+      _palette,
+      sel.currentColor ?? _tools.color,
+    );
+    if (c != null) sel.recolor(c);
+  }
+
+  Widget _panels() {
     return ListenableBuilder(
-      listenable: _viewer,
+      listenable: Listenable.merge([_tools, _selection!, _layout]),
       builder: (context, _) {
-        final name = widget.book.title;
-        String? section;
-        if (_viewer.isReady) {
-          final page = _viewer.pageNumber ?? 1;
-          final book = _book;
-          if (book != null) {
-            section = book.sectionOf(book.bookPageOf(page))?.title;
-          } else {
-            for (final e in _outline) {
-              if (e.pdfPage > page) break;
-              section = e.title;
-            }
-          }
+        final Widget? panel;
+        if (_selection!.active) {
+          panel = SelectionBar(
+            selection: _selection!,
+            onColor: _recolorSelection,
+          );
+        } else if (_pop == ReaderPop.box) {
+          panel = ToolBox(
+            layout: _layout,
+            tools: _tools,
+            isBook: _isBook,
+            onTool: _onTool,
+            onSettings: () {
+              setState(() => _pop = ReaderPop.none);
+              _openSettings();
+            },
+          );
+        } else if (_pop == ReaderPop.options && _currentTool.hasOptions) {
+          panel = ToolOptions(
+            tools: _tools,
+            palette: _palette,
+            fingerDraws: _tools.fingerDraws,
+            onFinger: AppSettings.instance.setFingerDraws,
+            onColor: () => setState(() => _pop = ReaderPop.none),
+          );
+        } else {
+          panel = null;
         }
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              section ?? name,
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            if (section != null)
-              Text(
-                name,
-                style: Theme.of(context).textTheme.bodySmall,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-          ],
+        if (panel == null) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
+          child: Center(child: panel),
         );
       },
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final store = _store;
-    final appBar = AppBar(
-      primary: false,
-      toolbarHeight: 52,
-      titleSpacing: 0,
-      backgroundColor: Colors.transparent,
-      surfaceTintColor: Colors.transparent,
-      title: _title(context),
-      actions: [
-        IconButton(
-          tooltip: 'الفهرس',
-          icon: const Icon(Icons.toc),
-          onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
-        ),
-        IconButton(
-          tooltip: 'بحث في نص الكتاب',
-          icon: const Icon(Icons.search),
-          onPressed: _openSearch,
-        ),
-        ListenableBuilder(
-          listenable: _viewer,
-          builder: (context, _) {
-            final marked =
-                _viewer.isReady &&
-                (_prefs?.isBookmarked(_viewer.pageNumber ?? 1) ?? false);
-            return IconButton(
-              tooltip: marked ? 'إزالة علامة الصفحة' : 'وضع علامة على الصفحة',
-              icon: Icon(
-                marked ? Icons.bookmark : Icons.bookmark_border,
-                color: marked ? Colors.red : null,
-              ),
-              onPressed: _toggleBookmark,
-            );
-          },
-        ),
-        ListenableBuilder(
-          listenable: _viewer,
-          builder: (context, _) {
-            if (!_viewer.isReady) return const SizedBox.shrink();
-            return TextButton(
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                minimumSize: const Size(40, 40),
-              ),
-              onPressed: _askPage,
-              child: Text(
-                '${_viewer.pageNumber ?? 1}/${_viewer.pageCount}',
-                style: const TextStyle(fontSize: 13),
-              ),
-            );
-          },
-        ),
-        ListenableBuilder(
-          listenable: _tools,
-          builder: (context, _) => PopupMenuButton<String>(
-            tooltip: 'المزيد',
-            onSelected: (v) {
-              switch (v) {
-                case 'pages':
-                  _openPages();
-                case 'export':
-                  _export();
-                case 'finger':
-                  _tools.setFingerDraws(!_tools.fingerDraws);
-                case 'full':
-                  _setFullScreen(!_fullScreen);
-                case 'link':
-                  _linkDocx();
-                case 'unlink':
-                  _unlinkDocx();
-              }
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'pages',
-                child: Text('الصفحات والعلامات'),
-              ),
-              const PopupMenuItem(
-                value: 'export',
-                child: Text('تصدير ومشاركة'),
-              ),
-              const PopupMenuDivider(),
-              CheckedPopupMenuItem(
-                value: 'full',
-                checked: _fullScreen,
-                child: const Text('ملء الشاشة (إخفاء شريط الهاتف)'),
-              ),
-              CheckedPopupMenuItem(
-                value: 'finger',
-                checked: _tools.fingerDraws,
-                child: const Text(
-                  'الإصبع يرسم (أطفئه ليكتب القلم وحده ويحرّك الإصبعُ الصفحة)',
-                ),
-              ),
-              if (_book == null)
-                const PopupMenuItem(
-                  value: 'link',
-                  child: Text('ربط ملف Word (docx)'),
-                )
-              else if (!_book!.embedded)
-                // A word map is part of the PDF itself: nothing to unlink.
-                const PopupMenuItem(
-                  value: 'unlink',
-                  child: Text('إلغاء ربط ملف Word'),
-                ),
-            ],
-          ),
-        ),
-      ],
-    );
-    return Scaffold(
-      key: _scaffoldKey,
-      // The keyboard (writing a comment or a note) must not squeeze the
-      // page: that re-lays it out and can leave it drawn blurry. Dialogs
-      // make room for the keyboard themselves.
-      resizeToAvoidBottomInset: false,
-      endDrawer: ListenableBuilder(
-        listenable: _viewer,
-        builder: (context, _) => TocPanel(
-          title: widget.book.title,
-          entries: _tocEntries,
-          linkedSource: _book?.source,
-          currentPdfPage: _viewer.isReady ? (_viewer.pageNumber ?? 1) : 1,
-          onOpen: (page) {
-            Navigator.of(context).pop();
-            _viewer.goToPage(pageNumber: page);
-          },
-          onLink: () {
-            Navigator.of(context).pop();
-            _linkDocx();
-          },
-          embedded: _book?.embedded ?? false,
-          onUnlink: (_book?.embedded ?? false)
-              ? null
-              : () {
-                  Navigator.of(context).pop();
-                  _unlinkDocx();
-                },
+  Widget _bars(BuildContext context) {
+    final bars = ListenableBuilder(
+      listenable: Listenable.merge([_viewer, ?_prefs]),
+      builder: (context, _) => ReaderBars(
+        tools: _tools,
+        layout: _layout,
+        document: _store!.document,
+        selection: _selection!,
+        isBook: _isBook,
+        bookmarked:
+            _viewer.isReady &&
+            (_prefs?.isBookmarked(_viewer.pageNumber ?? 1) ?? false),
+        boxOpen: _pop == ReaderPop.box,
+        onBack: () => Navigator.of(context).maybePop(),
+        onMasdar: _openMasdar,
+        onHistory: _showRecent,
+        onToc: _openToc,
+        onSearch: _openSearch,
+        onBookmark: _toggleBookmark,
+        onMore: _openMenu,
+        onTool: _onTool,
+        onBox: () => setState(
+          () => _pop = _pop == ReaderPop.box ? ReaderPop.none : ReaderPop.box,
         ),
       ),
-      body: _error != null
-          ? Center(child: Text('تعذّر فتح ملف الكتابة: $_error'))
-          : store == null || _selection == null
-          ? const Center(child: CircularProgressIndicator())
-          : Stack(
-              children: [
-                Positioned.fill(child: _viewerArea()),
-                Positioned(
-                  left: 0,
-                  top: MediaQuery.paddingOf(context).top + 64,
-                  bottom: 8,
-                  width: 60,
-                  child: ScrubBar(controller: _viewer, shown: _toolsShown),
-                ),
-                // While the bars are away: a small tab at the top, showing
-                // the tool in use, brings them back (as does a tap on the
-                // page with the hand tool).
-                Positioned(
-                  top: MediaQuery.paddingOf(context).top + 2,
-                  left: 0,
-                  right: 0,
-                  child: Center(
-                    child: IgnorePointer(
-                      ignoring: _toolsShown,
-                      child: AnimatedOpacity(
-                        opacity: _toolsShown ? 0 : 1,
-                        duration: const Duration(milliseconds: 200),
-                        child: _barsTab(context),
-                      ),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: IgnorePointer(
-                    ignoring: !_toolsShown,
-                    child: AnimatedSlide(
-                      offset: _toolsShown ? Offset.zero : const Offset(0, -1),
-                      duration: const Duration(milliseconds: 220),
-                      curve: Curves.easeOutCubic,
-                      child: AnimatedOpacity(
-                        opacity: _toolsShown ? 1 : 0,
-                        duration: const Duration(milliseconds: 200),
-                        child: Listener(
-                          // Any touch on the bars keeps them in view.
-                          onPointerDown: (_) => _showTools(),
-                          onPointerMove: (_) => _showTools(),
-                          child: _bars(context, store, appBar),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
     );
-  }
-
-  /// Title bar (under the phone's status bar), the search result being
-  /// shown, and the tools, one under the other.
-  Widget _bars(BuildContext context, InkStore store, PreferredSizeWidget bar) {
-    final theme = Theme.of(context);
-    final pad = MediaQuery.paddingOf(context);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Material(
-          elevation: 2,
-          color: theme.colorScheme.surfaceContainer,
-          child: Padding(
-            padding: EdgeInsets.only(
-              top: pad.top,
-              left: pad.left,
-              right: pad.right,
-            ),
-            child: SizedBox(height: 52, child: bar),
-          ),
-        ),
+        bars,
         if (_search != null && _book != null) _searchBanner(context),
-        Padding(
-          padding: EdgeInsets.fromLTRB(pad.left + 8, 6, pad.right + 8, 0),
-          child: Center(child: _toolbar(store)),
-        ),
+        _panels(),
       ],
     );
   }
 
-  /// The tab that brings the bars back.
-  Widget _barsTab(BuildContext context) {
-    final theme = Theme.of(context);
-    return ListenableBuilder(
-      listenable: _tools,
-      builder: (context, _) => Material(
-        color: theme.colorScheme.surfaceContainerHigh.withValues(alpha: 0.92),
-        elevation: 2,
-        shape: const StadiumBorder(),
-        child: InkWell(
-          customBorder: const StadiumBorder(),
-          onTap: _showTools,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  _modeIcons[_tools.mode]?.$1 ?? Icons.pan_tool_alt_outlined,
-                  size: 18,
-                  color: _tools.drawing ? Color(_tools.color) : null,
-                ),
-                const SizedBox(width: 4),
-                const Icon(Icons.keyboard_arrow_down, size: 18),
-              ],
-            ),
-          ),
-        ),
+  /// The last books opened, from inside a book: choosing one opens it in
+  /// place of this one.
+  Future<void> _showRecent() async {
+    final lib = widget.library;
+    final books = [
+      for (final b in lib.books)
+        if (!b.isNote) b,
+    ].take(10).toList();
+    final progress = ReadProgress();
+    unawaited(progress.load(books.map((b) => b.id)));
+    final picked = await showNotsSheet<BookEntry>(
+      context,
+      builder: (_) => HistorySheet(books: books, progress: progress),
+    );
+    progress.dispose();
+    if (picked == null || !mounted || picked.id == widget.book.id) return;
+    if (!lib.isOnDevice(picked)) {
+      _say('هذا الكتاب في حسابك: افتحه من «كتبي» ليُنزَّل.');
+      return;
+    }
+    await lib.touch(picked);
+    if (!mounted) return;
+    await Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(
+        builder: (_) => ReaderScreen(library: lib, book: picked),
       ),
     );
   }
 
-  Widget _toolbar(InkStore store) => _Toolbar(
-    tools: _tools,
-    document: store.document,
-    selection: _selection!,
-    palette: _palette,
-    onToggleRuler: _toggleRuler,
+  void _say(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  Future<void> _openToc() async {
+    final page = await showNotsSheet<int>(
+      context,
+      builder: (_) => TocSheet(
+        entries: _tocEntries,
+        currentPdfPage: _viewer.isReady ? (_viewer.pageNumber ?? 1) : 1,
+        onLink: () {
+          Navigator.of(context).pop();
+          _linkDocx();
+        },
+      ),
+    );
+    if (page != null) await _viewer.goToPage(pageNumber: page);
+  }
+
+  Future<void> _openMenu() async {
+    final r = await showNotsSheet<String>(
+      context,
+      builder: (_) => ReaderMenuSheet(
+        annotated: _annotatedPages.length,
+        marked: _prefs?.bookmarks.length ?? 0,
+        isBook: _isBook,
+        linked: _book != null,
+        canUnlink: _book != null && !_book!.embedded,
+      ),
+    );
+    switch (r) {
+      case 'export':
+        await _export();
+      case 'annotated':
+        await _openPages(PagesMode.annotated);
+      case 'marks':
+        await _openPages(PagesMode.bookmarks);
+      case 'pages':
+        await _openPages(PagesMode.all);
+      case 'clean':
+        _hideTools();
+      case 'tools':
+        await _openSettings();
+      case 'link':
+        await _linkDocx();
+      case 'unlink':
+        await _unlinkDocx();
+    }
+  }
+
+  Future<void> _openSettings() => showNotsSheet<void>(
+    context,
+    builder: (_) => ToolSettingsSheet(layout: _layout, isBook: _isBook),
   );
 
+  /// Opens the Masdar app (when it is on this phone).
+  Future<void> _openMasdar() async {
+    var opened = false;
+    try {
+      opened =
+          await const MethodChannel(
+            'nots/app',
+          ).invokeMethod<bool>('openApp', {'package': masdarPackage}) ??
+          false;
+    } on MissingPluginException {
+      opened = false;
+    }
+    if (!opened) _say('تطبيق المصدر غير مثبت على هذا الجهاز.');
+  }
+
+  /// Asks for a picture and puts it on the page in view, selected, ready to
+  /// be moved and resized.
+  Future<void> _addPicture() async {
+    final src = await showNotsSheet<ImageSource>(
+      context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SheetHeader('إضافة صورة'),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+              child: ActionRows(
+                rows: [
+                  ActionRow(
+                    Icons.photo_library_outlined,
+                    'من المعرض',
+                    () => Navigator.pop(context, ImageSource.gallery),
+                  ),
+                  // A computer has no camera to take a picture with here.
+                  if (Platform.isAndroid || Platform.isIOS)
+                    ActionRow(
+                      Icons.photo_camera_outlined,
+                      'من الكاميرا',
+                      () => Navigator.pop(context, ImageSource.camera),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    final store = _store;
+    if (src == null || !mounted || store == null || !_viewer.isReady) return;
+    try {
+      final file = await ImagePicker().pickImage(source: src);
+      if (file == null || !mounted) return;
+      final prepared = await prepareImage(await file.readAsBytes());
+      if (prepared == null) {
+        _say('تعذّرت قراءة الصورة.');
+        return;
+      }
+      final n = _viewer.pageNumber ?? 1;
+      final page = _viewer.document.pages[n - 1];
+      final rect = _viewer.layout.pageLayouts[n - 1];
+      // The middle of the screen, if it is on this page; else the page's.
+      final c = _viewer.centerPosition - rect.topLeft;
+      final center = Offset(
+        c.dx.clamp(page.width * 0.25, page.width * 0.75),
+        c.dy.clamp(page.height * 0.2, page.height * 0.8),
+      );
+      final doc = store.document;
+      final item = pictureItem(
+        id: doc.takeStrokeId(),
+        image: prepared,
+        center: center,
+        width: page.width * 0.55,
+      );
+      doc.addItem(n, item);
+      // Selected: it can be moved by its body and resized by its corners.
+      _tools.setMode(ToolMode.lasso);
+      _selection?.selectItem(n, item.id);
+    } on Object catch (e) {
+      _say('تعذّرت إضافة الصورة: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final store = _store;
+    final size = MediaQuery.sizeOf(context);
+    final pad = MediaQuery.paddingOf(context);
+    final wide = size.width >= wideBars;
+    _viewWidth = size.width;
+    _reserveTop = pad.top + (wide ? 60 : 112);
+    final belowBars = pad.top + (wide ? 56 : 108);
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brand.dark ? Brightness.light : Brightness.dark,
+        statusBarBrightness: Brand.dark ? Brightness.dark : Brightness.light,
+      ),
+      child: Scaffold(
+        backgroundColor: wide ? Brand.desk : Brand.paper,
+        // The keyboard (writing a comment or a note) must not squeeze the
+        // page: that re-lays it out and can leave it drawn blurry. Sheets
+        // make room for the keyboard themselves.
+        resizeToAvoidBottomInset: false,
+        body: _error != null
+            ? Center(child: Text('تعذّر فتح ملف الكتابة: $_error'))
+            : store == null || _selection == null
+            ? const Center(child: CircularProgressIndicator())
+            : Stack(
+                children: [
+                  Positioned.fill(child: _viewerArea()),
+                  if (_conflicts != null)
+                    Positioned(
+                      left: 12,
+                      right: 12,
+                      top: belowBars + 8,
+                      child: _conflictBar(_conflicts!),
+                    ),
+                  Positioned(
+                    left: 0,
+                    top: belowBars + 10,
+                    bottom: pad.bottom + 70,
+                    width: 60,
+                    child: ScrubBar(controller: _viewer, shown: _toolsShown),
+                  ),
+                  // The page number, at the bottom.
+                  Positioned(
+                    bottom: pad.bottom + 16,
+                    left: 0,
+                    right: 0,
+                    child: Center(
+                      child: IgnorePointer(
+                        ignoring: !_toolsShown,
+                        child: AnimatedOpacity(
+                          opacity: _toolsShown ? 1 : 0,
+                          duration: const Duration(milliseconds: 200),
+                          child: _pagePill(),
+                        ),
+                      ),
+                    ),
+                  ),
+                  // While the bars are away: a small round button showing
+                  // the tool in use brings them back (as does a tap on the
+                  // page with the hand tool).
+                  Positioned(
+                    top: pad.top + 4,
+                    left: 14,
+                    child: IgnorePointer(
+                      ignoring: _toolsShown,
+                      child: AnimatedOpacity(
+                        opacity: _toolsShown ? 0 : 0.9,
+                        duration: const Duration(milliseconds: 200),
+                        child: ListenableBuilder(
+                          listenable: _tools,
+                          builder: (context, _) => ToolDot(
+                            icon: _currentTool.icon,
+                            onTap: _showTools,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    top: pad.top,
+                    left: 0,
+                    right: 0,
+                    child: IgnorePointer(
+                      ignoring: !_toolsShown,
+                      child: AnimatedSlide(
+                        offset: _toolsShown ? Offset.zero : const Offset(0, -0.4),
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOutCubic,
+                        child: AnimatedOpacity(
+                          opacity: _toolsShown ? 1 : 0,
+                          duration: const Duration(milliseconds: 200),
+                          child: _bars(context),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+
   Widget _viewerArea() {
+    final wide = _viewWidth >= wideBars;
     return TouchNavigator(
       tools: _tools,
       readView: () => _viewer.isReady ? _viewer.value : null,
       writeView: (m) {
         if (_viewer.isReady) _viewer.value = m;
       },
-      child: ListenableBuilder(
-        listenable: _tools,
-        builder: (context, _) => PdfViewer.file(
-          widget.library.pathOf(widget.book),
-          controller: _viewer,
-          params: PdfViewerParams(
-            // While a drawing tool is active, a finger or the pen draws;
-            // moving and zooming the page is done by [TouchNavigator] (two
-            // fingers anywhere, or one finger when finger drawing is off).
-            panEnabled: !_tools.drawing,
-            scaleEnabled: !_tools.drawing,
-            // Zoom out until a whole page shows, and in to 1600%; vector
-            // ink stays sharp at any level.
-            sizeDelegateProvider: const ReaderZoom(),
-            pageOverlaysBuilder: _overlays,
-            onGeneralTap: _onGeneralTap,
-            buildContextMenu: _selectionMenu,
-            // Momentum scrolling: flicks carry on.
-            scrollPhysics: PdfViewerParams.getScrollPhysics(context),
-            onViewerReady: (doc, _) {
-              _loadOutline(doc);
-              _restorePage();
-            },
-            onPageChanged: (n) {
-              if (n == null) return;
-              _prefs?.setLastPage(n);
-              // Ready the page's words for instant taps.
-              final pages = _viewer.document.pages;
-              for (final k in [n, n + 1]) {
-                if (k <= pages.length) _wordsOf(pages[k - 1]);
-              }
-            },
+      // Starting to write clears the screen: the bars and their panels go,
+      // and only the page is left.
+      child: Listener(
+        onPointerDown: (_) {
+          // Selecting needs its bar (delete, copy, colour): it keeps them.
+          if (_tools.drawing &&
+              !_tools.multiTouch &&
+              _tools.mode != ToolMode.lasso) {
+            _hideTools();
+          }
+        },
+        child: ListenableBuilder(
+          listenable: _tools,
+          builder: (context, _) => _nightPages(
+            PdfViewer.file(
+            widget.library.pathOf(widget.book),
+            controller: _viewer,
+            params: PdfViewerParams(
+              // The page fills the width of the screen, with no margin, and
+              // some room above and below for the bars.
+              margin: 0,
+              layoutPages: readerPageLayout(
+                top: () => _reserveTop,
+                bottom: 70,
+                viewWidth: () => _viewWidth,
+              ),
+              backgroundColor: wide ? Brand.desk : Brand.paper,
+              pageDropShadow: wide
+                  ? const BoxShadow(
+                      color: Color(0x2916233A),
+                      blurRadius: 18,
+                      offset: Offset(0, 6),
+                    )
+                  : null,
+              // While a drawing tool is active, a finger or the pen draws;
+              // moving and zooming the page is done by [TouchNavigator] (two
+              // fingers anywhere, or one finger when finger drawing is off).
+              panEnabled: !_tools.drawing,
+              scaleEnabled: !_tools.drawing,
+              // Zoom out until a whole page shows, and in to 1600%; vector
+              // ink stays sharp at any level.
+              sizeDelegateProvider: const ReaderZoom(),
+              pageOverlaysBuilder: _overlays,
+              onGeneralTap: _onGeneralTap,
+              buildContextMenu: _selectionMenu,
+              // Momentum scrolling: flicks carry on.
+              scrollPhysics: PdfViewerParams.getScrollPhysics(context),
+              onViewerReady: (doc, _) {
+                _loadOutline(doc);
+                _restorePage();
+              },
+              onPageChanged: (n) {
+                if (n == null) return;
+                _prefs?.setLastPage(n);
+                // Ready the page's words for instant taps.
+                final pages = _viewer.document.pages;
+                for (final k in [n, n + 1]) {
+                  if (k <= pages.length) _wordsOf(pages[k - 1]);
+                }
+              },
+            ),
+          ),
           ),
         ),
       ),
+    );
+  }
+
+  /// In the night look a book's pages (and what is written on them) are
+  /// turned over: light on deep navy instead of black on white. A note keeps
+  /// the paper its maker chose.
+  Widget _nightPages(Widget viewer) {
+    if (!Brand.dark || !AppSettings.instance.nightPages || widget.book.isNote) {
+      return viewer;
+    }
+    return ColorFiltered(
+      colorFilter: const ColorFilter.matrix(<double>[
+        -0.86, 0, 0, 0, 228, //
+        0, -0.86, 0, 0, 231, //
+        0, 0, -0.86, 0, 238, //
+        0, 0, 0, 1, 0,
+      ]),
+      child: viewer,
     );
   }
 }
 
-const _modeIcons = {
-  ToolMode.hand: (Icons.pan_tool_alt_outlined, 'تحريك'),
-  ToolMode.pen: (Icons.edit, 'قلم'),
-  ToolMode.highlighter: (Icons.border_color, 'تظليل'),
-  ToolMode.shape: (Icons.category_outlined, 'أشكال'),
-  ToolMode.text: (Icons.text_fields, 'نص'),
-  ToolMode.pin: (Icons.push_pin_outlined, 'ملاحظة'),
-  ToolMode.lasso: (Icons.gesture, 'تحديد'),
-  ToolMode.eraser: (Icons.auto_fix_normal, 'ممحاة'),
-};
+/// The ribbon on a bookmarked page.
+class _BookmarkRibbon extends StatelessWidget {
+  const _BookmarkRibbon({required this.prefs, required this.page});
 
-class _Toolbar extends StatelessWidget {
-  const _Toolbar({
-    required this.tools,
-    required this.document,
-    required this.selection,
-    required this.palette,
-    required this.onToggleRuler,
-  });
-
-  final VoidCallback onToggleRuler;
-
-  final ToolController tools;
-  final InkDocument document;
-  final SelectionController selection;
-  final ColorPalette palette;
+  final ReaderPrefs prefs;
+  final int page;
 
   @override
-  Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: Listenable.merge([tools, selection, document]),
-      builder: (context, _) {
-        final options = _options(context);
-        // Every tool is visible at once: the row wraps to a second line on
-        // narrow screens instead of hiding tools off to the side.
-        final main = _bar(context, wrap: true, [
-          _icon(
-            context,
-            Icons.undo,
-            'تراجع',
-            document.canUndo ? document.undo : null,
-          ),
-          _icon(
-            context,
-            Icons.redo,
-            'إعادة',
-            document.canRedo ? document.redo : null,
-          ),
-          const SizedBox(height: 24, child: VerticalDivider()),
-          for (final m in _modeIcons.keys) _mode(context, m),
-          ValueListenableBuilder(
-            valueListenable: tools.ruler,
-            builder: (context, r, _) => _icon(
-              context,
-              Icons.straighten,
-              'المسطرة',
-              onToggleRuler,
-              selected: r != null,
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: prefs,
+    builder: (context, _) => prefs.isBookmarked(page)
+        ? const Positioned(
+            top: 0,
+            right: 14,
+            child: IgnorePointer(
+              child: Icon(Icons.bookmark, color: Brand.gold, size: 30),
             ),
-          ),
-        ]);
-        final opts = options == null ? null : _bar(context, options);
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(8, 3, 8, 3),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              main,
-              if (opts != null) ...[const SizedBox(height: 4), opts],
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  /// A compact bar that scrolls sideways when it does not fit the screen.
-  /// A compact bar. Option bars scroll sideways; the main bar wraps.
-  Widget _bar(
-    BuildContext context,
-    List<Widget> children, {
-    bool wrap = false,
-  }) {
-    return Material(
-      elevation: 4,
-      color: Theme.of(context).colorScheme.surfaceContainerHigh
-          .withValues(alpha: 0.96),
-      borderRadius: BorderRadius.circular(22),
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        child: wrap
-            ? Wrap(
-                alignment: WrapAlignment.center,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: children,
-              )
-            : SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(mainAxisSize: MainAxisSize.min, children: children),
-              ),
-      ),
-    );
-  }
-
-  Widget _icon(
-    BuildContext context,
-    IconData icon,
-    String tooltip,
-    VoidCallback? onPressed, {
-    bool selected = false,
-  }) {
-    return IconButton(
-      tooltip: tooltip,
-      isSelected: selected,
-      iconSize: 21,
-      visualDensity: VisualDensity.compact,
-      padding: const EdgeInsets.all(6),
-      constraints: const BoxConstraints(minWidth: 38, minHeight: 38),
-      icon: Icon(icon),
-      style: IconButton.styleFrom(
-        backgroundColor: selected
-            ? Theme.of(context).colorScheme.primaryContainer
-            : null,
-      ),
-      onPressed: onPressed,
-    );
-  }
-
-  Widget _mode(BuildContext context, ToolMode m) {
-    final (icon, label) = _modeIcons[m]!;
-    return _icon(
-      context,
-      icon,
-      label,
-      () => tools.setMode(m),
-      selected: tools.mode == m,
-    );
-  }
-
-  Widget _chip(String label, bool selected, VoidCallback onTap) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 2),
-    child: ChoiceChip(
-      label: Text(label, style: const TextStyle(fontSize: 13)),
-      visualDensity: VisualDensity.compact,
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      selected: selected,
-      onSelected: (_) => onTap(),
-    ),
+          )
+        : const SizedBox.shrink(),
   );
-
-  /// Options of the current tool, or null when it has none.
-  List<Widget>? _options(BuildContext context) {
-    final mode = tools.mode;
-    const divider = SizedBox(height: 24, child: VerticalDivider());
-    if (selection.active) {
-      return [
-        _icon(
-          context,
-          Icons.delete_outline,
-          'حذف المحدد',
-          selection.deleteSelected,
-        ),
-        _icon(
-          context,
-          Icons.copy_all_outlined,
-          'تكرار المحدد',
-          selection.duplicateSelected,
-        ),
-        _colorButton(
-          context,
-          selection.currentColor ?? tools.color,
-          (c) => selection.recolor(c),
-        ),
-      ];
-    }
-    if (mode == ToolMode.eraser) {
-      return [
-        _chip(
-          'خط كامل',
-          !tools.eraserPartial,
-          () => tools.setEraserPartial(false),
-        ),
-        _chip(
-          'ممحاة عادية',
-          tools.eraserPartial,
-          () => tools.setEraserPartial(true),
-        ),
-      ];
-    }
-    if (!tools.hasStyle) return null;
-
-    return [
-      if (mode == ToolMode.pen) ...[
-        for (final (kind, label) in [
-          (InkTool.pen, 'حبر'),
-          (InkTool.pencil, 'رصاص'),
-          (InkTool.calligraphy, 'خط عربي'),
-        ])
-          _chip(label, tools.penKind == kind, () => tools.setPenKind(kind)),
-        divider,
-      ],
-      if (mode == ToolMode.shape) ...[
-        for (final (kind, icon, label) in [
-          (ShapeKind.line, Icons.horizontal_rule, 'خط'),
-          (ShapeKind.arrow, Icons.arrow_right_alt, 'سهم'),
-          (ShapeKind.ellipse, Icons.circle_outlined, 'دائرة / قطع ناقص'),
-        ])
-          _icon(
-            context,
-            icon,
-            label,
-            () => tools.setShapeKind(kind),
-            selected: tools.shapeKind == kind,
-          ),
-        divider,
-      ],
-      _colorButton(context, tools.color, tools.setColor),
-      if (tools.hasWidth) ...[divider, _widthControl(context)],
-      if (mode == ToolMode.pen || mode == ToolMode.highlighter) ...[
-        divider,
-        _icon(
-          context,
-          Icons.auto_fix_high,
-          tools.snapShapes
-              ? 'استقامة تلقائية عند التوقف: مفعّلة'
-              : 'استقامة تلقائية عند التوقف: متوقفة',
-          () => tools.setSnapShapes(!tools.snapShapes),
-          selected: tools.snapShapes,
-        ),
-      ],
-    ];
-  }
-
-  /// One colour circle: it shows the current colour and opens the list of
-  /// colours to change it.
-  Widget _colorButton(
-    BuildContext context,
-    int color,
-    void Function(int) onPicked,
-  ) {
-    return Tooltip(
-      message: 'اللون',
-      child: GestureDetector(
-        onTap: () async {
-          final c = await showColorListDialog(context, palette, color);
-          if (c != null) onPicked(c);
-        },
-        child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 6),
-          width: 22,
-          height: 22,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: Color(color),
-            border: Border.all(
-              color: Theme.of(context).colorScheme.outline,
-              width: 2,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Width (text size for the text tool) with a live preview dot. The slider
-  /// is logarithmic so very thin sizes get as much room as thick ones.
-  Widget _widthControl(BuildContext context) {
-    final range = tools.widthRange;
-    final w = tools.width.clamp(range.min, range.max);
-    final ratio = math.log(range.max / range.min);
-    final t = math.log(w / range.min) / ratio;
-    final dot = 4 + 18 * t;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox(
-          width: 120,
-          child: Slider(
-            value: t.clamp(0.0, 1.0),
-            onChanged: (v) => tools.setWidth(range.min * math.exp(v * ratio)),
-          ),
-        ),
-        SizedBox(
-          width: 26,
-          height: 26,
-          child: Center(
-            child: Container(
-              width: dot,
-              height: dot,
-              decoration: BoxDecoration(
-                color: Color(tools.color),
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
 }

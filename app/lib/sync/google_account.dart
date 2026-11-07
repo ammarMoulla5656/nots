@@ -33,12 +33,29 @@ class GoogleConfig {
   static const driveScope = 'https://www.googleapis.com/auth/drive.appdata';
 }
 
+/// This device's name as its owner would know it.
+Future<String> deviceNameOfThis() async {
+  try {
+    final name = await const MethodChannel('nots/app')
+        .invokeMethod<String>('deviceName');
+    if (name != null && name.isNotEmpty) return name;
+  } on MissingPluginException {
+    // A computer: it has a name of its own.
+  }
+  return Platform.localHostname;
+}
+
 /// The user closed the sign-in without finishing it.
 class SignInCancelled implements Exception {}
 
 /// The result of a browser sign-in.
 class BrowserTokens {
-  const BrowserTokens(this.refreshToken, this.accessToken, this.expiresIn, this.email);
+  const BrowserTokens(
+    this.refreshToken,
+    this.accessToken,
+    this.expiresIn,
+    this.email,
+  );
 
   final String refreshToken;
   final String accessToken;
@@ -48,16 +65,15 @@ class BrowserTokens {
 
 String _randomUrlSafe(int bytes) {
   final r = Random.secure();
-  return base64UrlEncode([
-    for (var i = 0; i < bytes; i++) r.nextInt(256),
-  ]).replaceAll('=', '');
+  return base64UrlEncode([for (var i = 0; i < bytes; i++) r.nextInt(256)])
+      .replaceAll('=', '');
 }
 
 /// The challenge of [verifier] (PKCE, S256).
 @visibleForTesting
-String pkceChallenge(String verifier) => base64UrlEncode(
-  sha256.convert(ascii.encode(verifier)).bytes,
-).replaceAll('=', '');
+String pkceChallenge(String verifier) =>
+    base64UrlEncode(sha256.convert(ascii.encode(verifier)).bytes)
+        .replaceAll('=', '');
 
 /// The email inside a Google id token, read without checking its signature:
 /// it came straight from Google over TLS, and is only shown to the user.
@@ -66,17 +82,20 @@ String? emailOfIdToken(String? idToken) {
   final parts = idToken?.split('.');
   if (parts == null || parts.length != 3) return null;
   try {
-    final j = jsonDecode(utf8.decode(base64Url.decode(base64.normalize(parts[1]))));
+    final j = jsonDecode(
+      utf8.decode(base64Url.decode(base64.normalize(parts[1]))),
+    );
     return (j as Map)['email'] as String?;
   } on FormatException {
     return null;
   }
 }
 
-const _doneHtml = '''<!doctype html><html dir="rtl" lang="ar"><meta charset="utf-8">
+const _doneHtml =
+    '''<!doctype html><html dir="rtl" lang="ar"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <body style="font-family:sans-serif;text-align:center;padding:3em 1em">
-<h2>تم ربط الحساب</h2><p>ارجع إلى تطبيق نوتس.</p></body></html>''';
+<h2>تم ربط الحساب</h2><p>ارجع إلى تطبيق قلم المصدر.</p></body></html>''';
 
 /// Sign-in in a browser tab shown over the app, for devices without Google
 /// services. Google refuses sign-in inside an app's own web view
@@ -109,7 +128,7 @@ class BrowserSignIn {
           'code_challenge_method': 'S256',
           'state': state,
           'access_type': 'offline',
-          'prompt': 'consent',
+          'prompt': 'select_account consent',
         }),
       );
       final code = await _awaitCode(server, state);
@@ -222,9 +241,24 @@ class GoogleAccount extends ChangeNotifier {
     }
   }
 
+  Future<bool> _hasCustomTabs() async {
+    try {
+      return await _channel.invokeMethod<bool>('hasCustomTabs') ?? false;
+    } on MissingPluginException {
+      return false; // a computer: its browser
+    }
+  }
+
+  Future<void> _bringToFront() async {
+    try {
+      await _bringToFront();
+    } on MissingPluginException {
+      // A computer: the user comes back by themselves.
+    }
+  }
+
   Future<void> _openInApp(Uri url) async {
-    final tabs =
-        await _channel.invokeMethod<bool>('hasCustomTabs') ?? false;
+    final tabs = await _hasCustomTabs();
     // Without a browser offering tabs, url_launcher would fall back to a web
     // view, which Google refuses: use the browser itself.
     final ok = await launchUrl(
@@ -242,10 +276,18 @@ class GoogleAccount extends ChangeNotifier {
     _nativeReady = true;
   }
 
-  /// Links an account. Throws [SignInCancelled] when the user stepped back.
-  Future<void> link() async {
+  /// Links an account. Throws [SignInCancelled] when the user stepped back;
+  /// the account in use stays then. With [chooseAccount], the account in use
+  /// is not picked by itself.
+  Future<void> link({bool chooseAccount = false}) async {
     if (GoogleConfig.webClientId.isNotEmpty && await _hasGoogleServices()) {
       try {
+        if (chooseAccount) {
+          await _initNative();
+          await GoogleSignIn.instance.signOut();
+          _native = null;
+          _token = null;
+        }
         await _linkNative();
         return;
       } on GoogleSignInException catch (e) {
@@ -260,7 +302,7 @@ class GoogleAccount extends ChangeNotifier {
       throw 'تسجيل الدخول عبر المتصفح غير مهيأ في هذه النسخة.';
     }
     final t = await _browser.signIn();
-    await _channel.invokeMethod<void>('bringToFront');
+    await _bringToFront();
     _mode = 'browser';
     _email = t.email;
     _refresh = t.refreshToken;

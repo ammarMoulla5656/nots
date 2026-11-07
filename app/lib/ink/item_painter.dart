@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'image_items.dart';
 import 'note_items.dart';
 
 TextPainter _painterFor(NoteItem it, double scale) => TextPainter(
@@ -104,6 +105,8 @@ class ItemsPainter extends CustomPainter {
           _paintTape(canvas, it);
         case ItemKind.mark:
           _paintMark(canvas, it);
+        case ItemKind.image:
+          _paintImage(canvas, it);
       }
       canvas.restore();
     }
@@ -170,6 +173,27 @@ class ItemsPainter extends CustomPainter {
           canvas.drawLine(r.centerLeft, r.centerRight, line);
         }
     }
+  }
+
+  void _paintImage(Canvas canvas, NoteItem it) {
+    final box = Rect.fromLTWH(
+      it.x * scale,
+      it.y * scale,
+      it.w * scale,
+      it.h * scale,
+    );
+    final image = ImageItems.instance.of(it.text);
+    if (image == null) {
+      // Still being read: a pale frame holds its place.
+      canvas.drawRect(box, Paint()..color = const Color(0x1A1C4F92));
+      return;
+    }
+    canvas.drawImageRect(
+      image,
+      Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+      box,
+      Paint()..filterQuality = FilterQuality.medium,
+    );
   }
 
   void _paintPin(Canvas canvas, NoteItem it) {

@@ -113,3 +113,30 @@ class _ReaderZoomDelegate implements PdfViewerSizeDelegate {
     isViewSizeChanged: isViewSizeChanged,
   );
 }
+
+/// Pages one under the other as wide as the widest, with no margin at the
+/// sides and a small gap between them, and room [top] above the first and
+/// [bottom] below the last (in screen pixels) for the bars that float over
+/// the page. [viewWidth] is the screen's width in pixels.
+PdfPageLayoutFunction readerPageLayout({
+  required double Function() top,
+  required double bottom,
+  required double Function() viewWidth,
+}) => (pages, params) {
+  final width = pages.fold<double>(0, (w, p) => math.max(w, p.width));
+  // Screen pixels per page unit when the page fills the width.
+  final scale = width > 0 ? viewWidth() / width : 1.0;
+  final above = top() / scale;
+  final below = bottom / scale;
+  const gap = 6.0;
+  var y = above;
+  final rects = <Rect>[];
+  for (final p in pages) {
+    rects.add(Rect.fromLTWH((width - p.width) / 2, y, p.width, p.height));
+    y += p.height + gap;
+  }
+  return PdfPageLayout(
+    pageLayouts: rects,
+    documentSize: Size(width, y - gap + below),
+  );
+};

@@ -95,10 +95,19 @@ class ReadingPosition {
 /// Per-book reading state: the exact place last read (to reopen there) and
 /// the bookmarked pages.
 class ReaderPrefs extends ChangeNotifier {
-  ReaderPrefs._(this._file, this.lastPage, this._position, this._bookmarks);
+  ReaderPrefs._(
+    this._file,
+    this.lastPage,
+    this._position,
+    this._bookmarks,
+    this.pageCount,
+  );
 
   final File _file;
   int lastPage;
+
+  /// Pages of the book, known once it has been opened (0 until then).
+  int pageCount;
   ReadingPosition? _position;
   final Set<int> _bookmarks;
   Timer? _timer;
@@ -124,19 +133,21 @@ class ReaderPrefs extends ChangeNotifier {
   static Future<ReaderPrefs> open(String bookId) async {
     final f = await _fileFor(bookId);
     var last = 1;
+    var count = 0;
     ReadingPosition? pos;
     final marks = <int>{};
     if (await f.exists()) {
       try {
         final j = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
         last = j['last'] as int? ?? 1;
+        count = j['n'] as int? ?? 0;
         pos = ReadingPosition.fromJson(j['pos']);
         marks.addAll(((j['bookmarks'] as List?) ?? const []).cast<int>());
       } on FormatException {
         // A damaged file only loses the reading position and bookmarks.
       }
     }
-    return ReaderPrefs._(f, last, pos, marks);
+    return ReaderPrefs._(f, last, pos, marks, count);
   }
 
   /// The page last read in [bookId], for showing in lists.
@@ -150,10 +161,29 @@ class ReaderPrefs extends ChangeNotifier {
     }
   }
 
+  /// The page last read and the number of pages of [bookId], for the lists
+  /// of books. The count is 0 until the book has been opened once.
+  static Future<({int page, int count})?> peekProgress(String bookId) async {
+    final raw = await rawBytes(bookId);
+    if (raw == null) return null;
+    try {
+      final j = jsonDecode(utf8.decode(raw)) as Map;
+      return (page: j['last'] as int? ?? 1, count: j['n'] as int? ?? 0);
+    } on FormatException {
+      return null;
+    }
+  }
+
   /// The saved file of [bookId] as it is, or null.
   static Future<Uint8List?> rawBytes(String bookId) async {
     final f = await _fileFor(bookId);
     return await f.exists() ? f.readAsBytes() : null;
+  }
+
+  /// When the reading state of [bookId] last changed here, or null.
+  static Future<DateTime?> modifiedAt(String bookId) async {
+    final f = await _fileFor(bookId);
+    return await f.exists() ? f.lastModified() : null;
   }
 
   /// Replaces the saved file of [bookId].
@@ -167,6 +197,12 @@ class ReaderPrefs extends ChangeNotifier {
   void addBookmarks(Iterable<int> pages) {
     _bookmarks.addAll(pages);
     notifyListeners();
+    _scheduleSave();
+  }
+
+  void setPageCount(int n) {
+    if (n == pageCount) return;
+    pageCount = n;
     _scheduleSave();
   }
 
@@ -203,6 +239,7 @@ class ReaderPrefs extends ChangeNotifier {
     _dirty = false;
     final text = jsonEncode({
       'last': lastPage,
+      if (pageCount > 0) 'n': pageCount,
       'pos': ?_position?.toJson(),
       'bookmarks': bookmarks,
     });

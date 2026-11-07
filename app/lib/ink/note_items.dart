@@ -2,7 +2,7 @@ import 'dart:ui';
 
 /// Non-ink things placed on a page. Append new values only: the index is
 /// stored in saved files.
-enum ItemKind { text, pin, tape, mark }
+enum ItemKind { text, pin, tape, mark, image }
 
 /// How a mark on PDF words looks. Append new values only (stored in files).
 enum MarkStyle {
@@ -46,6 +46,8 @@ class NoteItem {
   final double h;
 
   /// Typed text: the text box content, the pin note, or a mark's comment.
+  /// For a picture: the picture itself, a JPEG as base64 (so it travels with
+  /// the writing wherever that goes).
   final String text;
   final int color;
 
@@ -117,6 +119,7 @@ class NoteItem {
         return Rect.fromCircle(center: Offset(x, y), radius: pinRadius + 4);
       case ItemKind.tape:
       case ItemKind.mark:
+      case ItemKind.image:
         return Rect.fromLTWH(x, y, w, h);
       case ItemKind.text:
         return Rect.fromLTWH(

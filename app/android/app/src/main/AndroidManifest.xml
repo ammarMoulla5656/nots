@@ -2,7 +2,7 @@
     <!-- The library's catalogue and books, and Google Drive. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="nots"
+        android:label="قلم المصدر"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -46,6 +46,8 @@
         <!-- To tell whether the device has Google services, and a browser
              that can show the sign-in page over the app. -->
         <package android:name="com.google.android.gms"/>
+        <!-- The Masdar app, which the reader can open. -->
+        <package android:name="iq.alhikmeh.the_source"/>
         <intent>
             <action android:name="android.support.customtabs.action.CustomTabsService"/>
         </intent>

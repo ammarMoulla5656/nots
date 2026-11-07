@@ -18,10 +18,15 @@ enum ToolMode {
 
   /// Mark PDF words: highlight, underline, strike or comment.
   word,
+
+  /// A light pointer: a glowing trail that fades away and leaves nothing.
+  laser,
 }
 
 /// Current tool, colours and sizes. Widths are in PDF points.
 class ToolController extends ChangeNotifier {
+  ToolController({bool fingerDraws = true}) : _fingerDraws = fingerDraws; // ignore: prefer_initializing_formals
+
   ToolMode _mode = ToolMode.hand;
   InkTool _penKind = InkTool.pen;
   ShapeKind _shapeKind = ShapeKind.line;
@@ -30,10 +35,11 @@ class ToolController extends ChangeNotifier {
   int _highlighterColor = 0xFFFFEB3B;
   int _markColor = 0xFFFFEB3B;
   int _pinColor = 0xFF0D47A1;
+  int _laserColor = 0xFFE5262A;
   double _penWidth = 1.6;
   double _highlighterWidth = 14;
   double _textSize = 14;
-  bool _fingerDraws = true;
+  bool _fingerDraws;
   bool _snapShapes = true;
   bool _multiTouch = false;
   bool _sawStylus = false;
@@ -115,6 +121,7 @@ class ToolController extends ChangeNotifier {
     ToolMode.highlighter => _highlighterColor,
     ToolMode.word => _markColor,
     ToolMode.pin => _pinColor,
+    ToolMode.laser => _laserColor,
     _ => _penColor,
   };
 
@@ -188,6 +195,8 @@ class ToolController extends ChangeNotifier {
         _markColor = c;
       case ToolMode.pin:
         _pinColor = c;
+      case ToolMode.laser:
+        _laserColor = c;
       default:
         _penColor = c;
     }

@@ -9,6 +9,7 @@ import 'package:http/testing.dart';
 import 'package:nots/catalog/book_detail_screen.dart';
 import 'package:nots/catalog/catalog_models.dart';
 import 'package:nots/catalog/catalog_store.dart';
+import 'package:nots/catalog/cover_image.dart';
 import 'package:nots/catalog/download_manager.dart';
 import 'package:nots/library/library_store.dart';
 import 'package:nots/reader/reader_prefs.dart';
@@ -44,15 +45,21 @@ Map<String, Object> _book(
   'parts': parts ?? [_part(1)],
 };
 
-String _catalog(List<Map<String, Object>> books) =>
-    jsonEncode({'format': 'nots-catalog', 'version': 1, 'updated': 'x', 'books': books});
+String _catalog(List<Map<String, Object>> books) => jsonEncode({
+  'format': 'nots-catalog',
+  'version': 1,
+  'updated': 'x',
+  'books': books,
+});
 
 void main() {
   group('reading the catalogue', () {
     test('a book in parts, in order, with its features', () {
-      final c = Catalog.parse(_catalog([
-        _book('b1', 'الكافي', parts: [_part(2), _part(1)]),
-      ]));
+      final c = Catalog.parse(
+        _catalog([
+          _book('b1', 'الكافي', parts: [_part(2), _part(1)]),
+        ]),
+      );
       final b = c.books.single;
       expect(b.multiPart, isTrue);
       expect(b.parts.map((e) => e.number), [1, 2]);
@@ -62,10 +69,12 @@ void main() {
     });
 
     test('a damaged book is skipped, the rest stay', () {
-      final c = Catalog.parse(_catalog([
-        {'id': 5},
-        _book('b1', 'سليم'),
-      ]));
+      final c = Catalog.parse(
+        _catalog([
+          {'id': 5},
+          _book('b1', 'سليم'),
+        ]),
+      );
       expect(c.books.map((e) => e.id), ['b1']);
     });
 
@@ -76,13 +85,35 @@ void main() {
   });
 
   group('searching and sorting', () {
-    final books = Catalog.parse(_catalog([
-      _book('1', 'تَهْذِيبُ الأحكام', author: 'الطوسي', subject: 'حديث', added: '2026-03-01'),
-      _book('2', 'الكافي', author: 'الكليني', subject: 'حديث', added: '2026-01-01'),
-      _book('3', 'منية المريد', author: 'الشهيد الثاني', subject: 'أخلاق', language: 'فارسي', added: '2026-02-01'),
-    ])).books;
+    final books = Catalog.parse(
+      _catalog([
+        _book(
+          '1',
+          'تَهْذِيبُ الأحكام',
+          author: 'الطوسي',
+          subject: 'حديث',
+          added: '2026-03-01',
+        ),
+        _book(
+          '2',
+          'الكافي',
+          author: 'الكليني',
+          subject: 'حديث',
+          added: '2026-01-01',
+        ),
+        _book(
+          '3',
+          'منية المريد',
+          author: 'الشهيد الثاني',
+          subject: 'أخلاق',
+          language: 'فارسي',
+          added: '2026-02-01',
+        ),
+      ]),
+    ).books;
 
-    List<String> ids(CatalogQuery q) => runQuery(books, q).map((b) => b.id).toList();
+    List<String> ids(CatalogQuery q) =>
+        runQuery(books, q).map((b) => b.id).toList();
 
     test('finds a title whatever its diacritics and hamza', () {
       expect(ids(const CatalogQuery(text: 'تهذيب الاحكام')), ['1']);
@@ -94,8 +125,13 @@ void main() {
     });
 
     test('filters combine', () {
-      expect(ids(const CatalogQuery(subject: 'حديث', sort: CatalogSort.title)), ['2', '1']);
-      expect(ids(const CatalogQuery(subject: 'حديث', author: 'الكليني')), ['2']);
+      expect(
+        ids(const CatalogQuery(subject: 'حديث', sort: CatalogSort.title)),
+        ['2', '1'],
+      );
+      expect(ids(const CatalogQuery(subject: 'حديث', author: 'الكليني')), [
+        '2',
+      ]);
       expect(ids(const CatalogQuery(language: 'فارسي')), ['3']);
     });
 
@@ -106,12 +142,22 @@ void main() {
     });
 
     test('stays fast on a very large catalogue', () {
-      final many = Catalog.parse(_catalog([
-        for (var i = 0; i < 50000; i++)
-          _book('$i', 'كتاب رقم $i في الفقه', author: 'مؤلف ${i % 500}', subject: 'فقه ${i % 40}'),
-      ])).books;
+      final many = Catalog.parse(
+        _catalog([
+          for (var i = 0; i < 50000; i++)
+            _book(
+              '$i',
+              'كتاب رقم $i في الفقه',
+              author: 'مؤلف ${i % 500}',
+              subject: 'فقه ${i % 40}',
+            ),
+        ]),
+      ).books;
       final clock = Stopwatch()..start();
-      final hits = runQuery(many, const CatalogQuery(text: 'رقم 4999', sort: CatalogSort.title));
+      final hits = runQuery(
+        many,
+        const CatalogQuery(text: 'رقم 4999', sort: CatalogSort.title),
+      );
       clock.stop();
       expect(hits, isNotEmpty);
       expect(clock.elapsedMilliseconds, lessThan(2000));
@@ -124,16 +170,22 @@ void main() {
 
   group('the catalogue on the device', () {
     late Directory root;
-    setUp(() async => root = await Directory.systemTemp.createTemp('nots_cat_'));
+    setUp(
+      () async => root = await Directory.systemTemp.createTemp('nots_cat_'),
+    );
     tearDown(() async => root.delete(recursive: true));
 
-    CatalogStore store(http.Client client, [String bundled = '']) => CatalogStore(
-      root,
-      client: client,
-      bundled: () async => bundled.isEmpty ? _catalog([_book('in', 'المضمّن')]) : bundled,
-    );
+    CatalogStore store(http.Client client, [String bundled = '']) =>
+        CatalogStore(
+          root,
+          client: client,
+          bundled: () async =>
+              bundled.isEmpty ? _catalog([_book('in', 'المضمّن')]) : bundled,
+        );
 
-    final offline = MockClient((_) async => throw const SocketException('down'));
+    final offline = MockClient(
+      (_) async => throw const SocketException('down'),
+    );
 
     test('the first start shows the catalogue built into the app', () async {
       final s = store(offline);
@@ -146,10 +198,16 @@ void main() {
 
     test('Arabic arrives whole, and the newest catalogue is kept', () async {
       final body = utf8.encode(_catalog([_book('s', 'من السيرفر')]));
-      final s = store(MockClient((r) async {
-        expect(r.url.toString(), '${libraryUrl}catalog.txt');
-        return http.Response.bytes(body, 200, headers: {'content-type': 'text/plain'});
-      }));
+      final s = store(
+        MockClient((r) async {
+          expect(r.url.toString(), '${libraryUrl}catalog.txt');
+          return http.Response.bytes(
+            body,
+            200,
+            headers: {'content-type': 'text/plain'},
+          );
+        }),
+      );
       await s.load();
       await s.refresh();
       expect(s.books.single.title, 'من السيرفر');
@@ -180,9 +238,13 @@ void main() {
     tearDown(() async => root.delete(recursive: true));
 
     CatalogBook book(List<int> bytes, {int parts = 1}) => CatalogBook.fromJson(
-      _book('b1', 'الكافي', author: 'الكليني', subject: 'حديث', parts: [
-        for (var i = 1; i <= parts; i++) _part(i, bytes: bytes),
-      ]),
+      _book(
+        'b1',
+        'الكافي',
+        author: 'الكليني',
+        subject: 'حديث',
+        parts: [for (var i = 1; i <= parts; i++) _part(i, bytes: bytes)],
+      ),
     );
 
     Future<void> settle(DownloadManager m) async {
@@ -217,16 +279,29 @@ void main() {
     test('all the parts of a book, one after another', () async {
       var running = 0;
       var most = 0;
-      final m = DownloadManager(lib, root, clientFactory: () => MockClient.streaming((r, _) async {
-        most = ++running > most ? running : most;
-        await Future<void>.delayed(const Duration(milliseconds: 2));
-        running--;
-        final n = int.parse(RegExp(r'p(\d)').firstMatch(r.url.path)!.group(1)!);
-        return full(data.map((x) => x ^ n).toList());
-      }));
-      final b = CatalogBook.fromJson(_book('b1', 'الكافي', parts: [
-        for (var i = 1; i <= 3; i++) _part(i, bytes: data.map((x) => x ^ i).toList()),
-      ]));
+      final m = DownloadManager(
+        lib,
+        root,
+        clientFactory: () => MockClient.streaming((r, _) async {
+          most = ++running > most ? running : most;
+          await Future<void>.delayed(const Duration(milliseconds: 2));
+          running--;
+          final n = int.parse(
+            RegExp(r'p(\d)').firstMatch(r.url.path)!.group(1)!,
+          );
+          return full(data.map((x) => x ^ n).toList());
+        }),
+      );
+      final b = CatalogBook.fromJson(
+        _book(
+          'b1',
+          'الكافي',
+          parts: [
+            for (var i = 1; i <= 3; i++)
+              _part(i, bytes: data.map((x) => x ^ i).toList()),
+          ],
+        ),
+      );
       m.enqueueAll(b);
       await settle(m);
       expect(most, 1);
@@ -238,17 +313,22 @@ void main() {
       final b = book(data);
       var calls = 0;
       String? range;
-      final m = DownloadManager(lib, root, clientFactory: () => MockClient.streaming((r, _) async {
-        if (++calls == 1) {
-          Stream<List<int>> cut() async* {
-            yield data.sublist(0, 10000);
-            throw const SocketException('lost');
+      final m = DownloadManager(
+        lib,
+        root,
+        clientFactory: () => MockClient.streaming((r, _) async {
+          if (++calls == 1) {
+            Stream<List<int>> cut() async* {
+              yield data.sublist(0, 10000);
+              throw const SocketException('lost');
+            }
+
+            return http.StreamedResponse(cut(), 200);
           }
-          return http.StreamedResponse(cut(), 200);
-        }
-        range = r.headers['Range'];
-        return http.StreamedResponse(Stream.value(data.sublist(10000)), 206);
-      }));
+          range = r.headers['Range'];
+          return http.StreamedResponse(Stream.value(data.sublist(10000)), 206);
+        }),
+      );
       m.enqueue(b, b.parts.single);
       await settle(m);
       final t = m.taskOf('b1', 1)!;
@@ -264,16 +344,21 @@ void main() {
     test('a server ignoring the range starts the file over', () async {
       final b = book(data);
       var calls = 0;
-      final m = DownloadManager(lib, root, clientFactory: () => MockClient.streaming((r, _) async {
-        if (++calls == 1) {
-          Stream<List<int>> cut() async* {
-            yield data.sublist(0, 10000);
-            throw const SocketException('lost');
+      final m = DownloadManager(
+        lib,
+        root,
+        clientFactory: () => MockClient.streaming((r, _) async {
+          if (++calls == 1) {
+            Stream<List<int>> cut() async* {
+              yield data.sublist(0, 10000);
+              throw const SocketException('lost');
+            }
+
+            return http.StreamedResponse(cut(), 200);
           }
-          return http.StreamedResponse(cut(), 200);
-        }
-        return full(data);
-      }));
+          return full(data);
+        }),
+      );
       m.enqueue(b, b.parts.single);
       await settle(m);
       m.enqueue(b, b.parts.single);
@@ -283,7 +368,11 @@ void main() {
 
     test('a damaged file never enters the library', () async {
       final bad = List.of(data)..[500] ^= 0xFF;
-      final m = DownloadManager(lib, root, clientFactory: () => MockClient.streaming((r, _) async => full(bad)));
+      final m = DownloadManager(
+        lib,
+        root,
+        clientFactory: () => MockClient.streaming((r, _) async => full(bad)),
+      );
       final b = book(data);
       m.enqueue(b, b.parts.single);
       await settle(m);
@@ -292,9 +381,13 @@ void main() {
     });
 
     test('a missing file on the server is reported', () async {
-      final m = DownloadManager(lib, root, clientFactory: () => MockClient.streaming(
-        (r, _) async => http.StreamedResponse(const Stream.empty(), 404),
-      ));
+      final m = DownloadManager(
+        lib,
+        root,
+        clientFactory: () => MockClient.streaming(
+          (r, _) async => http.StreamedResponse(const Stream.empty(), 404),
+        ),
+      );
       final b = book(data);
       m.enqueue(b, b.parts.single);
       await settle(m);
@@ -303,16 +396,66 @@ void main() {
 
     test('a book already in the library is not downloaded again', () async {
       var calls = 0;
-      final m = DownloadManager(lib, root, clientFactory: () => MockClient.streaming((r, _) async {
-        calls++;
-        return full(data);
-      }));
+      final m = DownloadManager(
+        lib,
+        root,
+        clientFactory: () => MockClient.streaming((r, _) async {
+          calls++;
+          return full(data);
+        }),
+      );
       final b = book(data);
       m.enqueue(b, b.parts.single);
       await settle(m);
       m.enqueue(b, b.parts.single);
       await settle(m);
       expect(calls, 1);
+    });
+  });
+
+  group('covers', () {
+    late Directory dir;
+    setUp(() async {
+      dir = await Directory.systemTemp.createTemp('nots_cover_');
+      CoverCache.dirProvider = () async => dir;
+    });
+    tearDown(() => dir.delete(recursive: true));
+
+    // These hung for ever before, so no cover ever appeared: a limit turns
+    // that back into a failure.
+    test('a cover is fetched once, then read from the device', () async {
+      var fetched = 0;
+      CoverCache.client = MockClient((r) async {
+        fetched++;
+        return http.Response.bytes([1, 2, 3], 200);
+      });
+      final limit = const Duration(seconds: 5);
+      final f = await CoverCache.get('covers/a.jpg').timeout(limit);
+      expect(f!.readAsBytesSync(), [1, 2, 3]);
+      expect(await CoverCache.get('covers/a.jpg').timeout(limit), isNotNull);
+      expect(fetched, 1);
+    });
+
+    test('a cover that cannot be fetched is tried again next time', () async {
+      var up = false;
+      CoverCache.client = MockClient((r) async {
+        if (!up) throw http.ClientException('down');
+        return http.Response.bytes([1], 200);
+      });
+      final limit = const Duration(seconds: 5);
+      expect(await CoverCache.get('covers/b.jpg').timeout(limit), isNull);
+      up = true;
+      expect(await CoverCache.get('covers/b.jpg').timeout(limit), isNotNull);
+    });
+
+    test('many covers at once all arrive', () async {
+      CoverCache.client = MockClient(
+        (r) async => http.Response.bytes([1], 200),
+      );
+      final all = await Future.wait([
+        for (var i = 0; i < 12; i++) CoverCache.get('covers/$i.jpg'),
+      ]).timeout(const Duration(seconds: 5));
+      expect(all.every((f) => f != null), isTrue);
     });
   });
 
@@ -397,13 +540,25 @@ void main() {
     );
 
     testWidgets('a single book: its information and what it allows', (t) async {
-      await t.pumpWidget(screen(CatalogBook.fromJson({
-        ..._book('b', 'الكافي', author: 'الكليني', subject: 'حديث'),
-        'investigator': 'الغفاري',
-        'edition': 'الرابعة',
-        'publisher': 'دار الكتب',
-      })));
-      for (final s in ['الكليني', 'الغفاري', 'الرابعة', 'حديث', 'دار الكتب', 'العربية', 'تحميل']) {
+      await t.pumpWidget(
+        screen(
+          CatalogBook.fromJson({
+            ..._book('b', 'الكافي', author: 'الكليني', subject: 'حديث'),
+            'investigator': 'الغفاري',
+            'edition': 'الرابعة',
+            'publisher': 'دار الكتب',
+          }),
+        ),
+      );
+      for (final s in [
+        'الكليني',
+        'الغفاري',
+        'الرابعة',
+        'حديث',
+        'دار الكتب',
+        'العربية',
+        'تحميل',
+      ]) {
         expect(find.textContaining(s), findsWidgets, reason: s);
       }
       expect(find.text('الكتابة بالقلم'), findsOneWidget);
@@ -412,10 +567,14 @@ void main() {
     });
 
     testWidgets('a book in parts offers each part and all of them', (t) async {
-      await t.pumpWidget(screen(CatalogBook.fromJson({
-        ..._book('b', 'الكافي', parts: [_part(1), _part(2)]),
-        'parts_count': 8,
-      })));
+      await t.pumpWidget(
+        screen(
+          CatalogBook.fromJson({
+            ..._book('b', 'الكافي', parts: [_part(1), _part(2)]),
+            'parts_count': 8,
+          }),
+        ),
+      );
       expect(find.text('تحميل كل الأجزاء (2)'), findsOneWidget);
       expect(find.text('الجزء 1'), findsOneWidget);
       expect(find.text('الجزء 2'), findsOneWidget);

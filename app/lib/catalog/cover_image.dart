@@ -12,20 +12,25 @@ import 'catalog_store.dart';
 /// A cover's name changes with its content, so a kept file is never stale.
 class CoverCache {
   static final _pending = <String, Future<File?>>{};
-  static final _client = http.Client();
+
+  /// Where covers are kept and how they are fetched; tests may replace them.
+  static Future<Directory> Function() dirProvider = () async => Directory(
+    p.join((await getApplicationSupportDirectory()).path, 'covers'),
+  );
+  static http.Client client = http.Client();
   static int _running = 0;
   static final _waiting = <Completer<void>>[];
   static const _maxAtOnce = 4;
 
   static Future<File?> get(String cover) =>
-      _pending[cover] ??= _fetch(cover).whenComplete(
-        () => _pending.remove(cover),
-      );
+      _pending[cover] ??= _fetch(cover).whenComplete(() {
+        // In a block on purpose: remove() gives back this very future, and
+        // whenComplete would wait for it, that is, for itself, for ever.
+        _pending.remove(cover);
+      });
 
   static Future<File?> _fetch(String cover) async {
-    final dir = Directory(
-      p.join((await getApplicationSupportDirectory()).path, 'covers'),
-    );
+    final dir = await dirProvider();
     final file = File(p.join(dir.path, p.basename(cover)));
     if (await file.exists()) return file;
     if (_running >= _maxAtOnce) {
@@ -35,7 +40,7 @@ class CoverCache {
     }
     _running++;
     try {
-      final r = await _client
+      final r = await client
           .get(CatalogStore.urlOf(cover))
           .timeout(const Duration(seconds: 30));
       if (r.statusCode != 200) return null;

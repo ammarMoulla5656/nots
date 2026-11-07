@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import 'image_items.dart';
 import 'ink_document.dart';
 import 'item_painter.dart';
 import 'note_items.dart';
@@ -116,6 +117,25 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
   int? _wordA;
   int? _wordB;
 
+  // Laser: the trail being drawn and the one fading away (not kept).
+  final _laser = <({Offset p, int t})>[];
+  bool _laserDown = false;
+  Timer? _laserTimer;
+  static const _laserLife = 900;
+
+  void _laserAdd(Offset p) {
+    _laser.add((p: p, t: DateTime.now().millisecondsSinceEpoch));
+    _laserTimer ??= Timer.periodic(const Duration(milliseconds: 16), (_) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      _laser.removeWhere((q) => now - q.t > _laserLife);
+      if (_laser.isEmpty && !_laserDown) {
+        _laserTimer?.cancel();
+        _laserTimer = null;
+      }
+      if (mounted) _live.value++;
+    });
+  }
+
   // Several fingers: the page is being moved or zoomed, nothing draws until
   // every finger is lifted.
   int _downCount = 0;
@@ -218,6 +238,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     widget.tools.removeListener(_onTools);
     _snapTimer?.cancel();
     _hoverTimer?.cancel();
+    _laserTimer?.cancel();
     _live.dispose();
     super.dispose();
   }
@@ -298,7 +319,8 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     return null;
   }
 
-  static bool _editable(NoteItem? it) => it != null && it.kind != ItemKind.tape;
+  static bool _editable(NoteItem? it) =>
+      it != null && it.kind != ItemKind.tape && it.kind != ItemKind.image;
   static bool _resizable(NoteItem? it) =>
       it == null || (it.kind != ItemKind.pin && it.kind != ItemKind.mark);
 
@@ -385,6 +407,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     _rulerRef = null;
     _rulerPtr = null;
     _textTap = null;
+    _laserDown = false;
   }
 
   void _cancelGesture() {
@@ -533,6 +556,9 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
             ],
           );
         }
+      case ToolMode.laser:
+        _laserDown = true;
+        _laserAdd(p);
       case ToolMode.hand:
         break;
     }
@@ -709,7 +735,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     if (item != null) {
       final a = _pinchAnchor;
       final r = itemHitRect(item);
-      _itemPreview = item.kind == ItemKind.tape
+      _itemPreview = item.kind == ItemKind.tape || item.kind == ItemKind.image
           ? item.copyWith(
               x: a.dx + (r.left - a.dx) * f,
               y: a.dy + (r.top - a.dy) * f,
@@ -795,6 +821,8 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
       _dragOffset = p - _dragFrom!;
     } else if (_lasso.isNotEmpty) {
       _lasso.add(p);
+    } else if (_laserDown) {
+      _laserAdd(p);
     } else if (_wordA != null) {
       final i = wordAt(_words!, p, tolerance: 3 * _unit);
       if (i != null) _wordB = i;
@@ -861,6 +889,15 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     if (base < 1e-6) return;
     final f = ((p - a).distance / base).clamp(0.1, 20.0);
     _resizeFactor = f;
+    if (item != null && item.kind == ItemKind.image) {
+      _itemPreview = item.copyWith(
+        x: a.dx + (_resizeRect0.left - a.dx) * f,
+        y: a.dy + (_resizeRect0.top - a.dy) * f,
+        w: item.w * f,
+        h: item.h * f,
+      );
+      return;
+    }
     if (item != null) {
       final w0 = item.w > 0 ? item.w : NoteItem.defaultTextWidth;
       _itemPreview = item.copyWith(
@@ -1007,6 +1044,8 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
 
     if (_consumed || _rulerPtr != null) {
       // Button already acted on touch-down, or the ruler was only moved.
+    } else if (_laserDown) {
+      // The trail fades by itself; nothing is kept.
     } else if (_resizeHandle != null) {
       final pv = _itemPreview;
       if (pv != null) {
@@ -1148,7 +1187,7 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
               items: () => widget.document.itemsOf(widget.pageNumber),
               preview: () => _itemPreview,
               scale: scale,
-              repaint: Listenable.merge([revision, _live]),
+              repaint: Listenable.merge([revision, _live, ImageItems.instance]),
             ),
           ),
         ),
@@ -1185,6 +1224,17 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
               },
               scale: scale,
               repaint: widget.tools.ruler,
+            ),
+          ),
+        ),
+        IgnorePointer(
+          child: CustomPaint(
+            painter: _LaserPainter(
+              trail: () => _laser,
+              color: () => Color(widget.tools.color),
+              scale: scale,
+              unit: () => _unit,
+              repaint: _live,
             ),
           ),
         ),
@@ -1284,6 +1334,65 @@ class _RectsPreviewPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_RectsPreviewPainter old) => old.scale != scale;
+}
+
+/// The laser: a glowing trail whose older part has faded.
+class _LaserPainter extends CustomPainter {
+  _LaserPainter({
+    required this.trail,
+    required this.color,
+    required this.scale,
+    required this.unit,
+    required Listenable repaint,
+  }) : super(repaint: repaint);
+
+  final List<({Offset p, int t})> Function() trail;
+  final Color Function() color;
+  final double scale;
+  final double Function() unit;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final pts = trail();
+    if (pts.isEmpty) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final c = color();
+    final w = 5 * scale * unit();
+    for (var i = 1; i < pts.length; i++) {
+      final a = (1 - (now - pts[i].t) / _PageInkOverlayState._laserLife)
+          .clamp(0.0, 1.0);
+      if (a <= 0) continue;
+      final from = pts[i - 1].p * scale, to = pts[i].p * scale;
+      canvas.drawLine(
+        from,
+        to,
+        Paint()
+          ..color = c.withValues(alpha: a * 0.5)
+          ..strokeWidth = w * 2.6
+          ..strokeCap = StrokeCap.round
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, w * 1.4),
+      );
+      canvas.drawLine(
+        from,
+        to,
+        Paint()
+          ..color = c.withValues(alpha: a)
+          ..strokeWidth = w
+          ..strokeCap = StrokeCap.round,
+      );
+    }
+    final head = pts.last;
+    final a = (1 - (now - head.t) / _PageInkOverlayState._laserLife)
+        .clamp(0.0, 1.0);
+    canvas.drawCircle(
+      head.p * scale,
+      w * 0.9,
+      Paint()..color = Colors.white.withValues(alpha: a),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_LaserPainter old) => true;
 }
 
 /// Ring where a hovering pen will touch, sized like the current tool.

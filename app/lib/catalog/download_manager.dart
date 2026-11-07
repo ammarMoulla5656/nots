@@ -65,7 +65,8 @@ class DownloadManager extends ChangeNotifier {
   void enqueue(CatalogBook book, CatalogPart part) {
     final key = DownloadManager.keyOf(book.id, part.number);
     final old = _tasks[key];
-    if (_library.byCatalog(book.id, part.number) != null) return;
+    final have = _library.byCatalog(book.id, part.number);
+    if (have != null && _library.isOnDevice(have)) return;
     if (old != null && old.state != DownloadState.failed) return;
     _tasks[key] = DownloadTask(book, part);
     notifyListeners();
@@ -85,6 +86,13 @@ class DownloadManager extends ChangeNotifier {
     t.client?.close();
     _tasks.remove(t.key);
     notifyListeners();
+  }
+
+  /// Stops everything: the library is about to be emptied.
+  void cancelAll() {
+    for (final t in _tasks.values.toList()) {
+      cancel(t);
+    }
   }
 
   Future<void> _pump() async {
@@ -126,8 +134,9 @@ class DownloadManager extends ChangeNotifier {
   }
 
   String _describe(Object e) => switch (e) {
-    SocketException() || http.ClientException() || TimeoutException() =>
-      'انقطع الاتصال. أعد المحاولة ليكمل من حيث توقف.',
+    SocketException() ||
+    http.ClientException() ||
+    TimeoutException() => 'انقطع الاتصال. أعد المحاولة ليكمل من حيث توقف.',
     _ => '$e',
   };
 

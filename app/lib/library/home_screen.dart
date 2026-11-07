@@ -4,38 +4,37 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-import '../book/book_text.dart';
 import '../catalog/catalog_screen.dart';
 import '../catalog/catalog_store.dart';
-import '../catalog/cover_image.dart';
 import '../catalog/download_manager.dart';
 import '../ink/ink_store.dart';
-import '../reader/reader_prefs.dart';
+import '../notes/note_pdf.dart';
+import '../notes/paper.dart';
 import '../reader/reader_screen.dart';
 import '../sync/drive_client.dart';
 import '../sync/google_account.dart';
 import '../sync/sync_engine.dart';
 import '../sync/sync_sheet.dart';
+import '../ui/app_settings.dart';
+import '../ui/brand_widgets.dart';
+import '../ui/theme.dart';
+import 'book_widgets.dart';
+import 'books_tab.dart';
+import 'home_bar.dart';
+import 'home_sheets.dart';
 import 'library_store.dart';
+import 'notes_tab.dart';
 import 'package_import.dart';
 
-enum _BookSort { recent, title, author, subject }
+/// How many books "the last books" lists.
+const historyCount = 10;
 
-const _sortNames = {
-  _BookSort.recent: 'آخر ما فُتح',
-  _BookSort.title: 'العنوان',
-  _BookSort.author: 'المؤلف',
-  _BookSort.subject: 'التصنيف',
-};
-
-/// How many books the "continue reading" row shows.
-const _recentCount = 8;
-
-/// The main screen, with two tabs: the books on this device, and the library
-/// on the server to download from.
+/// The main screen: three tabs (my books, the books to download, my notes),
+/// a floating bar to move between them and the star that starts a new paper.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -50,10 +49,8 @@ class _HomeScreenState extends State<HomeScreen> {
   late GoogleAccount _account;
   late SyncEngine _sync;
   late final AppLifecycleListener _lifecycle;
+  final _progress = ReadProgress();
   int _tab = 0;
-  String _filter = '';
-  String _subject = '';
-  _BookSort _sort = _BookSort.recent;
   bool _busy = false;
 
   @override
@@ -63,6 +60,10 @@ class _HomeScreenState extends State<HomeScreen> {
       onHide: () {
         if (_library != null) _sync.requestSoon();
       },
+      // What another device did since shows up when coming back.
+      onResume: () {
+        if (_library != null) _sync.requestSoon();
+      },
     );
     _init();
   }
@@ -70,10 +71,12 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _lifecycle.dispose();
+    _progress.dispose();
     super.dispose();
   }
 
   Future<void> _init() async {
+    unawaited(AppSettings.instance.load());
     final lib = await LibraryStore.open();
     await _migrateRecentList(lib);
     final catalog = CatalogStore(lib.root);
@@ -87,13 +90,19 @@ class _HomeScreenState extends State<HomeScreen> {
     final sync = SyncEngine(
       lib,
       isLinked: () => account.linked,
+      accountEmail: () => account.email,
+      deviceName: deviceNameOfThis,
       drive: () =>
           DriveClient(({renew = false}) => account.accessToken(renew: renew)),
     );
+    await sync.finishWipe();
+    // Stopped while being asked about another account's data: ask again.
+    if (await sync.otherAccountsData()) await account.unlink();
     _catalog = catalog;
     _account = account;
     _sync = sync;
     _downloads = DownloadManager(lib, lib.root, afterImport: sync.afterImport);
+    sync.fetchCatalogBook = _fetchFromLibrary;
     if (!mounted) return;
     setState(() => _library = lib);
     unawaited(catalog.refresh());
@@ -122,8 +131,37 @@ class _HomeScreenState extends State<HomeScreen> {
     await f.rename('${f.path}.migrated');
   }
 
+  /// A book of the account from the server's library: its file comes from
+  /// there, like any download.
+  void _fetchFromLibrary(BookEntry b) {
+    final id = b.catalogId;
+    final book = id == null ? null : _catalog.byId(id);
+    final part = book?.partNumbered(b.part ?? 1);
+    if (book != null && part != null) _downloads.enqueue(book, part);
+  }
+
+  Future<void> _bring(BookEntry b) async {
+    setState(() => _busy = true);
+    try {
+      await _sync.bring(b);
+      if (b.catalogId != null) _say('جارٍ تنزيل الكتاب…');
+    } catch (e) {
+      _say(
+        b.catalogId == null
+            ? 'تعذّر التنزيل: $e'
+            : 'لم يعد هذا الكتاب متوفراً في المكتبة، وكتابتك عليه محفوظة.',
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _open(BookEntry b) async {
     final lib = _library!;
+    if (!lib.isOnDevice(b)) {
+      if (!_busy) await _bring(b);
+      if (!lib.isOnDevice(b)) return;
+    }
     await lib.touch(b);
     if (!mounted) return;
     _sync.openBook = b.id;
@@ -134,6 +172,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     _sync.openBook = null;
     _sync.requestSoon();
+    unawaited(_progress.load([b.id]));
     if (mounted) setState(() {});
   }
 
@@ -142,62 +181,56 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
-  /// Brings back a book listed in Drive: from the library when it is there,
-  /// else from the copy of its PDF in Drive. The saved work comes with it.
-  Future<void> _restore(RemoteBook r) async {
-    final id = r.catalogId;
-    final book = id == null ? null : _catalog.byId(id);
-    final part = book?.partNumbered(r.part ?? 1);
-    if (book != null && part != null) {
-      _downloads.enqueue(book, part);
-      return;
+  void _showAccount() => showNotsSheet<void>(
+    context,
+    builder: (_) => SyncSheet(
+      account: _account,
+      sync: _sync,
+      beforeWipe: _downloads.cancelAll,
+    ),
+  );
+
+  Future<void> _showHistory() async {
+    final lib = _library!;
+    final books = [
+      for (final b in lib.books)
+        if (!b.isNote) b,
+    ].take(historyCount).toList();
+    unawaited(_progress.load(books.map((b) => b.id)));
+    final picked = await showNotsSheet<BookEntry>(
+      context,
+      builder: (_) => HistorySheet(books: books, progress: _progress),
+    );
+    if (picked != null) await _open(picked);
+  }
+
+  Future<void> _showNew() async {
+    if (_library == null || _busy) return;
+    final r = await showNotsSheet<Object>(
+      context,
+      builder: (_) => const NewPaperSheet(),
+    );
+    if (r is PaperStyle) {
+      await _makeNote(r);
+    } else if (r == NewPaperSheet.addBook) {
+      await _add();
     }
+  }
+
+  Future<void> _makeNote(PaperStyle style) async {
     setState(() => _busy = true);
     try {
-      await _sync.restoreFromDrive(r);
+      final entry = await createNote(_library!, style);
+      await _sync.afterImport(entry);
+      if (!mounted) return;
+      setState(() => _tab = 2);
+      await _open(entry);
     } catch (e) {
-      _say(
-        r.pdfFile == null
-            ? 'لم يعد هذا الكتاب متوفراً في المكتبة، وكتابتك عليه محفوظة في درايف.'
-            : 'تعذّر التحميل: $e',
-      );
+      _say('تعذّر إنشاء الورقة: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
-
-  Future<void> _forgetRemote(RemoteBook r) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('حذف «${r.title}» من درايف؟'),
-        content: const Text('تُحذف كتابتك وعلاماتك على هذا الكتاب نهائياً.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('تراجع'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('حذف'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    try {
-      await _sync.forget(r.id);
-    } on Exception catch (e) {
-      _say('تعذّر الحذف: $e');
-    }
-  }
-
-  void _showSync() => showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    builder: (_) => SyncSheet(account: _account, sync: _sync),
-  );
 
   Future<void> _add() async {
     // Any file: Android does not know the .nots extension, so a filter on it
@@ -210,9 +243,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (path == null || !mounted) return;
     final ext = p.extension(files.first.name).toLowerCase();
     if (ext != '.pdf' && ext != '.nots') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('اختر ملف PDF أو ملف نوتس (.nots).')),
-      );
+      _say('اختر ملف PDF أو ملف نوتس (.nots).');
       return;
     }
     setState(() => _busy = true);
@@ -233,10 +264,7 @@ class _HomeScreenState extends State<HomeScreen> {
       await _sync.afterImport(entry);
       if (mounted) await _open(entry);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('تعذّر إضافة الملف: $e')));
-      }
+      _say('تعذّر إضافة الملف: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -265,45 +293,179 @@ class _HomeScreenState extends State<HomeScreen> {
     return ok ?? false;
   }
 
+  // ---- a book's own actions ----
+
+  Future<void> _showActions(BookEntry b) async {
+    final r = await showNotsSheet<String>(
+      context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SheetHeader(b.title),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+              child: ActionRows(
+                rows: [
+                  ActionRow(
+                    Icons.edit_outlined,
+                    'إعادة التسمية',
+                    () => Navigator.pop(context, 'rename'),
+                  ),
+                  ActionRow(
+                    Icons.delete_outline,
+                    b.isNote ? 'حذف الملاحظة' : 'إزالة من المكتبة',
+                    () => Navigator.pop(context, 'remove'),
+                    danger: true,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (r == 'rename') await _rename(b);
+    if (r == 'remove') await _remove(b);
+  }
+
   Future<void> _rename(BookEntry b) async {
     final c = TextEditingController(text: b.title);
-    final t = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('اسم الكتاب'),
-        content: TextField(controller: c, autofocus: true),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('إلغاء'),
+    final t = await showNotsSheet<String>(
+      context,
+      builder: (context) => Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SheetHeader('اسم الكتاب'),
+                TextField(
+                  controller: c,
+                  autofocus: true,
+                  onSubmitted: (v) => Navigator.pop(context, v.trim()),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.tonal(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('إلغاء'),
+                      ),
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () => Navigator.pop(context, c.text.trim()),
+                        child: const Text('حفظ'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, c.text.trim()),
-            child: const Text('حفظ'),
-          ),
-        ],
+        ),
       ),
     );
     c.dispose();
     if (t != null && t.isNotEmpty) await _library!.rename(b, t);
   }
 
-  Future<void> _remove(BookEntry b) async {
-    var deleteWriting = false;
+  Future<void> _remove(BookEntry b) =>
+      _account.linked ? _removeFromAccount(b) : _removeHere(b);
+
+  /// With an account: the file can leave this device alone, or the book can
+  /// leave the account, and with it every device.
+  Future<void> _removeFromAccount(BookEntry b) async {
+    final lib = _library!;
+    final here = lib.isOnDevice(b) && !b.isNote;
+    final choice = await showNotsSheet<String>(
+      context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SheetHeader('إزالة «${b.title}»'),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: Text(
+                here
+                    ? 'يمكن إزالة الملف من هذا الجهاز فقط، ويبقى الكتاب وكتابتك في حسابك. أو حذفه من حسابك ومن كل أجهزتك نهائياً.'
+                    : 'حذف هذا ${b.isNote ? 'الملف' : 'الكتاب'} وكتابتك عليه من حسابك ومن كل أجهزتك نهائياً؟',
+                style: TextStyle(color: Brand.muted, height: 1.7),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+              child: ActionRows(
+                rows: [
+                  if (here)
+                    ActionRow(
+                      Icons.cloud_outlined,
+                      'من هذا الجهاز',
+                      () => Navigator.pop(context, 'here'),
+                    ),
+                  ActionRow(
+                    Icons.delete_outline,
+                    'حذف من كل مكان',
+                    () => Navigator.pop(context, 'everywhere'),
+                    danger: true,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (choice == 'here') {
+      final saved = !(await _sync.unsaved()).any((e) => e.id == b.id);
+      if (!saved) {
+        _say('لم يُرفع هذا الكتاب إلى درايف بعد، فلم يُحذف من جهازك.');
+        return;
+      }
+      await lib.offload(b);
+    } else if (choice == 'everywhere') {
+      await lib.remove(b, deleteWriting: true);
+      try {
+        await _sync.forget(b.id);
+      } on Exception {
+        _say('حُذف من هذا الجهاز، ويُحذف من درايف عند عودة الاتصال.');
+      }
+    }
+  }
+
+  Future<void> _removeHere(BookEntry b) async {
+    var deleteWriting = b.isNote;
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: Text('إزالة «${b.title}» من المكتبة؟'),
-          content: CheckboxListTile(
-            contentPadding: EdgeInsets.zero,
-            value: deleteWriting,
-            onChanged: (v) => setState(() => deleteWriting = v ?? false),
-            title: const Text('احذف كتابتي عليه أيضاً'),
-            subtitle: const Text(
-              'إن لم تحذفها تعود الكتابة تلقائياً متى أضفت الملف نفسه مرة أخرى.',
-            ),
+          title: Text(
+            b.isNote
+                ? 'حذف «${b.title}»؟'
+                : 'إزالة «${b.title}» من المكتبة؟',
           ),
+          content: b.isNote
+              ? const Text('تُحذف الورقة وكل ما كتبته عليها.')
+              : CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: deleteWriting,
+                  onChanged: (v) => setState(() => deleteWriting = v ?? false),
+                  title: const Text('احذف كتابتي عليه أيضاً'),
+                  subtitle: const Text(
+                    'إن لم تحذفها تعود الكتابة تلقائياً متى أضفت الملف نفسه مرة أخرى.',
+                  ),
+                ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -311,7 +473,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('إزالة'),
+              child: Text(b.isNote ? 'حذف' : 'إزالة'),
             ),
           ],
         ),
@@ -319,351 +481,100 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (ok != true) return;
     await _library!.remove(b, deleteWriting: deleteWriting);
-    if (!deleteWriting) return;
-    try {
-      await _sync.forget(b.id);
-    } on Exception {
-      _say('حُذف من هذا الجهاز، وتعذّر حذفه من درايف الآن.');
+  }
+
+  // ---- the category buttons ----
+
+  /// The same buttons in "my books" and in the catalogue: "all", then the
+  /// categories of the catalogue (the most used first) and of the books the
+  /// user added from files.
+  List<String> _categories() {
+    final counts = <String, int>{};
+    for (final b in _catalog.books) {
+      if (b.subject.isNotEmpty) counts[b.subject] = (counts[b.subject] ?? 0) + 1;
     }
-  }
-
-  String _ago(DateTime t) {
-    final d = DateTime.now().difference(t);
-    if (d.inMinutes < 1) return 'الآن';
-    if (d.inHours < 1) return 'قبل ${d.inMinutes} دقيقة';
-    if (d.inDays < 1) return 'قبل ${d.inHours} ساعة';
-    if (d.inDays < 30) return 'قبل ${d.inDays} يوم';
-    return t.toLocal().toString().substring(0, 10);
-  }
-
-  List<BookEntry> _sorted(List<BookEntry> all) {
-    final q = normalizeForSearch(_filter).text.trim();
-    final out = [
-      for (final b in all)
-        if ((_subject.isEmpty || b.subject == _subject) &&
-            (q.isEmpty ||
-                normalizeForSearch('${b.title} ${b.author}').text.contains(q)))
-          b,
-    ];
-    int byTitle(BookEntry a, BookEntry b) => a.title.compareTo(b.title);
-    switch (_sort) {
-      case _BookSort.recent:
-        break; // the library's own order
-      case _BookSort.title:
-        out.sort(byTitle);
-      case _BookSort.author:
-        out.sort((a, b) {
-          final c = a.author.compareTo(b.author);
-          return c != 0 ? c : byTitle(a, b);
-        });
-      case _BookSort.subject:
-        out.sort((a, b) {
-          final c = a.subject.compareTo(b.subject);
-          return c != 0 ? c : byTitle(a, b);
-        });
+    final top = counts.keys.toList()
+      ..sort((a, b) {
+        final c = masdarRank(a).compareTo(masdarRank(b));
+        return c != 0 ? c : counts[b]!.compareTo(counts[a]!);
+      });
+    // All of them: the ones of the Masdar app in its order, then any the
+    // library adds on the server.
+    final out = top.toList();
+    for (final b in _library!.books) {
+      if (!b.isNote && b.subject.isNotEmpty && !out.contains(b.subject)) {
+        out.add(b.subject);
+      }
     }
-    return out;
+    return ['الكل', ...out];
   }
-
-  Widget _heading(String text) => Padding(
-    padding: const EdgeInsets.fromLTRB(4, 12, 4, 6),
-    child: Text(text, style: Theme.of(context).textTheme.titleSmall),
-  );
-
-  Widget _recents(List<BookEntry> all) => SizedBox(
-    height: 190,
-    child: ListView(
-      scrollDirection: Axis.horizontal,
-      children: [
-        for (final b in all.take(_recentCount))
-          _RecentCard(book: b, onTap: () => _open(b)),
-      ],
-    ),
-  );
-
-  Widget _remoteTile(RemoteBook r) {
-    final id = r.catalogId;
-    final loading = id != null && _downloads.taskOf(id, r.part ?? 1) != null;
-    return Card(
-      child: ListTile(
-        leading: CoverImage(r.cover, width: 40, height: 56),
-        title: Text(r.title, maxLines: 2, overflow: TextOverflow.ellipsis),
-        subtitle: const Text('كتابتك عليه محفوظة في درايف'),
-        trailing: loading
-            ? const SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : IconButton(
-                tooltip: 'تنزيل',
-                icon: const Icon(Icons.download),
-                onPressed: _busy ? null : () => _restore(r),
-              ),
-        onLongPress: () => _forgetRemote(r),
-      ),
-    );
-  }
-
-  Widget _bookTile(BookEntry b) => Card(
-    child: ListTile(
-      leading: CoverImage(b.cover, width: 40, height: 56),
-      title: Text(b.title, maxLines: 2, overflow: TextOverflow.ellipsis),
-      subtitle: Text(
-        joinFacts([b.author, formatSize(b.size), _ago(b.lastOpened)]),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      onTap: () => _open(b),
-      trailing: PopupMenuButton<String>(
-        onSelected: (v) => v == 'rename' ? _rename(b) : _remove(b),
-        itemBuilder: (context) => const [
-          PopupMenuItem(value: 'rename', child: Text('إعادة التسمية')),
-          PopupMenuItem(value: 'remove', child: Text('إزالة من المكتبة')),
-        ],
-      ),
-    ),
-  );
-
-  Widget _listTools(List<BookEntry> all) {
-    final subjects = ({for (final b in all) b.subject}..remove('')).toList()
-      ..sort();
-    return Row(
-      children: [
-        Expanded(child: _heading('كل الكتب (${all.length})')),
-        if (subjects.isNotEmpty)
-          PopupMenuButton<String>(
-            tooltip: 'التصنيف',
-            icon: Icon(
-              Icons.filter_list,
-              color: _subject.isEmpty
-                  ? null
-                  : Theme.of(context).colorScheme.primary,
-            ),
-            onSelected: (v) => setState(() => _subject = v),
-            itemBuilder: (_) => [
-              CheckedPopupMenuItem(
-                value: '',
-                checked: _subject.isEmpty,
-                child: const Text('كل التصنيفات'),
-              ),
-              for (final s in subjects)
-                CheckedPopupMenuItem(
-                  value: s,
-                  checked: s == _subject,
-                  child: Text(s),
-                ),
-            ],
-          ),
-        PopupMenuButton<_BookSort>(
-          tooltip: 'الترتيب',
-          icon: const Icon(Icons.sort),
-          onSelected: (v) => setState(() => _sort = v),
-          itemBuilder: (_) => [
-            for (final e in _sortNames.entries)
-              CheckedPopupMenuItem(
-                value: e.key,
-                checked: e.key == _sort,
-                child: Text(e.value),
-              ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _emptyLibrary() => Center(
-    child: Padding(
-      padding: const EdgeInsets.all(32),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text(
-            'مكتبتك فارغة.\n\nنزّل كتاباً من خانة «تحميل»، أو أضف ملفاً من جهازك. تبقى كتابتك في ملف منفصل ولا يتغيّر الكتاب الأصلي.',
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 16),
-          FilledButton.tonalIcon(
-            onPressed: () => setState(() => _tab = 1),
-            icon: const Icon(Icons.cloud_download_outlined),
-            label: const Text('تصفّح المكتبة'),
-          ),
-          if (!_account.linked) ...[
-            const SizedBox(height: 8),
-            TextButton.icon(
-              onPressed: _showSync,
-              icon: const Icon(Icons.login),
-              label: const Text('استعادة كتابتي من درايف'),
-            ),
-          ],
-        ],
-      ),
-    ),
-  );
-
-  Widget _booksTab(LibraryStore lib) => ListenableBuilder(
-    listenable: Listenable.merge([lib, _sync, _downloads, _account]),
-    builder: (context, _) {
-      final all = lib.books;
-      final remote = _sync.remoteOnly;
-      if (all.isEmpty && remote.isEmpty) return _emptyLibrary();
-      final searching = _filter.trim().isNotEmpty;
-      return ListView(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 96),
-        children: [
-          if (all.length > 5)
-            TextField(
-              decoration: const InputDecoration(
-                hintText: 'ابحث في كتبك',
-                prefixIcon: Icon(Icons.search),
-                isDense: true,
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (v) => setState(() => _filter = v),
-            ),
-          if (all.isNotEmpty && !searching) ...[
-            _heading('تابع القراءة'),
-            _recents(all),
-          ],
-          if (remote.isNotEmpty && !searching) ...[
-            _heading('في درايف'),
-            for (final r in remote) _remoteTile(r),
-          ],
-          if (all.isNotEmpty) ...[
-            _listTools(all),
-            for (final b in _sorted(all)) _bookTile(b),
-          ],
-        ],
-      );
-    },
-  );
 
   @override
   Widget build(BuildContext context) {
     final lib = _library;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('نوتس'),
-        actions: [
-          if (lib != null)
-            ListenableBuilder(
-              listenable: _account,
-              builder: (context, _) => IconButton(
-                tooltip: 'Google Drive',
-                onPressed: _showSync,
-                icon: Icon(
-                  _account.linked
-                      ? Icons.cloud_done_outlined
-                      : Icons.cloud_off_outlined,
-                ),
-              ),
-            ),
-        ],
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _tab,
-        onDestinationSelected: (i) => setState(() => _tab = i),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.menu_book_outlined),
-            selectedIcon: Icon(Icons.menu_book),
-            label: 'الكتب',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.cloud_download_outlined),
-            selectedIcon: Icon(Icons.cloud_download),
-            label: 'تحميل',
-          ),
-        ],
-      ),
-      floatingActionButton: _tab != 0
-          ? null
-          : FloatingActionButton.extended(
-              onPressed: lib == null || _busy ? null : _add,
-              icon: _busy
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.add),
-              label: const Text('إضافة كتاب'),
-            ),
-      body: lib == null
-          ? const Center(child: CircularProgressIndicator())
-          : IndexedStack(
-              index: _tab,
-              children: [
-                _booksTab(lib),
-                CatalogScreen(
-                  store: _catalog,
-                  downloads: _downloads,
-                  library: lib,
-                  onOpen: _open,
-                ),
-              ],
-            ),
-    );
-  }
-}
-
-/// A book in the "continue reading" row. Opening it goes to the exact place
-/// and zoom it was left at; the page shown here is only a reminder.
-class _RecentCard extends StatefulWidget {
-  const _RecentCard({required this.book, required this.onTap});
-
-  final BookEntry book;
-  final VoidCallback onTap;
-
-  @override
-  State<_RecentCard> createState() => _RecentCardState();
-}
-
-class _RecentCardState extends State<_RecentCard> {
-  int? _page;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  @override
-  void didUpdateWidget(_RecentCard old) {
-    super.didUpdateWidget(old);
-    _load();
-  }
-
-  Future<void> _load() async {
-    final n = await ReaderPrefs.peekPage(widget.book.id);
-    if (mounted && n != _page) setState(() => _page = n);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    return SizedBox(
-      width: 104,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: widget.onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(4),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              CoverImage(widget.book.cover, width: 96, height: 124),
-              const SizedBox(height: 4),
-              Text(
-                widget.book.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: text.labelMedium,
+      child: Scaffold(
+        backgroundColor: Brand.paper,
+        body: lib == null
+            ? const Center(child: CircularProgressIndicator())
+            : Stack(
+                children: [
+                  Positioned.fill(
+                    child: IndexedStack(
+                      index: _tab,
+                      children: [
+                        BooksTab(
+                          library: lib,
+                          sync: _sync,
+                          downloads: _downloads,
+                          account: _account,
+                          progress: _progress,
+                          categories: _categories(),
+                          onOpen: _open,
+                          onMore: _showActions,
+                          onAccount: _showAccount,
+                          onHistory: _showHistory,
+                          onBrowse: () => setState(() => _tab = 1),
+                          onDriveWarning: _showAccount,
+                        ),
+                        ListenableBuilder(
+                          listenable: _catalog,
+                          builder: (context, _) => CatalogScreen(
+                            store: _catalog,
+                            downloads: _downloads,
+                            library: lib,
+                            account: _account,
+                            categories: _categories(),
+                            onOpen: _open,
+                            onAccount: _showAccount,
+                            onHistory: _showHistory,
+                          ),
+                        ),
+                        NotesTab(
+                          library: lib,
+                          account: _account,
+                          onOpen: _open,
+                          onMore: _showActions,
+                          onAccount: _showAccount,
+                          onHistory: _showHistory,
+                          onNew: _showNew,
+                        ),
+                      ],
+                    ),
+                  ),
+                  HomeBar(
+                    tab: _tab,
+                    busy: _busy,
+                    onTab: (i) => setState(() => _tab = i),
+                    onNew: _showNew,
+                  ),
+                ],
               ),
-              if (_page != null) Text('صفحة $_page', style: text.labelSmall),
-            ],
-          ),
-        ),
       ),
     );
   }

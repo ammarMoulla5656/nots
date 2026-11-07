@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
 
+import '../library/book_widgets.dart';
+import '../library/books_tab.dart' show ChoiceSheet;
 import '../library/library_store.dart';
+import '../sync/google_account.dart';
+import '../ui/brand_widgets.dart';
+import '../ui/theme.dart';
+import 'book_cover.dart';
 import 'book_detail_screen.dart';
 import 'catalog_models.dart';
 import 'catalog_store.dart';
-import 'cover_image.dart';
 import 'download_manager.dart';
 
 const _sortNames = {
@@ -36,22 +41,35 @@ String formatSize(int bytes) {
   );
 }
 
-/// The "download" tab: every book of the library on the server. Browsing and
-/// searching run on the catalogue kept on the device, so both are instant
-/// and work without a connection.
+/// The "books" tab: every book of the library on the server, ready to
+/// download. Browsing and searching run on the catalogue kept on the device,
+/// so both are instant and work without a connection.
+///
+/// With no category, search or special order the books stand on shelves, one
+/// per author; otherwise they are a plain grid.
 class CatalogScreen extends StatefulWidget {
   const CatalogScreen({
     super.key,
     required this.store,
     required this.downloads,
     required this.library,
+    required this.account,
+    required this.categories,
     required this.onOpen,
+    required this.onAccount,
+    required this.onHistory,
   });
 
   final CatalogStore store;
   final DownloadManager downloads;
   final LibraryStore library;
+  final GoogleAccount account;
+
+  /// The category buttons, "all" first.
+  final List<String> categories;
   final void Function(BookEntry) onOpen;
+  final VoidCallback onAccount;
+  final VoidCallback onHistory;
 
   @override
   State<CatalogScreen> createState() => _CatalogScreenState();
@@ -76,23 +94,16 @@ class _CatalogScreenState extends State<CatalogScreen> {
     _results = null;
   });
 
-  Future<void> _pick(
-    String title,
-    String current,
-    String Function(CatalogBook) field,
-    CatalogQuery Function(String value) apply,
-  ) async {
-    final values = valuesOf(widget.store.books, field);
-    final picked = await showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (_) => FractionallySizedBox(
-        heightFactor: 0.7,
-        child: _ValuePicker(title: title, values: values, current: current),
+  Future<void> _pickSort() async {
+    final picked = await showNotsSheet<CatalogSort>(
+      context,
+      builder: (_) => ChoiceSheet<CatalogSort>(
+        title: 'الترتيب',
+        current: _query.sort,
+        choices: [for (final e in _sortNames.entries) (e.key, e.value)],
       ),
     );
-    if (picked != null) _ask(apply(picked));
+    if (picked != null) _ask(_query.copyWith(sort: picked));
   }
 
   Future<void> _details(CatalogBook b) => Navigator.of(context).push(
@@ -106,68 +117,84 @@ class _CatalogScreenState extends State<CatalogScreen> {
     ),
   );
 
-  Widget _filter(
-    String name,
-    String value,
-    String Function(CatalogBook) field,
-    CatalogQuery Function(String) apply,
-  ) => Padding(
-    padding: const EdgeInsetsDirectional.only(end: 6),
-    child: FilterChip(
-      label: Text(value.isEmpty ? name : value),
-      selected: value.isNotEmpty,
-      onSelected: (_) => _pick(name, value, field, apply),
-    ),
+  bool _owned(CatalogBook b) => b.parts.any(
+    (p) => widget.library.installedCatalog(b.id, p.number) != null,
   );
 
-  Widget _filters() => SizedBox(
-    height: 48,
-    child: ListView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+  bool _loading(CatalogBook b) =>
+      b.parts.any((p) => widget.downloads.taskOf(b.id, p.number) != null);
+
+  Widget _hero() => HeroHeader(
+    bottom: 4,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsetsDirectional.only(end: 6),
-          child: PopupMenuButton<CatalogSort>(
-            tooltip: 'الترتيب',
-            onSelected: (s) => _ask(_query.copyWith(sort: s)),
-            itemBuilder: (_) => [
-              for (final e in _sortNames.entries)
-                CheckedPopupMenuItem(
-                  value: e.key,
-                  checked: e.key == _query.sort,
-                  child: Text(e.value),
-                ),
-            ],
-            child: Chip(
-              avatar: const Icon(Icons.sort, size: 18),
-              label: Text(_sortNames[_query.sort]!),
+        Row(
+          children: [
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'الكتب',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 25,
+                      fontWeight: FontWeight.w900,
+                      height: 1.2,
+                    ),
+                  ),
+                  Text(
+                    'تصفّح وحمّل ما تريد',
+                    style: TextStyle(color: Color(0xFFCFDDF0), fontSize: 12.5),
+                  ),
+                ],
+              ),
+            ),
+            HeroButton(
+              icon: Icons.schedule,
+              tooltip: 'آخر ١٠ كتب',
+              onPressed: widget.onHistory,
+            ),
+            const SizedBox(width: 8),
+            ListenableBuilder(
+              listenable: widget.account,
+              builder: (_, _) => HeroButton(
+                icon: Icons.person_outline,
+                tooltip: 'الحساب',
+                dot: widget.account.linked,
+                onPressed: widget.onAccount,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Container(
+          height: 48,
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: TextField(
+            onChanged: (v) => _ask(_query.copyWith(text: v)),
+            style: const TextStyle(color: Colors.white, fontSize: 15),
+            cursorColor: Colors.white,
+            decoration: InputDecoration(
+              filled: false,
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              hintText: 'ابحث بالعنوان أو المؤلف أو المحقق',
+              hintStyle: const TextStyle(color: Color(0xFFCFDDF0), fontSize: 14.5),
+              prefixIcon: Icon(
+                Icons.search,
+                size: 20,
+                color: Colors.white.withValues(alpha: 0.85),
+              ),
+              contentPadding: const EdgeInsets.symmetric(vertical: 14),
             ),
           ),
-        ),
-        _filter(
-          'التصنيف',
-          _query.subject,
-          (b) => b.subject,
-          (v) => _query.copyWith(subject: v),
-        ),
-        _filter(
-          'المؤلف',
-          _query.author,
-          (b) => b.author,
-          (v) => _query.copyWith(author: v),
-        ),
-        _filter(
-          'اللغة',
-          _query.language,
-          (b) => b.language,
-          (v) => _query.copyWith(language: v),
-        ),
-        _filter(
-          'الناشر',
-          _query.publisher,
-          (b) => b.publisher,
-          (v) => _query.copyWith(publisher: v),
         ),
       ],
     ),
@@ -182,14 +209,66 @@ class _CatalogScreenState extends State<CatalogScreen> {
     } else {
       text = 'لا يوجد كتاب بهذا البحث.';
     }
-    return ListView(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(32, 96, 32, 32),
-          child: Text(text, textAlign: TextAlign.center),
-        ),
-      ],
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(32, 40, 32, 130),
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: TextStyle(color: Brand.muted, height: 1.7),
+      ),
     );
+  }
+
+  Widget _shelfBook(CatalogBook b, double width) => SizedBox(
+    width: width,
+    child: InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: () => _details(b),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          BookCover(
+            b.cover,
+            width: width,
+            badge: _loading(b)
+                ? Icons.downloading
+                : _owned(b)
+                ? Icons.check
+                : null,
+          ),
+          const SizedBox(height: 9),
+          Text(
+            b.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w700,
+              height: 1.45,
+            ),
+          ),
+          Text(
+            b.author,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 12, color: Brand.muted),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  /// One shelf per category, in the order the Masdar app lists them.
+  List<MapEntry<String, List<CatalogBook>>> _shelves(List<CatalogBook> books) {
+    final by = <String, List<CatalogBook>>{};
+    for (final b in books) {
+      by.putIfAbsent(b.subject.isEmpty ? 'كتب أخرى' : b.subject, () => []).add(b);
+    }
+    return by.entries.toList()
+      ..sort((a, b) {
+        final c = masdarRank(a.key).compareTo(masdarRank(b.key));
+        return c != 0 ? c : a.key.compareTo(b.key);
+      });
   }
 
   @override
@@ -203,191 +282,159 @@ class _CatalogScreenState extends State<CatalogScreen> {
       builder: (context, _) {
         final s = widget.store;
         final books = _shown;
-        return Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-              child: TextField(
-                decoration: const InputDecoration(
-                  hintText: 'ابحث بالعنوان أو المؤلف أو المحقق',
-                  prefixIcon: Icon(Icons.search),
-                  isDense: true,
-                  border: OutlineInputBorder(),
+        final shelfMode =
+            _query.text.trim().isEmpty &&
+            _query.subject.isEmpty &&
+            _query.sort == CatalogSort.newest;
+        final wide = MediaQuery.sizeOf(context).width >= 700;
+        final shelfWidth = wide ? 130.0 : 112.0;
+        final shelves = shelfMode ? _shelves(books) : const [];
+        return RefreshIndicator(
+          edgeOffset: 120,
+          onRefresh: s.refresh,
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              SliverToBoxAdapter(child: _hero()),
+              if (s.refreshing)
+                const SliverToBoxAdapter(
+                  child: LinearProgressIndicator(minHeight: 2),
                 ),
-                onChanged: (v) => _ask(_query.copyWith(text: v)),
-              ),
-            ),
-            _filters(),
-            if (s.refreshing) const LinearProgressIndicator(minHeight: 2),
-            Expanded(
-              child: RefreshIndicator(
-                onRefresh: s.refresh,
-                child: books.isEmpty
-                    ? _empty(s)
-                    : ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
-                        itemCount: books.length,
-                        itemExtent: 104,
-                        itemBuilder: (_, i) => _BookTile(
-                          book: books[i],
-                          library: widget.library,
-                          downloads: widget.downloads,
-                          onTap: () => _details(books[i]),
+              SliverPadding(
+                padding: EdgeInsets.symmetric(horizontal: sidePadding(context)),
+                sliver: SliverToBoxAdapter(
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Pills(
+                          labels: widget.categories,
+                          selected: _query.subject.isEmpty
+                              ? 'الكل'
+                              : _query.subject,
+                          onSelected: (c) => _ask(
+                            _query.copyWith(subject: c == 'الكل' ? '' : c),
+                          ),
                         ),
                       ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _BookTile extends StatelessWidget {
-  const _BookTile({
-    required this.book,
-    required this.library,
-    required this.downloads,
-    required this.onTap,
-  });
-
-  final CatalogBook book;
-  final LibraryStore library;
-  final DownloadManager downloads;
-  final VoidCallback onTap;
-
-  String get _facts {
-    final formats = {for (final p in book.parts) p.formatName}.join(' / ');
-    return joinFacts([
-      formats,
-      if (book.multiPart) '${book.partsCount} أجزاء',
-      formatSize(book.totalSize),
-    ]);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final have = book.parts
-        .where((p) => library.byCatalog(book.id, p.number) != null)
-        .length;
-    final loading = book.parts.any(
-      (p) => downloads.taskOf(book.id, p.number) != null,
-    );
-    final text = Theme.of(context).textTheme;
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Row(
-            children: [
-              CoverImage(book.cover, width: 58, height: 80),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      book.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: text.titleSmall,
-                    ),
-                    if (book.author.isNotEmpty)
-                      Text(
-                        book.author,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: text.bodySmall,
+                      const SizedBox(width: 8),
+                      SquareButton(
+                        icon: Icons.sort,
+                        tooltip: 'الترتيب',
+                        on: _query.sort != CatalogSort.newest,
+                        onPressed: _pickSort,
                       ),
-                    const SizedBox(height: 2),
-                    Text(
-                      _facts,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: text.labelSmall,
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-              if (loading)
-                const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+              if (books.isEmpty)
+                SliverToBoxAdapter(child: _empty(s))
+              else if (shelfMode)
+                SliverPadding(
+                  padding: const EdgeInsets.only(bottom: 130),
+                  sliver: SliverList.builder(
+                    itemCount: shelves.length,
+                    itemBuilder: (context, i) {
+                      final shelf = shelves[i];
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: EdgeInsets.fromLTRB(sidePadding(context), 22, sidePadding(context), 12),
+                            child: Row(
+                              children: [
+                                Transform.rotate(
+                                  angle: 0.785398,
+                                  child: Container(
+                                    width: 9,
+                                    height: 9,
+                                    color: Brand.gold,
+                                  ),
+                                ),
+                                const SizedBox(width: 9),
+                                Expanded(
+                                  child: Text(
+                                    shelf.key,
+                                    style: const TextStyle(
+                                      fontSize: 15.5,
+                                      fontWeight: FontWeight.w900,
+                                      height: 1.45,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          SizedBox(
+                            height: shelfWidth / BookCover.ratio + 58,
+                            child: ListView.separated(
+                              scrollDirection: Axis.horizontal,
+                              padding: EdgeInsets.symmetric(horizontal: sidePadding(context)),
+                              itemCount: shelf.value.length,
+                              separatorBuilder: (_, _) => const SizedBox(width: 13),
+                              itemBuilder: (_, k) =>
+                                  _shelfBook(shelf.value[k], shelfWidth),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
                 )
-              else if (have > 0)
-                Icon(
-                  have == book.parts.length
-                      ? Icons.check_circle
-                      : Icons.check_circle_outline,
-                  color: Theme.of(context).colorScheme.primary,
+              else
+                SliverPadding(
+                  padding: EdgeInsets.fromLTRB(sidePadding(context), 16, sidePadding(context), 130),
+                  sliver: CoverGridSliver(
+                    count: books.length,
+                    itemBuilder: (context, i) {
+                      final b = books[i];
+                      return LayoutBuilder(
+                        builder: (context, box) => InkWell(
+                          borderRadius: BorderRadius.circular(10),
+                          onTap: () => _details(b),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              BookCover(
+                                b.cover,
+                                width: box.maxWidth,
+                                badge: _loading(b)
+                                    ? Icons.downloading
+                                    : _owned(b)
+                                    ? Icons.check
+                                    : null,
+                              ),
+                              const SizedBox(height: 9),
+                              Text(
+                                b.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w700,
+                                  height: 1.45,
+                                ),
+                              ),
+                              Text(
+                                b.author,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Brand.muted,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
                 ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-/// The values of one field, with a box to narrow them down. Returns the one
-/// chosen; an empty string means "all".
-class _ValuePicker extends StatefulWidget {
-  const _ValuePicker({
-    required this.title,
-    required this.values,
-    required this.current,
-  });
-
-  final String title;
-  final List<String> values;
-  final String current;
-
-  @override
-  State<_ValuePicker> createState() => _ValuePickerState();
-}
-
-class _ValuePickerState extends State<_ValuePicker> {
-  String _q = '';
-
-  @override
-  Widget build(BuildContext context) {
-    final shown = widget.values.where((v) => v.contains(_q)).toList();
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: TextField(
-            decoration: InputDecoration(
-              hintText: widget.title,
-              prefixIcon: const Icon(Icons.search),
-              isDense: true,
-              border: const OutlineInputBorder(),
-            ),
-            onChanged: (v) => setState(() => _q = v.trim()),
-          ),
-        ),
-        ListTile(
-          title: const Text('الكل'),
-          selected: widget.current.isEmpty,
-          onTap: () => Navigator.pop(context, ''),
-        ),
-        const Divider(height: 1),
-        Expanded(
-          child: ListView.builder(
-            itemCount: shown.length,
-            itemBuilder: (_, i) => ListTile(
-              title: Text(shown[i]),
-              selected: shown[i] == widget.current,
-              onTap: () => Navigator.pop(context, shown[i]),
-            ),
-          ),
-        ),
-      ],
+        );
+      },
     );
   }
 }

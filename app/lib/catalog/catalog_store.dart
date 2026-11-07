@@ -13,6 +13,37 @@ import 'catalog_models.dart';
 /// over plain HTTPS: it holds no server account.
 const libraryUrl = 'https://alhikmeh.org/alhawzaapp/publiclibdata/nots/';
 
+/// The categories in the order the Masdar app lists them.
+const masdarOrder = [
+  'تفسير القرآن',
+  'الحديث الشريف',
+  'الفقه',
+  'أصول الفقه',
+  'العقيدة',
+  'الرجال',
+  'اللغة',
+  'البلاغة',
+  'المنطق',
+  'الأخلاق',
+];
+
+/// Where [subject] stands in the Masdar order: its own place when it is one
+/// of the categories (or names one, like "كتب الفقه"), else after them all.
+int masdarRank(String subject) {
+  final exact = masdarOrder.indexOf(subject);
+  if (exact >= 0) return exact;
+  var best = masdarOrder.length;
+  var bestLength = 0;
+  for (var i = 0; i < masdarOrder.length; i++) {
+    final name = masdarOrder[i];
+    if (subject.contains(name) && name.length > bestLength) {
+      best = i;
+      bestLength = name.length;
+    }
+  }
+  return best;
+}
+
 enum CatalogSort { newest, title, author, subject }
 
 /// What the user asked to see. An empty value means "any".

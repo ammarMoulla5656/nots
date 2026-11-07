@@ -7,6 +7,11 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+/// The category a note (a page of paper made in the app) is filed under. It
+/// travels with the book's information, so a note stays a note on every
+/// device of the account.
+const noteSubject = 'ملاحظاتي';
+
 /// A book (PDF) kept in the app's own storage.
 class BookEntry {
   BookEntry({
@@ -21,6 +26,7 @@ class BookEntry {
     this.author = '',
     this.subject = '',
     this.cover = '',
+    this.offloaded = false,
   });
 
   /// Content fingerprint of the PDF. The ink, the linked Word text and the
@@ -43,6 +49,13 @@ class BookEntry {
   /// Path of the cover on the server.
   String cover;
 
+  /// The user took the file off this device: it stays in their account and
+  /// comes back only when asked for.
+  bool offloaded;
+
+  /// A note: paper made in the app, not a book.
+  bool get isNote => subject == noteSubject;
+
   Map<String, Object?> toJson() => {
     'id': id,
     'title': title,
@@ -55,6 +68,7 @@ class BookEntry {
     if (author.isNotEmpty) 'author': author,
     if (subject.isNotEmpty) 'subject': subject,
     if (cover.isNotEmpty) 'cover': cover,
+    if (offloaded) 'offloaded': true,
   };
 
   static BookEntry fromJson(Map<String, dynamic> j) => BookEntry(
@@ -69,6 +83,7 @@ class BookEntry {
     author: j['author'] as String? ?? '',
     subject: j['subject'] as String? ?? '',
     cover: j['cover'] as String? ?? '',
+    offloaded: j['offloaded'] as bool? ?? false,
   );
 }
 
@@ -151,6 +166,12 @@ class LibraryStore extends ChangeNotifier {
     return null;
   }
 
+  /// Like [byCatalog], for a copy whose file is on this device.
+  BookEntry? installedCatalog(String catalogId, int part) {
+    final b = byCatalog(catalogId, part);
+    return b != null && isOnDevice(b) ? b : null;
+  }
+
   /// Marks [b] as part [part] of the catalogue book [catalogId].
   Future<void> linkCatalog(
     BookEntry b, {
@@ -202,10 +223,20 @@ class LibraryStore extends ChangeNotifier {
       _books.add(entry);
     } else {
       entry.lastOpened = now;
+      entry.offloaded = false;
     }
     await _save();
     notifyListeners();
     return entry;
+  }
+
+  /// Files [b] as a note: paper made in the app. [template] (the paper's
+  /// id) is kept in the author field, which a note has no other use for.
+  Future<void> markNote(BookEntry b, {String template = ''}) async {
+    b.subject = noteSubject;
+    b.author = template;
+    await _save();
+    notifyListeners();
   }
 
   Future<void> touch(BookEntry b) async {
@@ -220,6 +251,58 @@ class LibraryStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Whether the file of [b] is here; a book of the account can be listed
+  /// before its file arrives.
+  bool isOnDevice(BookEntry b) => File(pathOf(b)).existsSync();
+
+  /// Pages of [b] are waiting for the user to choose between two devices.
+  bool hasConflicts(BookEntry b) =>
+      File(p.join(_root.path, 'conflicts', '${b.id}.zip')).existsSync();
+
+  /// Lists a book of the user's account whose file is not here yet.
+  Future<void> addListed(BookEntry b) async {
+    if (byId(b.id) != null) return;
+    _books.add(b);
+    await _save();
+    notifyListeners();
+  }
+
+  Future<void> setOffloaded(BookEntry b, bool value) async {
+    if (b.offloaded == value) return;
+    b.offloaded = value;
+    await _save();
+    notifyListeners();
+  }
+
+  /// Takes the file of [b] off this device; the book stays listed, with its
+  /// work, and can be brought back from the user's account.
+  Future<void> offload(BookEntry b) async {
+    final f = File(pathOf(b));
+    if (await f.exists()) await f.delete();
+    await setOffloaded(b, true);
+  }
+
+  /// Removes every book and all the work on them from this device. What
+  /// belongs to no account (the catalogue, covers) stays.
+  Future<void> wipe() async {
+    _books.clear();
+    for (final sub in [
+      'books',
+      'ink',
+      'links',
+      'prefs',
+      'sync',
+      'downloads',
+      'conflicts',
+    ]) {
+      final dir = Directory(p.join(_root.path, sub));
+      if (await dir.exists()) await dir.delete(recursive: true);
+    }
+    await Directory(p.join(_root.path, 'books')).create(recursive: true);
+    await _save();
+    notifyListeners();
+  }
+
   /// Removes the book's copy from the library. Its writing is kept unless
   /// [deleteWriting] is true, so re-adding the same PDF brings it back.
   Future<void> remove(BookEntry b, {bool deleteWriting = false}) async {
@@ -227,7 +310,7 @@ class LibraryStore extends ChangeNotifier {
     final f = File(pathOf(b));
     if (await f.exists()) await f.delete();
     if (deleteWriting) {
-      for (final sub in ['ink', 'links', 'prefs']) {
+      for (final sub in ['ink', 'links', 'prefs', 'conflicts']) {
         final dir = Directory(p.join(_root.path, sub));
         if (!await dir.exists()) continue;
         await for (final e in dir.list()) {

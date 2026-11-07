@@ -95,6 +95,33 @@ class _ItemAction extends _Action {
   }
 }
 
+/// The whole content of a page replaced.
+class _PageAction extends _Action {
+  _PageAction(
+    super.page,
+    this.strokesBefore,
+    this.itemsBefore,
+    this.strokes,
+    this.items,
+  );
+
+  final List<Stroke> strokesBefore;
+  final List<NoteItem> itemsBefore;
+  final List<Stroke> strokes;
+  final List<NoteItem> items;
+
+  void _set(InkDocument d, List<Stroke> s, List<NoteItem> i) {
+    d._pages[page] = List.of(s);
+    d._items[page] = List.of(i);
+  }
+
+  @override
+  void revert(InkDocument d) => _set(d, strokesBefore, itemsBefore);
+
+  @override
+  void apply(InkDocument d) => _set(d, strokes, items);
+}
+
 /// All ink and note items of one PDF: per page, with undo/redo.
 class InkDocument extends ChangeNotifier {
   InkDocument({
@@ -215,6 +242,20 @@ class InkDocument extends ChangeNotifier {
     final before = list[i];
     list[i] = next;
     _push(_ItemAction(page, before: before, after: next));
+  }
+
+  /// Replaces all that is on [page], as one undo step. Everything comes in
+  /// with a new id, as it may come from another device.
+  void replacePage(int page, List<Stroke> strokes, List<NoteItem> items) {
+    final a = _PageAction(
+      page,
+      List.of(strokesOf(page)),
+      List.of(itemsOf(page)),
+      [for (final s in strokes) s.copyWith(id: takeStrokeId())],
+      [for (final i in items) i.copyWith(id: takeStrokeId())],
+    );
+    a.apply(this);
+    _push(a);
   }
 
   // ---- eraser ----
