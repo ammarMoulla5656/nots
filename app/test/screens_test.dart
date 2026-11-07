@@ -199,6 +199,12 @@ Future<void> _loadFonts() async {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  // The pictures need the covers of the design folder, which is only on the
+  // developer's computer, not in the repository.
+  if (!Directory('../des/assets/images/covers').existsSync()) {
+    test('screens (needs ../des)', () {}, skip: 'no design folder here');
+    return;
+  }
   tearDown(() => Brand.dark = false);
   late SyncEngine sync;
   late DownloadManager downloads;
