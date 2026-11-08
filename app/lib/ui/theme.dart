@@ -22,25 +22,32 @@ abstract final class Brand {
   static const red = Color(0xFFC8372D);
 
   /// Page and screen background.
-  static Color get paper => dark ? const Color(0xFF0E1626) : const Color(0xFFFBF8F1);
+  static Color get paper =>
+      dark ? const Color(0xFF0E1626) : const Color(0xFFFBF8F1);
 
   /// What a page rests on, on a tablet.
-  static Color get desk => dark ? const Color(0xFF0A101C) : const Color(0xFFEDE7DA);
+  static Color get desk =>
+      dark ? const Color(0xFF0A101C) : const Color(0xFFEDE7DA);
 
   /// Cards and fields.
   static Color get surface => dark ? const Color(0xFF16223A) : Colors.white;
-  static Color get ink => dark ? const Color(0xFFE8EDF5) : const Color(0xFF16233A);
-  static Color get muted => dark ? const Color(0xFF93A1B8) : const Color(0xFF67748A);
-  static Color get line => dark ? const Color(0xFF26334A) : const Color(0xFFE6DFD0);
+  static Color get ink =>
+      dark ? const Color(0xFFE8EDF5) : const Color(0xFF16233A);
+  static Color get muted =>
+      dark ? const Color(0xFF93A1B8) : const Color(0xFF67748A);
+  static Color get line =>
+      dark ? const Color(0xFF26334A) : const Color(0xFFE6DFD0);
 
   /// A pale blue ground (selected rows, tags).
-  static Color get tint => dark ? const Color(0xFF1B2B45) : const Color(0xFFE7EFF9);
+  static Color get tint =>
+      dark ? const Color(0xFF1B2B45) : const Color(0xFFE7EFF9);
 
   /// Text on [tint].
   static Color get onTint => dark ? const Color(0xFFBBD3F2) : blueDeep;
 
   /// A faint veil over a surface (the track of a segmented control).
-  static Color get wash => dark ? const Color(0x14FFFFFF) : const Color(0x0F16233A);
+  static Color get wash =>
+      dark ? const Color(0x14FFFFFF) : const Color(0x0F16233A);
 
   /// The header gradient of the main screens.
   static LinearGradient get heroGradient => LinearGradient(
@@ -78,7 +85,9 @@ ThemeData buildTheme() {
         surfaceContainerLow: Brand.surface,
         surfaceContainer: Brand.surface,
         surfaceContainerHigh: Brand.surface,
-        surfaceContainerHighest: dark ? const Color(0xFF1E2C47) : const Color(0xFFF1ECDF),
+        surfaceContainerHighest: dark
+            ? const Color(0xFF1E2C47)
+            : const Color(0xFFF1ECDF),
         outline: dark ? const Color(0xFF3A4A66) : const Color(0xFFC9C1AE),
         outlineVariant: Brand.line,
       );

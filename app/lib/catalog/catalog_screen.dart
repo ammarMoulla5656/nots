@@ -140,14 +140,10 @@ class _CatalogScreenState extends State<CatalogScreen> {
                     'الكتب',
                     style: TextStyle(
                       color: Colors.white,
-                      fontSize: 25,
-                      fontWeight: FontWeight.w900,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
                       height: 1.2,
                     ),
-                  ),
-                  Text(
-                    'تصفّح وحمّل ما تريد',
-                    style: TextStyle(color: Color(0xFFCFDDF0), fontSize: 12.5),
                   ),
                 ],
               ),
@@ -162,7 +158,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
               listenable: widget.account,
               builder: (_, _) => HeroButton(
                 icon: Icons.person_outline,
-            photo: widget.account.photo,
+                photo: widget.account.photo,
                 tooltip: 'الحساب',
                 dot: widget.account.linked,
                 onPressed: widget.onAccount,
@@ -170,9 +166,9 @@ class _CatalogScreenState extends State<CatalogScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
         Container(
-          height: 48,
+          height: 44,
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: 0.14),
             borderRadius: BorderRadius.circular(16),
@@ -187,13 +183,16 @@ class _CatalogScreenState extends State<CatalogScreen> {
               enabledBorder: InputBorder.none,
               focusedBorder: InputBorder.none,
               hintText: 'ابحث بالعنوان أو المؤلف أو المحقق',
-              hintStyle: const TextStyle(color: Color(0xFFCFDDF0), fontSize: 14.5),
+              hintStyle: const TextStyle(
+                color: Color(0xFFCFDDF0),
+                fontSize: 14.5,
+              ),
               prefixIcon: Icon(
                 Icons.search,
                 size: 20,
                 color: Colors.white.withValues(alpha: 0.85),
               ),
-              contentPadding: const EdgeInsets.symmetric(vertical: 14),
+              contentPadding: const EdgeInsets.symmetric(vertical: 12),
             ),
           ),
         ),
@@ -228,15 +227,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          BookCover(
-            b.cover,
-            width: width,
-            badge: _loading(b)
-                ? Icons.downloading
-                : _owned(b)
-                ? Icons.check
-                : null,
-          ),
+          _cover(b, width),
           const SizedBox(height: 9),
           Text(
             b.title,
@@ -259,27 +250,41 @@ class _CatalogScreenState extends State<CatalogScreen> {
     ),
   );
 
+  /// A book's cover; its badge (being downloaded, owned) follows the
+  /// downloads by itself.
+  Widget _cover(CatalogBook b, double width) => ListenableBuilder(
+    listenable: widget.downloads,
+    builder: (_, _) => BookCover(
+      b.cover,
+      width: width,
+      badge: _loading(b)
+          ? Icons.downloading
+          : _owned(b)
+          ? Icons.check
+          : null,
+    ),
+  );
+
   /// One shelf per category, in the order the Masdar app lists them.
   List<MapEntry<String, List<CatalogBook>>> _shelves(List<CatalogBook> books) {
     final by = <String, List<CatalogBook>>{};
     for (final b in books) {
-      by.putIfAbsent(b.subject.isEmpty ? 'كتب أخرى' : b.subject, () => []).add(b);
+      by
+          .putIfAbsent(b.subject.isEmpty ? 'كتب أخرى' : b.subject, () => [])
+          .add(b);
     }
-    return by.entries.toList()
-      ..sort((a, b) {
-        final c = masdarRank(a.key).compareTo(masdarRank(b.key));
-        return c != 0 ? c : a.key.compareTo(b.key);
-      });
+    return by.entries.toList()..sort((a, b) {
+      final c = masdarRank(a.key).compareTo(masdarRank(b.key));
+      return c != 0 ? c : a.key.compareTo(b.key);
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: Listenable.merge([
-        widget.store,
-        widget.downloads,
-        widget.library,
-      ]),
+      // Not the downloads: they tick five times a second, and only the
+      // covers' badges follow them.
+      listenable: Listenable.merge([widget.store, widget.library]),
       builder: (context, _) {
         final s = widget.store;
         final books = _shown;
@@ -341,7 +346,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Padding(
-                            padding: EdgeInsets.fromLTRB(sidePadding(context), 22, sidePadding(context), 12),
+                            padding: EdgeInsets.fromLTRB(
+                              sidePadding(context),
+                              22,
+                              sidePadding(context),
+                              12,
+                            ),
                             child: Row(
                               children: [
                                 Transform.rotate(
@@ -370,9 +380,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
                             height: shelfWidth / BookCover.ratio + 58,
                             child: ListView.separated(
                               scrollDirection: Axis.horizontal,
-                              padding: EdgeInsets.symmetric(horizontal: sidePadding(context)),
+                              padding: EdgeInsets.symmetric(
+                                horizontal: sidePadding(context),
+                              ),
                               itemCount: shelf.value.length,
-                              separatorBuilder: (_, _) => const SizedBox(width: 13),
+                              separatorBuilder: (_, _) =>
+                                  const SizedBox(width: 13),
                               itemBuilder: (_, k) =>
                                   _shelfBook(shelf.value[k], shelfWidth),
                             ),
@@ -384,7 +397,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 )
               else
                 SliverPadding(
-                  padding: EdgeInsets.fromLTRB(sidePadding(context), 16, sidePadding(context), 130),
+                  padding: EdgeInsets.fromLTRB(
+                    sidePadding(context),
+                    16,
+                    sidePadding(context),
+                    130,
+                  ),
                   sliver: CoverGridSliver(
                     count: books.length,
                     itemBuilder: (context, i) {
@@ -396,15 +414,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              BookCover(
-                                b.cover,
-                                width: box.maxWidth,
-                                badge: _loading(b)
-                                    ? Icons.downloading
-                                    : _owned(b)
-                                    ? Icons.check
-                                    : null,
-                              ),
+                              _cover(b, box.maxWidth),
                               const SizedBox(height: 9),
                               Text(
                                 b.title,

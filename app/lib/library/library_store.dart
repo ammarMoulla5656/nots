@@ -263,7 +263,10 @@ class LibraryStore extends ChangeNotifier {
   Uint8List readingBytes() => utf8.encode(
     jsonEncode({
       for (final b in _books)
-        b.id: {'rank': b.rank, if (b.readAt != null) 'read': b.readAt!.toIso8601String()},
+        b.id: {
+          'rank': b.rank,
+          if (b.readAt != null) 'read': b.readAt!.toIso8601String(),
+        },
     }),
   );
 
@@ -275,7 +278,9 @@ class LibraryStore extends ChangeNotifier {
       final e = j[b.id] as Map<String, dynamic>?;
       if (e == null) continue;
       b.rank = (e['rank'] as num?)?.toDouble() ?? b.rank;
-      final read = e['read'] == null ? null : DateTime.parse(e['read'] as String);
+      final read = e['read'] == null
+          ? null
+          : DateTime.parse(e['read'] as String);
       if (read != null && (b.readAt == null || read.isAfter(b.readAt!))) {
         b.readAt = read;
       }
@@ -314,11 +319,32 @@ class LibraryStore extends ChangeNotifier {
 
   /// Whether the file of [b] is here; a book of the account can be listed
   /// before its file arrives.
-  bool isOnDevice(BookEntry b) => File(pathOf(b)).existsSync();
+  bool isOnDevice(BookEntry b) => _exists(pathOf(b));
 
   /// Pages of [b] are waiting for the user to choose between two devices.
   bool hasConflicts(BookEntry b) =>
-      File(p.join(_root.path, 'conflicts', '${b.id}.zip')).existsSync();
+      _exists(p.join(_root.path, 'conflicts', '${b.id}.zip'));
+
+  /// Answers of [_exists], each good for a moment: lists of many books ask
+  /// for every book on every build, and the disk must not slow them.
+  final _seen = <String, (bool, int)>{};
+  static const _seenFor = Duration(seconds: 2);
+
+  bool _exists(String path) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final hit = _seen[path];
+    if (hit != null && now - hit.$2 < _seenFor.inMilliseconds) return hit.$1;
+    final yes = File(path).existsSync();
+    _seen[path] = (yes, now);
+    return yes;
+  }
+
+  @override
+  void notifyListeners() {
+    // Something changed: ask the disk again.
+    _seen.clear();
+    super.notifyListeners();
+  }
 
   /// Lists a book of the user's account whose file is not here yet.
   Future<void> addListed(BookEntry b) async {
@@ -333,6 +359,15 @@ class LibraryStore extends ChangeNotifier {
     b.offloaded = value;
     await _save();
     notifyListeners();
+  }
+
+  /// The file of [b] has just come to this device.
+  Future<void> fileArrived(BookEntry b) async {
+    if (b.offloaded) {
+      await setOffloaded(b, false);
+    } else {
+      notifyListeners();
+    }
   }
 
   /// Takes the file of [b] off this device; the book stays listed, with its

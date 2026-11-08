@@ -16,8 +16,10 @@ import '../ink/stroke_painter.dart';
 
 /// Pages of [ink] that carry writing, marks or notes.
 Set<int> annotatedPages(InkDocument ink) => {
+  // The book's own pages: those added inside it (keys from 1000000 on, see
+  // PageMap) are not part of its file.
   for (final e in ink.pages.entries)
-    if (e.value.isNotEmpty) e.key,
+    if (e.value.isNotEmpty && e.key < 1000000) e.key,
   for (final e in ink.items.entries)
     if (e.value.isNotEmpty) e.key,
 };

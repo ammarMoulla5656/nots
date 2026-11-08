@@ -421,8 +421,10 @@ class ToolOptions extends StatelessWidget {
                         )
                       : Container(
                           width: 20,
-                          height: (1.5 + math.min(v, 8.0) * 0.6)
-                              .clamp(2.0, 10.0),
+                          height: (1.5 + math.min(v, 8.0) * 0.6).clamp(
+                            2.0,
+                            10.0,
+                          ),
                           decoration: BoxDecoration(
                             color: Brand.muted,
                             borderRadius: BorderRadius.circular(3),
@@ -637,7 +639,11 @@ class ToolBox extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.center,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.settings_outlined, size: 18, color: Brand.blue),
+                      Icon(
+                        Icons.settings_outlined,
+                        size: 18,
+                        color: Brand.blue,
+                      ),
                       SizedBox(width: 7),
                       Text('إعدادات الأدوات', style: TextStyle(fontSize: 13.5)),
                     ],
@@ -654,7 +660,11 @@ class ToolBox extends StatelessWidget {
 
 /// Delete or copy what the lasso selected.
 class SelectionBar extends StatelessWidget {
-  const SelectionBar({super.key, required this.selection, required this.onColor});
+  const SelectionBar({
+    super.key,
+    required this.selection,
+    required this.onColor,
+  });
 
   final SelectionController selection;
   final VoidCallback onColor;
@@ -695,9 +705,7 @@ class SelectionBar extends StatelessWidget {
                   shape: BoxShape.circle,
                   color: Color(selection.currentColor!),
                   border: Border.all(color: Colors.white, width: 2),
-                  boxShadow: [
-                    BoxShadow(color: Brand.line, spreadRadius: 1),
-                  ],
+                  boxShadow: [BoxShadow(color: Brand.line, spreadRadius: 1)],
                 ),
               ),
             ),
@@ -709,11 +717,20 @@ class SelectionBar extends StatelessWidget {
 
 /// "41 / 520": the page being read; tapping it opens the pages.
 class PagePill extends StatelessWidget {
-  const PagePill({super.key, required this.page, required this.count, required this.onTap});
+  const PagePill({
+    super.key,
+    required this.page,
+    required this.count,
+    required this.onTap,
+    this.extra = false,
+  });
 
   final int page;
   final int count;
   final VoidCallback onTap;
+
+  /// A page added after [page]: shown as "page +".
+  final bool extra;
 
   @override
   Widget build(BuildContext context) {
@@ -726,7 +743,7 @@ class PagePill extends StatelessWidget {
           TextSpan(
             children: [
               TextSpan(
-                text: '$page',
+                text: extra ? '$page +' : '$page',
                 style: TextStyle(
                   color: Brand.ink,
                   fontSize: 15,
@@ -746,10 +763,79 @@ class PagePill extends StatelessWidget {
   }
 }
 
+/// The strip at the top of a page added inside a book: a long press (or a
+/// tap) on it offers to move the page or remove it.
+class ExtraPageTab extends StatelessWidget {
+  const ExtraPageTab({super.key, required this.after, required this.onActions});
+
+  final int after;
+  final VoidCallback onActions;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onLongPress: onActions,
+      onTap: onActions,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        decoration: BoxDecoration(
+          color: Brand.blue.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Brand.blue.withValues(alpha: 0.35)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.drag_indicator, size: 16, color: Brand.blue),
+            const SizedBox(width: 4),
+            Text(
+              'صفحة مضافة بعد $after',
+              style: TextStyle(fontSize: 12, color: Brand.blue),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The round "+" of a note: one more blank page after the last.
+class AddPageButton extends StatelessWidget {
+  const AddPageButton({super.key, required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'صفحة جديدة',
+      child: Material(
+        color: Brand.blue,
+        shape: const CircleBorder(),
+        elevation: 3,
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onPressed,
+          child: const SizedBox(
+            width: 46,
+            height: 46,
+            child: Icon(Icons.add, color: Colors.white, size: 26),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// While the bars are away: a small round button showing the tool in use
 /// brings them back.
 class ToolDot extends StatelessWidget {
-  const ToolDot({super.key, required this.icon, required this.onTap, this.color});
+  const ToolDot({
+    super.key,
+    required this.icon,
+    required this.onTap,
+    this.color,
+  });
 
   final IconData icon;
   final VoidCallback onTap;

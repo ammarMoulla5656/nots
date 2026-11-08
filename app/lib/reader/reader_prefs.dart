@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'page_map.dart';
+
 /// The exact place the reader was: which page, where in that page the middle
 /// of the screen was, and the zoom. The place is kept relative to the page,
 /// not the document, so it still holds after a rotation or on another screen.
@@ -101,6 +103,7 @@ class ReaderPrefs extends ChangeNotifier {
     this._position,
     this._bookmarks,
     this.pageCount,
+    this._extras,
   );
 
   final File _file;
@@ -110,7 +113,40 @@ class ReaderPrefs extends ChangeNotifier {
   int pageCount;
   ReadingPosition? _position;
   final Set<int> _bookmarks;
+  final List<ExtraPage> _extras;
   Timer? _timer;
+
+  /// Blank pages added inside the book, in the order they were placed.
+  List<ExtraPage> get extras => List.unmodifiable(_extras);
+
+  /// Adds a blank page after book page [after] and returns it.
+  ExtraPage addExtra(int after, {String paper = ''}) {
+    final id = _extras.fold<int>(0, (m, e) => e.id > m ? e.id : m) + 1;
+    final e = ExtraPage(id, after, paper);
+    _extras.add(e);
+    notifyListeners();
+    _scheduleSave();
+    return e;
+  }
+
+  /// Puts the added page [id] after book page [after] (last among those
+  /// already there).
+  void moveExtra(int id, int after) {
+    final i = _extras.indexWhere((e) => e.id == id);
+    if (i < 0) return;
+    final paper = _extras[i].paper;
+    _extras
+      ..removeAt(i)
+      ..add(ExtraPage(id, after, paper));
+    notifyListeners();
+    _scheduleSave();
+  }
+
+  void removeExtra(int id) {
+    _extras.removeWhere((e) => e.id == id);
+    notifyListeners();
+    _scheduleSave();
+  }
 
   /// There are changes not yet on disk.
   bool _dirty = false;
@@ -136,6 +172,7 @@ class ReaderPrefs extends ChangeNotifier {
     var count = 0;
     ReadingPosition? pos;
     final marks = <int>{};
+    final extras = <ExtraPage>[];
     if (await f.exists()) {
       try {
         final j = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
@@ -143,11 +180,14 @@ class ReaderPrefs extends ChangeNotifier {
         count = j['n'] as int? ?? 0;
         pos = ReadingPosition.fromJson(j['pos']);
         marks.addAll(((j['bookmarks'] as List?) ?? const []).cast<int>());
+        for (final e in (j['extra'] as List?) ?? const []) {
+          if (ExtraPage.fromJson(e) case final x?) extras.add(x);
+        }
       } on FormatException {
         // A damaged file only loses the reading position and bookmarks.
       }
     }
-    return ReaderPrefs._(f, last, pos, marks, count);
+    return ReaderPrefs._(f, last, pos, marks, count, extras);
   }
 
   /// The page last read in [bookId], for showing in lists.
@@ -242,6 +282,7 @@ class ReaderPrefs extends ChangeNotifier {
       if (pageCount > 0) 'n': pageCount,
       'pos': ?_position?.toJson(),
       'bookmarks': bookmarks,
+      if (_extras.isNotEmpty) 'extra': [for (final e in _extras) e.toJson()],
     });
     return _saving = _saving.then((_) async {
       final tmp = File('${_file.path}.tmp');

@@ -114,7 +114,10 @@ class BookDetailScreen extends StatelessWidget {
                   child: Text(
                     book.author,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(color: Color(0xFFDCE7F5), fontSize: 14),
+                    style: const TextStyle(
+                      color: Color(0xFFDCE7F5),
+                      fontSize: 14,
+                    ),
                   ),
                 ),
             ],
@@ -185,7 +188,10 @@ class BookDetailScreen extends StatelessWidget {
                             book: book,
                             part: p,
                             downloads: downloads,
-                            installed: library.installedCatalog(book.id, p.number),
+                            installed: library.installedCatalog(
+                              book.id,
+                              p.number,
+                            ),
                             onOpen: (e) => _open(context, e),
                             showFeatures: common == null,
                           ),
@@ -296,7 +302,11 @@ class _Fact extends StatelessWidget {
         color: Brand.surface,
         borderRadius: BorderRadius.circular(15),
         boxShadow: const [
-          BoxShadow(color: Color(0x0F16233A), blurRadius: 16, offset: Offset(0, 6)),
+          BoxShadow(
+            color: Color(0x0F16233A),
+            blurRadius: 16,
+            offset: Offset(0, 6),
+          ),
         ],
       ),
       child: Column(
@@ -407,7 +417,11 @@ class _PartRow extends StatelessWidget {
         color: Brand.surface,
         borderRadius: BorderRadius.circular(17),
         boxShadow: const [
-          BoxShadow(color: Color(0x0F16233A), blurRadius: 18, offset: Offset(0, 8)),
+          BoxShadow(
+            color: Color(0x0F16233A),
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
         ],
       ),
       child: Column(
@@ -439,7 +453,10 @@ class _PartRow extends StatelessWidget {
                   children: [
                     Text(
                       _name,
-                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     Text(
                       sub,

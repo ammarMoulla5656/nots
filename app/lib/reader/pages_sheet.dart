@@ -113,7 +113,8 @@ class _PagesSheetState extends State<PagesSheet> {
                         keyboardType: TextInputType.number,
                         onSubmitted: (_) => _go(),
                         decoration: InputDecoration(
-                          hintText: 'الانتقال إلى صفحة (1 – ${widget.pageCount})',
+                          hintText:
+                              'الانتقال إلى صفحة (1 – ${widget.pageCount})',
                           hintStyle: TextStyle(
                             color: Brand.muted,
                             fontSize: 14,
@@ -124,7 +125,9 @@ class _PagesSheetState extends State<PagesSheet> {
                   ),
                   const SizedBox(width: 8),
                   FilledButton(
-                    style: FilledButton.styleFrom(minimumSize: const Size(72, 44)),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(72, 44),
+                    ),
                     onPressed: _go,
                     child: const Text('انتقال'),
                   ),
@@ -149,9 +152,7 @@ class _PagesSheetState extends State<PagesSheet> {
                     controller: _scroll,
                     padding: EdgeInsets.symmetric(
                       horizontal:
-                          (_sheetWidth(context) -
-                              _pageWidth(context)) /
-                          2,
+                          (_sheetWidth(context) - _pageWidth(context)) / 2,
                       vertical: 8,
                     ),
                     gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(

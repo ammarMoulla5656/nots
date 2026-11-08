@@ -242,12 +242,16 @@ class GoogleAccount extends ChangeNotifier {
     try {
       final token = await accessToken();
       final r = await http.get(
-        Uri.parse('https://www.googleapis.com/drive/v3/about?fields=user(photoLink)'),
+        Uri.parse(
+          'https://www.googleapis.com/drive/v3/about?fields=user(photoLink)',
+        ),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (r.statusCode != 200) return;
-      final link = ((jsonDecode(r.body) as Map<String, dynamic>)['user']
-          as Map<String, dynamic>?)?['photoLink'] as String?;
+      final link =
+          ((jsonDecode(r.body) as Map<String, dynamic>)['user']
+                  as Map<String, dynamic>?)?['photoLink']
+              as String?;
       if (link == null || link == photo || !linked) return;
       photo = link;
       await _storage.write(key: _kPhoto, value: link);
@@ -413,18 +417,19 @@ class GoogleAccount extends ChangeNotifier {
         GoogleConfig.driveScope,
       ]))?.accessToken;
     } else {
-      token = (await GoogleSignInPlatform.instance
-              .clientAuthorizationTokensForScopes(
-                ClientAuthorizationTokensForScopesParameters(
-                  request: AuthorizationRequestDetails(
-                    scopes: [GoogleConfig.driveScope],
-                    userId: null,
-                    email: _email,
-                    promptIfUnauthorized: false,
-                  ),
-                ),
-              ))
-          ?.accessToken;
+      token =
+          (await GoogleSignInPlatform.instance
+                  .clientAuthorizationTokensForScopes(
+                    ClientAuthorizationTokensForScopesParameters(
+                      request: AuthorizationRequestDetails(
+                        scopes: [GoogleConfig.driveScope],
+                        userId: null,
+                        email: _email,
+                        promptIfUnauthorized: false,
+                      ),
+                    ),
+                  ))
+              ?.accessToken;
     }
     if (token == null) throw RelinkNeeded();
     _token = token;

@@ -9,6 +9,7 @@ import '../ui/brand_widgets.dart';
 import '../ui/theme.dart';
 import 'book_widgets.dart';
 import 'library_store.dart';
+import 'parts_popup.dart';
 
 enum BookSort { mine, recent, title, author, subject }
 
@@ -37,7 +38,12 @@ class BooksTab extends StatefulWidget {
     required this.onHistory,
     required this.onBrowse,
     required this.onDriveWarning,
+    this.catalogTitle,
   });
+
+  /// The title of a book of the server's library (for a book whose volumes
+  /// stand together under one cover), or null when not known.
+  final String? Function(String catalogId)? catalogTitle;
 
   final LibraryStore library;
   final SyncEngine sync;
@@ -134,11 +140,115 @@ class _BooksTabState extends State<BooksTab> {
     return 'في حسابك، اضغط لتنزيله';
   }
 
+  /// The books to show, the volumes of one book of the library together
+  /// (in the order of their numbers), at the place of the first of them.
+  List<List<BookEntry>> _grouped(List<BookEntry> books) {
+    final groups = <List<BookEntry>>[];
+    final byCatalog = <String, List<BookEntry>>{};
+    for (final b in books) {
+      final id = b.catalogId;
+      if (id == null) {
+        groups.add([b]);
+        continue;
+      }
+      final g = byCatalog[id];
+      if (g != null) {
+        g.add(b);
+      } else {
+        groups.add(byCatalog[id] = [b]);
+      }
+    }
+    for (final g in byCatalog.values) {
+      g.sort((a, b) => (a.part ?? 0).compareTo(b.part ?? 0));
+    }
+    return groups;
+  }
+
+  /// The title of a group of volumes: the book's own, without the volume.
+  String _groupTitle(List<BookEntry> g) {
+    final first = g.first;
+    final known = widget.catalogTitle?.call(first.catalogId!);
+    if (known != null && known.isNotEmpty) return known;
+    final t = first.title;
+    final cut = t.lastIndexOf(' - ');
+    return cut > 0 ? t.substring(0, cut) : t;
+  }
+
+  /// A tap on a book of several volumes: its volumes in a small card over
+  /// it, and the one chosen opens.
+  Future<void> _openGroup(BuildContext itemContext, List<BookEntry> g) async {
+    final box = itemContext.findRenderObject() as RenderBox?;
+    final anchor = box == null
+        ? Rect.fromCenter(
+            center: MediaQuery.sizeOf(context).center(Offset.zero),
+            width: 1,
+            height: 1,
+          )
+        : box.localToGlobal(Offset.zero) & box.size;
+    final picked = await showPartsPopup(
+      context,
+      anchor: anchor,
+      parts: g,
+      progress: (b) => widget.progress.shareOf(b.id),
+    );
+    if (picked != null) widget.onOpen(picked);
+  }
+
+  Widget _gridItem(List<BookEntry> g) {
+    final lib = widget.library;
+    final b = g.first;
+    if (g.length == 1) {
+      final here = lib.isOnDevice(b);
+      Widget item(String subtitle) => BookGridItem(
+        book: b,
+        subtitle: subtitle,
+        progress: widget.progress.shareOf(b.id),
+        inAccountOnly: !here,
+        onTap: () => widget.onOpen(b),
+        onMore: () => widget.onMore(b),
+      );
+      // Only a book still coming follows the downloads.
+      return here
+          ? item(_subtitle(b))
+          : ListenableBuilder(
+              listenable: widget.downloads,
+              builder: (_, _) => item(_subtitle(b)),
+            );
+    }
+    return Builder(
+      builder: (itemContext) => BookGridItem(
+        book: b,
+        title: _groupTitle(g),
+        subtitle: '${g.length} أجزاء',
+        volumes: g.length,
+        inAccountOnly: !g.any(lib.isOnDevice),
+        onTap: () => _openGroup(itemContext, g),
+        onMore: () => widget.onMore(b),
+      ),
+    );
+  }
+
+  /// Moves [moved] (with the other volumes of its book) before [before].
+  Future<void> _move(BookEntry moved, {required BookEntry before}) async {
+    final lib = widget.library;
+    final id = moved.catalogId;
+    final all = id == null
+        ? [moved]
+        : ([
+            for (final b in lib.books)
+              if (b.catalogId == id && !b.isNote) b,
+          ]..sort((a, b) => (a.part ?? 0).compareTo(b.part ?? 0)));
+    for (final b in all) {
+      if (b.id != before.id) await lib.moveBook(b, before: before);
+    }
+    widget.sync.requestSoon();
+  }
+
   Widget _hero(BuildContext context) => HeroHeader(
     child: Row(
       children: [
-        const AppLogo(size: 46),
-        const SizedBox(width: 12),
+        const AppLogo(size: 34),
+        const SizedBox(width: 10),
         const Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -148,14 +258,10 @@ class _BooksTabState extends State<BooksTab> {
                 'قلم المصدر',
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: 25,
-                  fontWeight: FontWeight.w900,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
                   height: 1.2,
                 ),
-              ),
-              Text(
-                'اكتب على صفحات الكتاب',
-                style: TextStyle(color: Color(0xFFCFDDF0), fontSize: 12.5),
               ),
             ],
           ),
@@ -200,7 +306,10 @@ class _BooksTabState extends State<BooksTab> {
                 full
                     ? 'درايف ممتلئ. اضغط لنقل كل شيء إلى حساب آخر'
                     : 'درايف يقترب من الامتلاء. اضغط لنقل كل شيء إلى حساب آخر',
-                style: const TextStyle(color: Color(0xFF6B4E12), fontSize: 13.5),
+                style: const TextStyle(
+                  color: Color(0xFF6B4E12),
+                  fontSize: 13.5,
+                ),
               ),
             ),
           ],
@@ -264,19 +373,15 @@ class _BooksTabState extends State<BooksTab> {
   Widget build(BuildContext context) {
     final lib = widget.library;
     return ListenableBuilder(
-      listenable: Listenable.merge([
-        lib,
-        widget.sync,
-        widget.downloads,
-        widget.account,
-        widget.progress,
-      ]),
+      // Not the sync nor the downloads: they change many times a second,
+      // and the whole grid would be built again each time.
+      listenable: Listenable.merge([lib, widget.account, widget.progress]),
       builder: (context, _) {
-        final all = [for (final b in lib.books) if (!b.isNote) b];
-        final shown = _shown(all);
-        final conflict = all.where(lib.hasConflicts).firstOrNull;
-        final warn =
-            widget.sync.driveFull || (widget.sync.quota?.nearlyFull ?? false);
+        final all = [
+          for (final b in lib.books)
+            if (!b.isNote) b,
+        ];
+        final shown = _grouped(_shown(all));
         return CustomScrollView(
           slivers: [
             SliverToBoxAdapter(child: _hero(context)),
@@ -289,8 +394,23 @@ class _BooksTabState extends State<BooksTab> {
               ),
               sliver: SliverList.list(
                 children: [
-                  if (warn) _driveWarning(context),
-                  if (conflict != null) _conflictBanner(conflict),
+                  ListenableBuilder(
+                    listenable: widget.sync,
+                    builder: (context, _) {
+                      final warn =
+                          widget.sync.driveFull ||
+                          (widget.sync.quota?.nearlyFull ?? false);
+                      final conflict = all.where(lib.hasConflicts).firstOrNull;
+                      return Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (warn) _driveWarning(context),
+                          if (conflict != null) _conflictBanner(conflict),
+                        ],
+                      );
+                    },
+                  ),
                   if (all.isEmpty)
                     _empty()
                   else ...[
@@ -314,7 +434,10 @@ class _BooksTabState extends State<BooksTab> {
                     SectionTitle(
                       _category == 'الكل' ? 'كل الكتب' : _category,
                       count: all
-                          .where((b) => _category == 'الكل' || b.subject == _category)
+                          .where(
+                            (b) =>
+                                _category == 'الكل' || b.subject == _category,
+                          )
                           .length,
                     ),
                     SearchBox(
@@ -347,21 +470,12 @@ class _BooksTabState extends State<BooksTab> {
                 sliver: CoverGridSliver(
                   count: shown.length,
                   itemBuilder: (context, i) {
-                    final b = shown[i];
-                    final item = BookGridItem(
-                      book: b,
-                      subtitle: _subtitle(b),
-                      progress: widget.progress.shareOf(b.id),
-                      inAccountOnly: !lib.isOnDevice(b),
-                      onTap: () => widget.onOpen(b),
-                      onMore: () => widget.onMore(b),
-                    );
+                    final g = shown[i];
+                    final item = _gridItem(g);
                     if (_sort != BookSort.mine) return item;
                     return _Movable(
-                      book: b,
-                      onDrop: (moved) => lib
-                          .moveBook(moved, before: b)
-                          .then((_) => widget.sync.requestSoon()),
+                      book: g.first,
+                      onDrop: (moved) => _move(moved, before: g.first),
                       child: item,
                     );
                   },
@@ -429,7 +543,11 @@ String sizeLine(BookEntry b) => b.size > 0 ? formatSize(b.size) : '';
 /// In "my order" a book is held down and dragged onto another: it takes
 /// that book's place, and the rest move along.
 class _Movable extends StatelessWidget {
-  const _Movable({required this.book, required this.onDrop, required this.child});
+  const _Movable({
+    required this.book,
+    required this.onDrop,
+    required this.child,
+  });
 
   final BookEntry book;
   final void Function(BookEntry moved) onDrop;

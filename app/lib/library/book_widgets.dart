@@ -46,9 +46,17 @@ class BookGridItem extends StatelessWidget {
     required this.onMore,
     this.progress,
     this.inAccountOnly = false,
+    this.title,
+    this.volumes = 1,
   });
 
   final BookEntry book;
+
+  /// Shown in place of the book's own title (a book of several volumes).
+  final String? title;
+
+  /// Volumes standing under this one cover: more than one shows as a pile.
+  final int volumes;
   final String subtitle;
   final double? progress;
 
@@ -70,15 +78,20 @@ class BookGridItem extends StatelessWidget {
               children: [
                 BookCover(
                   book.cover,
+                  ownId: book.id,
                   width: box.maxWidth,
                   progress: progress,
-                  badge: inAccountOnly ? Icons.cloud_outlined : null,
+                  badge: inAccountOnly
+                      ? Icons.cloud_outlined
+                      : volumes > 1
+                      ? Icons.layers_outlined
+                      : null,
                 ),
                 const SizedBox(height: 9),
                 Padding(
                   padding: const EdgeInsetsDirectional.only(end: 22),
                   child: Text(
-                    book.title,
+                    title ?? book.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(

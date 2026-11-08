@@ -17,7 +17,11 @@ class AppLogo extends StatelessWidget {
     decoration: BoxDecoration(
       borderRadius: BorderRadius.circular(size * 0.24),
       boxShadow: const [
-        BoxShadow(color: Color(0x40000000), blurRadius: 8, offset: Offset(0, 3)),
+        BoxShadow(
+          color: Color(0x40000000),
+          blurRadius: 8,
+          offset: Offset(0, 3),
+        ),
       ],
     ),
     clipBehavior: Clip.antiAlias,
@@ -126,8 +130,8 @@ class HeroButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
           onTap: onPressed,
           child: SizedBox(
-            width: 42,
-            height: 42,
+            width: 38,
+            height: 38,
             child: Stack(
               alignment: Alignment.center,
               children: [
@@ -135,8 +139,8 @@ class HeroButton extends StatelessWidget {
                   ClipOval(
                     child: Image(
                       image: ResizeImage(NetworkImage(photo!), width: 96),
-                      width: 32,
-                      height: 32,
+                      width: 28,
+                      height: 28,
                       fit: BoxFit.cover,
                       errorBuilder: (_, _, _) =>
                           Icon(icon, size: 21, color: Colors.white),
@@ -189,8 +193,16 @@ class Glass extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: r,
         boxShadow: const [
-          BoxShadow(color: Color(0x1416233A), blurRadius: 24, offset: Offset(0, 8)),
-          BoxShadow(color: Color(0x0F16233A), blurRadius: 2, offset: Offset(0, 1)),
+          BoxShadow(
+            color: Color(0x1416233A),
+            blurRadius: 12,
+            offset: Offset(0, 5),
+          ),
+          BoxShadow(
+            color: Color(0x0F16233A),
+            blurRadius: 2,
+            offset: Offset(0, 1),
+          ),
         ],
       ),
       // No blur behind: blurring what scrolls under the bars costs every
@@ -241,9 +253,22 @@ class _StarPainter extends CustomPainter {
     double x(double v) => v / 100 * s.width;
     double y(double v) => v / 100 * s.height;
     final pts = <List<double>>[
-      [50, 2], [64, 16], [84, 16], [84, 36], [98, 50], [84, 64], [84, 84],
-      [64, 84], [50, 98], [36, 84], [16, 84], [16, 64], [2, 50], [16, 36],
-      [16, 16], [36, 16],
+      [50, 2],
+      [64, 16],
+      [84, 16],
+      [84, 36],
+      [98, 50],
+      [84, 64],
+      [84, 84],
+      [64, 84],
+      [50, 98],
+      [36, 84],
+      [16, 84],
+      [16, 64],
+      [2, 50],
+      [16, 36],
+      [16, 16],
+      [36, 16],
     ];
     final p = Path()..moveTo(x(pts[0][0]), y(pts[0][1]));
     for (final q in pts.skip(1)) {
@@ -332,15 +357,6 @@ class Pills extends StatelessWidget {
                 color: on ? Brand.blue : Brand.surface,
                 borderRadius: BorderRadius.circular(19),
                 border: on ? null : Border.all(color: Brand.line),
-                boxShadow: on
-                    ? const [
-                        BoxShadow(
-                          color: Color(0x4D1C4F92),
-                          blurRadius: 12,
-                          offset: Offset(0, 4),
-                        ),
-                      ]
-                    : null,
               ),
               child: Text(
                 labels[i],

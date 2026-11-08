@@ -19,6 +19,10 @@ import '../ink/ink_store.dart';
 import '../ink/marks.dart';
 import '../ink/item_painter.dart';
 import '../library/library_store.dart';
+import '../notes/note_pdf.dart';
+import '../notes/paper.dart';
+import '../notes/paper_templates.dart';
+import '../library/home_sheets.dart' show NewPaperSheet;
 import '../sync/conflicts.dart';
 import '../ink/note_items.dart';
 import '../ink/page_ink_overlay.dart';
@@ -33,6 +37,7 @@ import '../ui/brand_widgets.dart';
 import '../ui/color_palette.dart';
 import '../ui/theme.dart';
 import 'conflict_bar.dart';
+import 'page_map.dart';
 import 'pages_sheet.dart';
 import 'reader_chrome.dart';
 import 'reader_prefs.dart';
@@ -69,8 +74,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
   final _layout = ToolLayout.instance;
   ReaderPop _pop = ReaderPop.none;
   double _viewWidth = 400;
-  double _reserveTop = 0;
-  bool? _reserveWide;
   final _viewer = PdfViewerController();
   final _words = <int, Future<List<WordBox>>>{};
   InkStore? _store;
@@ -95,6 +98,249 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void _setSearch(SearchPick? pick) {
     setState(() => _search = pick);
     _searchShown.value = pick;
+  }
+
+  /// A note is shown from memory. Adding a page rewrites it, and a new name
+  /// ([_docVersion]) makes the viewer load the new one.
+  Uint8List? _noteBytes;
+  int _docVersion = 0;
+  bool _growing = false;
+
+  /// The page to show once the viewer has loaded the grown note.
+  int? _goAfterLoad;
+
+  /// Where each page shown comes from: the book's own pages and the blank
+  /// pages added between them (see [PageMap]).
+  PageMap _map = PageMap.none;
+
+  /// The book with its added pages, while it has some; the viewer reads the
+  /// book's file directly otherwise.
+  PdfDocument? _mixed;
+
+  /// Documents no longer shown, closed a moment later (the viewer may still
+  /// be letting go of them), and all of them when the reader closes.
+  final _spentDocs = <PdfDocument>[];
+  final _liveDocs = <PdfDocument>[];
+
+  int _keyOf(int place) => _map.keyOf(place);
+  int _placeOf(int key) => _map.placeOf(key);
+
+  /// The page in view as the book knows it (see [PageMap]).
+  int get _keyNow => _keyOf(_viewer.pageNumber ?? 1);
+
+  /// Pages of the book itself, without the added ones.
+  int get _bookPageCount => _map.isNone ? _viewer.pageCount : _map.bookPages;
+
+  /// The book has added pages: it is shown from [_mixed].
+  bool get _wantsMix =>
+      !widget.book.isNote && (_prefs?.extras.isNotEmpty ?? false);
+
+  /// Builds the book with its added pages in their places, and shows it at
+  /// [showKey] (else at the page in view).
+  Future<void> _assemble({int? showKey}) async {
+    final pr = _prefs;
+    if (pr == null || widget.book.isNote) return;
+    final keep = showKey ?? (_viewer.isReady ? _keyNow : null);
+    final extras = pr.extras;
+    if (extras.isEmpty) {
+      if (_mixed == null) return;
+      _retireDocs();
+      setState(() {
+        _mixed = null;
+        _map = PageMap.none;
+        _docVersion++;
+        _goAfterLoad = keep;
+      });
+      return;
+    }
+    final doc = await PdfDocument.openFile(widget.library.pathOf(widget.book));
+    final first = doc.pages.first;
+    // One small document per added page, on its own paper, the size of the
+    // book's pages (a template page keeps its own).
+    final sheets = <int, PdfDocument>{};
+    for (final e in extras) {
+      final paper = e.paper.isEmpty
+          ? const PaperStyle(kind: PaperKind.blank).encode()
+          : e.paper;
+      sheets[e.key] = await PdfDocument.openData(
+        await Paper.pdf(
+          paper,
+          pages: 1,
+          stamp: '${widget.book.id}-${e.id}',
+          width: first.width,
+          height: first.height,
+        ),
+        sourceName: 'sheet-${widget.book.id}-${e.id}-$_docVersion',
+      );
+    }
+    if (_outline.isEmpty) await _loadOutline(doc);
+    final map = PageMap.build(doc.pages.length, extras);
+    final own = doc.pages.toList();
+    doc.pages = [
+      for (final key in map.keys)
+        isExtraKey(key) ? sheets[key]!.pages.first : own[key - 1],
+    ];
+    if (!mounted) {
+      await doc.dispose();
+      for (final d in sheets.values) {
+        await d.dispose();
+      }
+      return;
+    }
+    _retireDocs();
+    _liveDocs.addAll([doc, ...sheets.values]);
+    setState(() {
+      _mixed = doc;
+      _map = map;
+      _docVersion++;
+      _goAfterLoad = keep == null ? null : map.placeOf(keep);
+    });
+  }
+
+  void _retireDocs() {
+    final old = List.of(_liveDocs);
+    _liveDocs.clear();
+    _spentDocs.addAll(old);
+    Timer(const Duration(seconds: 3), () {
+      for (final d in old) {
+        if (_spentDocs.remove(d)) unawaited(d.dispose());
+      }
+    });
+  }
+
+  /// A blank page after the page in view (after the book page an added
+  /// page follows).
+  Future<void> _addExtraPage() async {
+    final pr = _prefs;
+    if (pr == null || !_viewer.isReady || widget.book.isNote) return;
+    final key = _keyNow;
+    final after = isExtraKey(key)
+        ? (pr.extras.where((e) => e.key == key).firstOrNull?.after ?? 0)
+        : key;
+    // The same papers as a note: plain, lined, squared, or a template.
+    final picked = await showNotsSheet<Object>(
+      context,
+      builder: (_) => const NewPaperSheet(forPage: true),
+    );
+    final String paper;
+    if (picked is PaperStyle) {
+      paper = picked.encode();
+    } else if (picked is PaperTemplate) {
+      paper = picked.code;
+    } else {
+      return;
+    }
+    if (!mounted) return;
+    final e = pr.addExtra(after, paper: paper);
+    await pr.flush();
+    await _assemble(showKey: e.key);
+    _say(
+      'أُضيفت صفحة فارغة بعد الصفحة $after. اضغط مطولاً على شريطها لنقلها أو حذفها.',
+    );
+  }
+
+  /// What can be done with an added page: move it after another page, or
+  /// remove it with what is written on it.
+  Future<void> _extraActions(ExtraPage e) async {
+    final r = await showNotsSheet<String>(
+      context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SheetHeader('صفحة مضافة (بعد الصفحة ${e.after})'),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+              child: ActionRows(
+                rows: [
+                  ActionRow(
+                    Icons.drive_file_move_outline,
+                    'نقلها إلى صفحة أخرى',
+                    () => Navigator.pop(context, 'move'),
+                  ),
+                  ActionRow(
+                    Icons.delete_outline,
+                    'حذف الصفحة وما كُتب عليها',
+                    () => Navigator.pop(context, 'remove'),
+                    danger: true,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    final pr = _prefs;
+    if (pr == null) return;
+    if (r == 'move') {
+      final to = await _askPageNumber(e.after);
+      if (to == null) return;
+      pr.moveExtra(e.id, to);
+      await pr.flush();
+      await _assemble(showKey: e.key);
+    } else if (r == 'remove') {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('حذف الصفحة المضافة؟'),
+          content: const Text('تُحذف الصفحة وكل ما كتبته عليها.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('تراجع'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('حذف'),
+            ),
+          ],
+        ),
+      );
+      if (ok != true) return;
+      _store?.document.replacePage(e.key, const [], const []);
+      pr.removeExtra(e.id);
+      await pr.flush();
+      await _assemble(showKey: e.after < 1 ? 1 : e.after);
+    }
+  }
+
+  /// Asks after which page of the book an added page goes.
+  Future<int?> _askPageNumber(int current) async {
+    final c = TextEditingController(text: '$current');
+    final n = await showDialog<int>(
+      context: context,
+      builder: (context) {
+        void done() {
+          final v = int.tryParse(c.text.trim());
+          if (v != null) Navigator.pop(context, v);
+        }
+
+        return AlertDialog(
+          title: const Text('ضعها بعد الصفحة'),
+          content: TextField(
+            controller: c,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              hintText: '0 لتكون قبل الصفحة الأولى، وحتى $_bookPageCount',
+            ),
+            onSubmitted: (_) => done(),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('تراجع'),
+            ),
+            FilledButton(onPressed: done, child: const Text('نقل')),
+          ],
+        );
+      },
+    );
+    c.dispose();
+    return n?.clamp(0, _bookPageCount);
   }
 
   /// Last place read and bookmarks of this book.
@@ -124,7 +370,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     // hold it in the middle and still write along either edge.
     final zoom = _viewer.currentZoom;
     _tools.ruler.value = Ruler(
-      page: n,
+      page: _keyOf(n),
       center: Offset(page.width / 2, page.height / 2),
       length: math.min(page.width * 0.85, 480),
       thickness: zoom > 0 ? (90 / zoom).clamp(40.0, 140.0) : 54,
@@ -166,8 +412,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     listenable: Listenable.merge([session, _viewer]),
     builder: (context, _) => ConflictBar(
       session: session,
-      page: _viewer.isReady ? (_viewer.pageNumber ?? 1) : 1,
-      onGoTo: (n) => _viewer.goToPage(pageNumber: n),
+      page: _viewer.isReady ? _keyNow : 1,
+      onGoTo: (n) => _goToPlace(_placeOf(n)),
       onAccepted: _conflictSettled,
     ),
   );
@@ -239,7 +485,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
         return;
       }
       setState(() => _prefs = pr);
-      _restorePage();
+      if (_wantsMix) {
+        _assemble().then((_) => _restorePage());
+      } else {
+        _restorePage();
+      }
     });
     BookLinkStore.open(widget.book.id, widget.library.pathOf(widget.book)).then(
       (b) {
@@ -247,6 +497,60 @@ class _ReaderScreenState extends State<ReaderScreen> {
       },
     );
     _openInk();
+    if (widget.book.isNote) unawaited(_loadNote());
+  }
+
+  /// Reads the note's PDF. Pages added on another device (the count comes
+  /// with the reading state) are added here too.
+  Future<void> _loadNote() async {
+    try {
+      var bytes = await File(widget.library.pathOf(widget.book)).readAsBytes();
+      final saved =
+          (await ReaderPrefs.peekProgress(widget.book.id))?.count ?? 0;
+      if (saved > notePageCount(bytes)) {
+        bytes = await setNotePages(widget.library, widget.book, saved);
+      }
+      if (mounted) setState(() => _noteBytes = bytes);
+    } on Object catch (e) {
+      if (mounted) setState(() => _error = e);
+    }
+  }
+
+  /// Gives the note [pages] sheets and shows page [goTo] (or the one in
+  /// view) once they are loaded.
+  Future<void> _setNotePages(int pages, {int? goTo}) async {
+    if (_growing) return;
+    _growing = true;
+    try {
+      final bytes = await setNotePages(widget.library, widget.book, pages);
+      _prefs?.setPageCount(pages);
+      if (!mounted) return;
+      setState(() {
+        _noteBytes = bytes;
+        _docVersion++;
+        _goAfterLoad = goTo ?? _pageNow.value;
+      });
+    } on Object catch (e) {
+      _say('تعذّرت إضافة الصفحة: $e');
+    } finally {
+      _growing = false;
+    }
+  }
+
+  /// A new blank sheet after the last one.
+  void _addNotePage() {
+    if (!_viewer.isReady || _growing) return;
+    final n = _viewer.pageCount + 1;
+    unawaited(_setNotePages(n, goTo: n));
+  }
+
+  /// Writing came (from another device) on pages the note does not have yet.
+  void _fitNoteToWriting() {
+    if (!widget.book.isNote || !_viewer.isReady || _noteBytes == null) return;
+    final pages = _annotatedPages;
+    if (pages.isEmpty) return;
+    final last = pages.reduce(math.max);
+    if (last > _viewer.pageCount) unawaited(_setNotePages(last));
   }
 
   /// The book's text is ready. With a word map, the words of the pages come
@@ -348,6 +652,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
             if (_selection?.active ?? false) _showTools();
           });
       });
+      _fitNoteToWriting();
       unawaited(_openConflicts(s));
       if (s.document.strokeCount == 0 &&
           s.document.items.values.every((l) => l.isEmpty)) {
@@ -467,6 +772,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _prefs?.dispose();
     _searchShown.dispose();
     _palette.dispose();
+    for (final d in [..._liveDocs, ..._spentDocs]) {
+      unawaited(d.dispose());
+    }
     super.dispose();
   }
 
@@ -476,23 +784,40 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final pr = _prefs;
     if (_restored || pr == null || !_viewer.isReady) return;
     _restored = true;
-    pr.setPageCount(_viewer.pageCount);
+    pr.setPageCount(_bookPageCount);
     _viewer.addListener(_onViewMoved);
     final pos = pr.position;
-    if (pos != null && pos.page >= 1 && pos.page <= _viewer.pageCount) {
+    if (pos != null &&
+        pos.page >= 1 &&
+        _placeOf(pos.page) <= _viewer.pageCount) {
       final zoom = pos
           .zoomFor(_viewer.coverScale)
           .clamp(_viewer.minScale, _viewer.maxScale);
       _viewer.goTo(
         _viewer.calcMatrixFor(
-          pos.centerIn(_viewer.layout.pageLayouts[pos.page - 1]),
+          pos.centerIn(_viewer.layout.pageLayouts[_placeOf(pos.page) - 1]),
           zoom: zoom,
         ),
         duration: Duration.zero,
       );
-    } else if (pr.lastPage > 1 && pr.lastPage <= _viewer.pageCount) {
+    } else if (pr.lastPage > 1 && pr.lastPage <= _bookPageCount) {
       // Saved by a version that kept only the page.
-      _viewer.goToPage(pageNumber: pr.lastPage, duration: Duration.zero);
+      _viewer.goToPage(
+        pageNumber: _placeOf(pr.lastPage),
+        duration: Duration.zero,
+      );
+    }
+  }
+
+  /// Shows page [place]. The sizes of pages not loaded yet are guessed, so
+  /// a long jump can fall short; it is made again until it lands.
+  Future<void> _goToPlace(int place) async {
+    if (!_viewer.isReady) return;
+    await _viewer.goToPage(pageNumber: place);
+    for (var i = 0; i < 6 && mounted && _viewer.pageNumber != place; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      if (!mounted || !_viewer.isReady) return;
+      await _viewer.goToPage(pageNumber: place, duration: Duration.zero);
     }
   }
 
@@ -512,7 +837,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (n == null) return;
     pr.setPosition(
       ReadingPosition.capture(
-        page: n,
+        page: _keyOf(n),
         pageRect: _viewer.layout.pageLayouts[n - 1],
         center: _viewer.centerPosition,
         zoom: _viewer.currentZoom,
@@ -548,37 +873,45 @@ class _ReaderScreenState extends State<ReaderScreen> {
         document: _viewer.document,
         pageCount: _viewer.pageCount,
         currentPage: _viewer.pageNumber ?? 1,
-        bookmarks: _prefs?.bookmarks.toSet() ?? const {},
-        annotated: _annotatedPages,
+        bookmarks: {
+          for (final b in _prefs?.bookmarks ?? const <int>[]) _placeOf(b),
+        },
+        annotated: {
+          for (final k in _annotatedPages)
+            if (_map.isNone || _map.keys.contains(k)) _placeOf(k),
+        },
         mode: mode,
       ),
     );
-    if (page != null) await _viewer.goToPage(pageNumber: page);
+    if (page != null) await _goToPlace(page);
   }
 
   /// Words of a page in PDF points with a top-left origin: from the book's
   /// word map when it has one (the source text's exact words, each with its
   /// index in the book), else from the PDF text layer (where the PDF itself
   /// counts y from the bottom).
-  Future<List<WordBox>> _wordsOf(PdfPage page) =>
-      _words.putIfAbsent(page.pageNumber, () async {
-        final mapped = _mappedWords(page.pageNumber);
-        if (mapped != null) {
-          _wordsReady[page.pageNumber] = mapped;
-          return mapped;
-        }
-        final text = await page.loadStructuredText();
-        final h = page.height;
-        final rects = [
-          for (final r in text.charRects)
-            r.isEmpty
-                ? null
-                : Rect.fromLTRB(r.left, h - r.top, r.right, h - r.bottom),
-        ];
-        final words = splitWords(text.fullText, rects);
-        _wordsReady[page.pageNumber] = words;
-        return words;
-      });
+  Future<List<WordBox>> _wordsOf(PdfPage page) {
+    final key = _keyOf(page.pageNumber);
+    return _words.putIfAbsent(key, () async {
+      if (isExtraKey(key)) return const <WordBox>[];
+      final mapped = _mappedWords(key);
+      if (mapped != null) {
+        _wordsReady[key] = mapped;
+        return mapped;
+      }
+      final text = await page.loadStructuredText();
+      final h = page.height;
+      final rects = [
+        for (final r in text.charRects)
+          r.isEmpty
+              ? null
+              : Rect.fromLTRB(r.left, h - r.top, r.right, h - r.bottom),
+      ];
+      final words = splitWords(text.fullText, rects);
+      _wordsReady[key] = words;
+      return words;
+    });
+  }
 
   /// The placed words of PDF page [pdfPage] from the word map, or null.
   List<WordBox>? _mappedWords(int pdfPage) {
@@ -606,22 +939,27 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final store = _store, selection = _selection;
     if (store == null || selection == null) return const [];
     final book = _book;
+    final key = _keyOf(page.pageNumber);
+    final extra = isExtraKey(key)
+        ? _prefs?.extras.where((e) => e.key == key).firstOrNull
+        : null;
     return [
-      if (_prefs != null) _BookmarkRibbon(prefs: _prefs!, page: page.pageNumber),
-      if (book != null && book.embedded)
+      if (_prefs != null) _BookmarkRibbon(prefs: _prefs!, page: key),
+      if (book != null && book.embedded && extra == null)
         SearchHighlight(
           search: _searchShown,
           book: book,
-          pdfPage: page.pageNumber,
+          pdfPage: key,
           pageWidthPt: page.width,
         ),
       PageInkOverlay(
-        // A new word source (the book's map arrived) means new words.
-        key: ValueKey(book?.embedded ?? false),
+        // A new word source (the book's map arrived) means new words; and
+        // a page that moved is another page.
+        key: ValueKey((book?.embedded ?? false, key)),
         document: store.document,
         tools: _tools,
         selection: selection,
-        pageNumber: page.pageNumber,
+        pageNumber: key,
         pageWidthPt: page.width,
         pageWidthPx: pageRect.width,
         viewChanged: _viewer,
@@ -630,6 +968,18 @@ class _ReaderScreenState extends State<ReaderScreen> {
         onCreateMark: _createMark,
         loadWords: () => _wordsOf(page),
       ),
+      if (extra != null)
+        Positioned(
+          top: 6,
+          left: 0,
+          right: 0,
+          child: Center(
+            child: ExtraPageTab(
+              after: extra.after,
+              onActions: () => _extraActions(extra),
+            ),
+          ),
+        ),
     ];
   }
 
@@ -792,7 +1142,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
     final page = hit.page;
     final pt = Offset(hit.offset.x, page.height - hit.offset.y);
-    final items = store.document.itemsOf(page.pageNumber);
+    final key = _keyOf(page.pageNumber);
+    final items = store.document.itemsOf(key);
     for (var i = items.length - 1; i >= 0; i--) {
       final it = items[i];
       // Only a note shows something on tap; a plain mark is left alone.
@@ -801,14 +1152,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
           (it.kind == ItemKind.mark &&
               (it.text.isNotEmpty || it.style == MarkStyle.comment));
       if (hasNote && itemContains(it, pt)) {
-        _previewItem(page.pageNumber, it);
+        _previewItem(key, it);
         return true;
       }
       if (it.kind == ItemKind.tape && itemContains(it, pt)) {
-        store.document.replaceItem(
-          page.pageNumber,
-          it.copyWith(revealed: !it.revealed),
-        );
+        store.document.replaceItem(key, it.copyWith(revealed: !it.revealed));
         return true;
       }
     }
@@ -877,8 +1225,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     Icons.inventory_2_outlined,
                     'ملف نوتس (.nots)',
                     () => Navigator.pop(context, 'nots'),
-                    subtitle:
-                        'الكتاب وكتابتك وربط Word والعلامات: يُفتح في التطبيق على أي جهاز وتكمل عليه',
+                    subtitle: 'الكتاب وكتابتك وربط Word والعلامات: يُفتح في التطبيق على أي جهاز وتكمل عليه',
                   ),
                 ],
               ),
@@ -920,9 +1267,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
       ),
     );
     try {
-      final doc = _viewer.document;
+      final doc = _mixed == null
+          ? _viewer.document
+          : await PdfDocument.openFile(widget.library.pathOf(widget.book));
       final title = widget.book.title;
-      final page = _viewer.pageNumber ?? 1;
+      final page = _map
+          .bookPageAt(_viewer.pageNumber ?? 1)
+          .clamp(1, doc.pages.length);
       late final Uint8List bytes;
       late final String name;
       if (choice == 'gal-page' || choice == 'gal-marked') {
@@ -1103,9 +1454,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
         final chars = _charBoxes(r);
         if (chars.isEmpty) continue;
         drafts.add((
-          r.pageNumber,
+          _keyOf(r.pageNumber),
           _withBookWords(
-            r.pageNumber,
+            _keyOf(r.pageNumber),
             NoteItem.mark(
               id: doc.takeStrokeId(),
               lineRects: lineRects(chars),
@@ -1144,11 +1495,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
       final r = ranges.first;
       final book = _book;
       String? text;
-      final l = book?.layoutOf(book.bookPageOf(r.pageNumber));
+      final l = book?.layoutOf(book.bookPageOf(_keyOf(r.pageNumber)));
       if (book != null && l != null) {
         final ids = l.wordsInRects(lineRects(_charBoxes(r)));
         if (ids.isNotEmpty) {
-          final t = book.pages[book.bookPageOf(r.pageNumber) - 1];
+          final t = book.pages[book.bookPageOf(_keyOf(r.pageNumber)) - 1];
           final at = l.starts[ids.first];
           final a = t.lastIndexOf('\n', at > 0 ? at - 1 : 0) + 1;
           var e = t.indexOf('\n', at);
@@ -1216,7 +1567,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (book == null || !book.embedded || !_viewer.isReady) return null;
     final parts = <String>[];
     for (final r in ranges) {
-      final bookPage = book.bookPageOf(r.pageNumber);
+      final bookPage = book.bookPageOf(_keyOf(r.pageNumber));
       final l = book.layoutOf(bookPage);
       if (l == null) return null;
       final h = _viewer.document.pages[r.pageNumber - 1].height;
@@ -1241,7 +1592,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   void _toggleBookmark() {
     if (!_viewer.isReady) return;
-    _prefs?.toggleBookmark(_viewer.pageNumber ?? 1);
+    _prefs?.toggleBookmark(_keyNow);
     setState(() {});
   }
 
@@ -1346,7 +1697,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       if (!mounted) return;
       Navigator.of(context).pop();
       setState(() => _book = book);
-      final pdfPages = _viewer.isReady ? _viewer.pageCount : null;
+      final pdfPages = _viewer.isReady ? _bookPageCount : null;
       final match = pdfPages == null || pdfPages == book.pageCount;
       messenger.showSnackBar(
         SnackBar(
@@ -1422,7 +1773,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _setSearch(pick);
     final book = _book!;
     final hit = pick.hits[pick.index];
-    final pdfPage = book.pdfPageOf(hit.page);
+    final pdfPage = _placeOf(book.pdfPageOf(hit.page));
     final rects = book.hitRects(hit);
     if (rects.isEmpty || !_viewer.isReady || pdfPage > _viewer.pageCount) {
       _viewer.goToPage(pageNumber: pdfPage);
@@ -1535,8 +1886,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
     listenable: _pageNow,
     builder: (context, _) => _viewer.isReady
         ? PagePill(
-            page: _pageNow.value,
-            count: _viewer.pageCount,
+            page: _map.bookPageAt(_pageNow.value),
+            count: _bookPageCount,
+            extra: isExtraKey(_keyOf(_pageNow.value)),
             onTap: () => _openPages(PagesMode.all),
           )
         : const SizedBox.shrink(),
@@ -1639,7 +1991,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         isBook: _isBook,
         bookmarked:
             _viewer.isReady &&
-            (_prefs?.isBookmarked(_pageNow.value) ?? false),
+            (_prefs?.isBookmarked(_keyOf(_pageNow.value)) ?? false),
         boxOpen: _pop == ReaderPop.box,
         onBack: () => Navigator.of(context).maybePop(),
         onMasdar: _openMasdar,
@@ -1701,14 +2053,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
       context,
       builder: (_) => TocSheet(
         entries: _tocEntries,
-        currentPdfPage: _viewer.isReady ? (_viewer.pageNumber ?? 1) : 1,
+        currentPdfPage: _viewer.isReady ? _keyNow : 1,
         onLink: () {
           Navigator.of(context).pop();
           _linkDocx();
         },
       ),
     );
-    if (page != null) await _viewer.goToPage(pageNumber: page);
+    if (page != null) await _goToPlace(_placeOf(page));
   }
 
   Future<void> _openMenu() async {
@@ -1733,6 +2085,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
         await _openPages(PagesMode.all);
       case 'clean':
         _cleanScreen();
+      case 'addpage':
+        await _addExtraPage();
       case 'tools':
         await _openSettings();
       case 'link':
@@ -1752,9 +2106,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     var opened = false;
     try {
       opened =
-          await const MethodChannel(
-            'nots/app',
-          ).invokeMethod<bool>('openApp', {'package': masdarPackage}) ??
+          await const MethodChannel('nots/app')
+              .invokeMethod<bool>('openApp', {'package': masdarPackage}) ??
           false;
     } on MissingPluginException {
       opened = false;
@@ -1822,10 +2175,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
         center: center,
         width: page.width * 0.55,
       );
-      doc.addItem(n, item);
+      doc.addItem(_keyOf(n), item);
       // Selected: it can be moved by its body and resized by its corners.
       _tools.setMode(ToolMode.lasso);
-      _selection?.selectItem(n, item.id);
+      _selection?.selectItem(_keyOf(n), item.id);
     } on Object catch (e) {
       _say('تعذّرت إضافة الصورة: $e');
     }
@@ -1838,16 +2191,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final pad = MediaQuery.paddingOf(context);
     final wide = size.width >= wideBars;
     _viewWidth = size.width;
-    final reserve = pad.top + (wide ? 60 : 112);
-    if (wide != _reserveWide || reserve > _reserveTop) {
-      _reserveTop = reserve;
-      _reserveWide = wide;
-    }
     final belowBars = pad.top + (wide ? 56 : 108);
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
-        statusBarIconBrightness: Brand.dark ? Brightness.light : Brightness.dark,
+        statusBarIconBrightness: Brand.dark
+            ? Brightness.light
+            : Brightness.dark,
         statusBarBrightness: Brand.dark ? Brightness.dark : Brightness.light,
       ),
       child: Scaffold(
@@ -1893,6 +2243,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
                       ),
                     ),
                   ),
+                  // A note grows a page at a time.
+                  if (widget.book.isNote)
+                    PositionedDirectional(
+                      end: 14,
+                      bottom: pad.bottom + 12,
+                      child: AddPageButton(onPressed: _addNotePage),
+                    ),
                   // While the bars are away: a small round button showing
                   // the tool in use brings them back (as does a tap on the
                   // page with the hand tool).
@@ -1910,7 +2267,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
                             listenable: _tools,
                             builder: (context, _) => ToolDot(
                               icon: _currentTool.icon,
-                              color: _tools.drawing ? Color(_tools.color) : null,
+                              color: _tools.drawing
+                                  ? Color(_tools.color)
+                                  : null,
                               onTap: _showTools,
                             ),
                           ),
@@ -1949,6 +2308,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   Widget _viewerArea() {
     final wide = _viewWidth >= wideBars;
+    if (widget.book.isNote && _noteBytes == null ||
+        !widget.book.isNote &&
+            (_prefs == null || _wantsMix && _mixed == null)) {
+      return const Center(child: CircularProgressIndicator());
+    }
     return TouchNavigator(
       tools: _tools,
       readView: () => _viewer.isReady ? _viewer.value : null,
@@ -1968,69 +2332,93 @@ class _ReaderScreenState extends State<ReaderScreen> {
           listenable: _tools,
           builder: (context, _) => _cachedViewer(
             wide,
-            () => PdfViewer.file(
-            widget.library.pathOf(widget.book),
-            controller: _viewer,
-            params: PdfViewerParams(
-              // The page fills the width of the screen, with no margin, and
-              // some room above and below for the bars.
-              margin: 0,
-              layoutPages: readerPageLayout(
-                top: () => _reserveTop,
-                bottom: 70,
-                viewWidth: () => _viewWidth,
+            () => _pdfViewer(
+              PdfViewerParams(
+                // Margins, page layout and image cache as in the earlier
+                // version: zooming and moving felt steady there.
+                backgroundColor: wide ? Brand.desk : Brand.paper,
+                pageDropShadow: wide
+                    ? const BoxShadow(
+                        color: Color(0x2916233A),
+                        blurRadius: 18,
+                        offset: Offset(0, 6),
+                      )
+                    : null,
+                // While a drawing tool is active, a finger or the pen draws;
+                // moving and zooming the page is done by [TouchNavigator] (two
+                // fingers anywhere, or one finger when finger drawing is off).
+                panEnabled: !_tools.drawing,
+                scaleEnabled: !_tools.drawing,
+                // Zoom out until a whole page shows, and in to 1600%; vector
+                // ink stays sharp at any level.
+                sizeDelegateProvider: const ReaderZoom(),
+                pageOverlaysBuilder: _overlays,
+                onGeneralTap: _onGeneralTap,
+                buildContextMenu: _selectionMenu,
+                // Momentum scrolling: flicks carry on.
+                scrollPhysics: PdfViewerParams.getScrollPhysics(context),
+                onViewerReady: (doc, _) {
+                  if (_mixed == null) _loadOutline(doc);
+                  _restorePage();
+                  final go = _goAfterLoad;
+                  if (go != null) {
+                    _goAfterLoad = null;
+                    _viewer.goToPage(
+                      pageNumber: go.clamp(1, _viewer.pageCount),
+                      duration: Duration.zero,
+                    );
+                  }
+                  _fitNoteToWriting();
+                },
+                onPageChanged: (n) {
+                  if (n == null) return;
+                  _prefs?.setLastPage(_keyOf(n));
+                  // Ready the page's words for instant taps.
+                  final pages = _viewer.document.pages;
+                  for (final k in [n, n + 1]) {
+                    if (k <= pages.length) _wordsOf(pages[k - 1]);
+                  }
+                },
               ),
-              backgroundColor: wide ? Brand.desk : Brand.paper,
-            // Few rendered pages are kept: weak phones stay light.
-            maxImageBytesCachedOnMemory: 48 * 1024 * 1024,
-              pageDropShadow: wide
-                  ? const BoxShadow(
-                      color: Color(0x2916233A),
-                      blurRadius: 18,
-                      offset: Offset(0, 6),
-                    )
-                  : null,
-              // While a drawing tool is active, a finger or the pen draws;
-              // moving and zooming the page is done by [TouchNavigator] (two
-              // fingers anywhere, or one finger when finger drawing is off).
-              panEnabled: !_tools.drawing,
-              scaleEnabled: !_tools.drawing,
-              // Zoom out until a whole page shows, and in to 1600%; vector
-              // ink stays sharp at any level.
-              sizeDelegateProvider: const ReaderZoom(),
-              pageOverlaysBuilder: _overlays,
-              onGeneralTap: _onGeneralTap,
-              buildContextMenu: _selectionMenu,
-              // Momentum scrolling: flicks carry on.
-              scrollPhysics: PdfViewerParams.getScrollPhysics(context),
-              onViewerReady: (doc, _) {
-                _loadOutline(doc);
-                _restorePage();
-              },
-              onPageChanged: (n) {
-                if (n == null) return;
-                _prefs?.setLastPage(n);
-                // Ready the page's words for instant taps.
-                final pages = _viewer.document.pages;
-                for (final k in [n, n + 1]) {
-                  if (k <= pages.length) _wordsOf(pages[k - 1]);
-                }
-              },
             ),
-          ),
           ),
         ),
       ),
     );
   }
 
+  /// The book from its file; a note from memory, under a name that changes
+  /// with each new page.
+  Widget _pdfViewer(PdfViewerParams params) => widget.book.isNote
+      ? PdfViewer.data(
+          _noteBytes!,
+          sourceName: 'note-${widget.book.id}-$_docVersion',
+          controller: _viewer,
+          params: params,
+        )
+      : _mixed != null
+      ? PdfViewer(
+          PdfDocumentRefDirect(
+            _mixed!,
+            autoDispose: false,
+            key: PdfDocumentRefKey('mixed-${widget.book.id}', [_docVersion]),
+          ),
+          controller: _viewer,
+          params: params,
+        )
+      : PdfViewer.file(
+          widget.library.pathOf(widget.book),
+          controller: _viewer,
+          params: params,
+        );
+
   Widget? _viewerWidget;
-  (bool, bool)? _viewerKey;
+  (bool, bool, int)? _viewerKey;
 
   /// The same viewer widget while nothing it depends on changed, so Flutter
   /// does not touch it at all.
   Widget _cachedViewer(bool wide, Widget Function() build) {
-    final key = (_tools.drawing, wide);
+    final key = (_tools.drawing, wide, _docVersion);
     if (_viewerWidget == null || key != _viewerKey) {
       _viewerKey = key;
       _viewerWidget = build();

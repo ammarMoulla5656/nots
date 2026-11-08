@@ -90,9 +90,10 @@ class CatalogQuery {
 /// The books of [books] that answer [q], in its order. Works on the keys
 /// normalised at load time, so it is fast enough to run on every key press.
 List<CatalogBook> runQuery(List<CatalogBook> books, CatalogQuery q) {
-  final words = normalizeForSearch(
-    q.text,
-  ).text.split(' ').where((w) => w.isNotEmpty).toList();
+  final words = normalizeForSearch(q.text).text
+      .split(' ')
+      .where((w) => w.isNotEmpty)
+      .toList();
   final out = [
     for (final b in books)
       if ((q.subject.isEmpty || b.subject == q.subject) &&
@@ -136,7 +137,8 @@ class CatalogStore extends ChangeNotifier {
     http.Client? client,
     Future<String> Function()? bundled,
   }) : _client = client ?? http.Client(),
-       _bundled = bundled ?? (() => rootBundle.loadString('assets/catalog.txt'));
+       _bundled =
+           bundled ?? (() => rootBundle.loadString('assets/catalog.txt'));
 
   final Directory _root;
   final http.Client _client;

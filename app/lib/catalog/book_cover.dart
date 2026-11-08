@@ -14,7 +14,11 @@ class BookCover extends StatelessWidget {
     this.width,
     this.progress,
     this.badge,
+    this.ownId,
   });
+
+  /// See [CoverImage.ownId].
+  final String? ownId;
 
   /// Path of the cover on the server; empty for a plain cover.
   final String cover;
@@ -43,9 +47,14 @@ class BookCover extends StatelessWidget {
         return DecoratedBox(
           decoration: const BoxDecoration(
             borderRadius: _radius,
+            // One small shadow: a screen full of covers stays light to draw
+            // on weak phones.
             boxShadow: [
-              BoxShadow(color: Color(0x2E000000), blurRadius: 3, offset: Offset(0, 2)),
-              BoxShadow(color: Color(0x29123A70), blurRadius: 20, offset: Offset(0, 10)),
+              BoxShadow(
+                color: Color(0x33123A70),
+                blurRadius: 6,
+                offset: Offset(0, 3),
+              ),
             ],
           ),
           child: ClipRRect(
@@ -56,7 +65,7 @@ class BookCover extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  CoverImage(cover, width: w, height: h),
+                  CoverImage(cover, width: w, height: h, ownId: ownId),
                   // The spine.
                   Positioned(
                     left: 0,

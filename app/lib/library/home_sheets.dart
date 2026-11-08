@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../catalog/book_cover.dart';
+import '../catalog/cover_image.dart';
+import '../notes/paper_templates.dart';
 import '../notes/paper.dart';
 import '../ui/brand_widgets.dart';
 import '../ui/color_wheel.dart';
@@ -10,9 +12,12 @@ import 'library_store.dart';
 
 /// What the "new" star offers: a sheet of paper (plain, lined or squared,
 /// in the colours chosen), or adding a book from the device. Pops with the
-/// [PaperStyle] chosen, or [addBook].
+/// [PaperStyle] chosen, a [PaperTemplate] of the server, or [addBook].
 class NewPaperSheet extends StatefulWidget {
-  const NewPaperSheet({super.key});
+  const NewPaperSheet({super.key, this.forPage = false});
+
+  /// For a page added inside a book: no "add a book" here.
+  final bool forPage;
 
   /// Popped when the user asked to add a book instead.
   static const addBook = 'book';
@@ -29,6 +34,61 @@ class _NewPaperSheetState extends State<NewPaperSheet> {
   );
   final _extraPaper = <int>[];
   final _extraLine = <int>[];
+
+  @override
+  void initState() {
+    super.initState();
+    PaperTemplates.instance.load();
+  }
+
+  /// The papers the server offers, in a row; one tap takes one.
+  Widget _templates() => ListenableBuilder(
+    listenable: PaperTemplates.instance,
+    builder: (context, _) {
+      final all = PaperTemplates.instance.all;
+      if (all.isEmpty) return const SizedBox.shrink();
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _label('قوالب'),
+          SizedBox(
+            height: 128,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: all.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 12),
+              itemBuilder: (context, i) {
+                final t = all[i];
+                return GestureDetector(
+                  onTap: () => Navigator.pop(context, t),
+                  child: SizedBox(
+                    width: 70,
+                    child: Column(
+                      children: [
+                        SizedBox(
+                          height: 99,
+                          child: t.style != null
+                              ? PaperPreview(t.style!)
+                              : CoverImage(t.thumb, width: 70, height: 99),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          t.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      );
+    },
+  );
 
   Future<void> _custom(bool paper) async {
     final c = await showColorWheelDialog(
@@ -60,7 +120,11 @@ class _NewPaperSheetState extends State<NewPaperSheet> {
               child: Container(
                 width: 38,
                 height: 38,
-                margin: const EdgeInsetsDirectional.only(end: 10, top: 3, bottom: 3),
+                margin: const EdgeInsetsDirectional.only(
+                  end: 10,
+                  top: 3,
+                  bottom: 3,
+                ),
                 decoration: BoxDecoration(
                   color: Color(c),
                   borderRadius: BorderRadius.circular(11),
@@ -119,14 +183,15 @@ class _NewPaperSheetState extends State<NewPaperSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const SheetHeader('ورقة جديدة'),
+            SheetHeader(widget.forPage ? 'صفحة جديدة في الكتاب' : 'ورقة جديدة'),
             Row(
               children: [
                 for (final k in PaperKind.values) ...[
                   if (k != PaperKind.values.first) const SizedBox(width: 12),
                   Expanded(
                     child: GestureDetector(
-                      onTap: () => setState(() => _style = _style.copyWith(kind: k)),
+                      onTap: () =>
+                          setState(() => _style = _style.copyWith(kind: k)),
                       child: Column(
                         children: [
                           PaperPreview(
@@ -157,22 +222,24 @@ class _NewPaperSheetState extends State<NewPaperSheet> {
               _label('لون الخطوط'),
               _swatches(lineColors, _style.line, false),
             ],
+            _templates(),
             const SizedBox(height: 18),
             FilledButton.icon(
               onPressed: () => Navigator.pop(context, _style),
               icon: const Icon(Icons.add),
-              label: const Text('إنشاء الورقة'),
+              label: Text(widget.forPage ? 'إضافة الصفحة' : 'إنشاء الورقة'),
             ),
             const SizedBox(height: 12),
-            Card(
-              clipBehavior: Clip.antiAlias,
-              child: ListTile(
-                leading: const Icon(Icons.description_outlined),
-                title: const Text('إضافة كتاب'),
-                subtitle: const Text('ملف PDF أو ملف نوتس من جهازك'),
-                onTap: () => Navigator.pop(context, NewPaperSheet.addBook),
+            if (!widget.forPage)
+              Card(
+                clipBehavior: Clip.antiAlias,
+                child: ListTile(
+                  leading: const Icon(Icons.description_outlined),
+                  title: const Text('إضافة كتاب'),
+                  subtitle: const Text('ملف PDF أو ملف نوتس من جهازك'),
+                  onTap: () => Navigator.pop(context, NewPaperSheet.addBook),
+                ),
               ),
-            ),
           ],
         ),
       ),
@@ -182,11 +249,7 @@ class _NewPaperSheetState extends State<NewPaperSheet> {
 
 /// The last ten books opened, with how far the reader got in each.
 class HistorySheet extends StatelessWidget {
-  const HistorySheet({
-    super.key,
-    required this.books,
-    required this.progress,
-  });
+  const HistorySheet({super.key, required this.books, required this.progress});
 
   final List<BookEntry> books;
   final ReadProgress progress;
@@ -268,7 +331,10 @@ class _Row extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
           children: [
-            SizedBox(width: 42, child: BookCover(book.cover, width: 42)),
+            SizedBox(
+              width: 42,
+              child: BookCover(book.cover, ownId: book.id, width: 42),
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(

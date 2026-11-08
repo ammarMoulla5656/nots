@@ -323,7 +323,10 @@ class _SyncSheetState extends State<SyncSheet> {
               ),
               Text(
                 sub,
-                style: const TextStyle(color: Color(0xFFD5E1F2), fontSize: 12.5),
+                style: const TextStyle(
+                  color: Color(0xFFD5E1F2),
+                  fontSize: 12.5,
+                ),
               ),
             ],
           ),
@@ -341,7 +344,9 @@ class _SyncSheetState extends State<SyncSheet> {
   ) => ListTile(
     leading: Icon(icon),
     title: Text(title),
-    subtitle: sub == null ? null : Text(sub, style: const TextStyle(fontSize: 12.5)),
+    subtitle: sub == null
+        ? null
+        : Text(sub, style: const TextStyle(fontSize: 12.5)),
     trailing: Switch(value: on, onChanged: set),
     onTap: () => set(!on),
   );
@@ -406,7 +411,10 @@ class _SyncSheetState extends State<SyncSheet> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
-          _who(_account.email ?? 'حساب Google', 'كتابتك محفوظة في Google Drive'),
+          _who(
+            _account.email ?? 'حساب Google',
+            'كتابتك محفوظة في Google Drive',
+          ),
           const SizedBox(height: 12),
           if (s.driveFull || (q?.nearlyFull ?? false)) _fullWarning(),
           Card(
@@ -417,7 +425,9 @@ class _SyncSheetState extends State<SyncSheet> {
                   leading: Icon(
                     s.needsSignIn ? Icons.login : Icons.cloud_done_outlined,
                   ),
-                  title: Text(s.needsSignIn ? 'سجّل الدخول مرة أخرى' : 'زامن الآن'),
+                  title: Text(
+                    s.needsSignIn ? 'سجّل الدخول مرة أخرى' : 'زامن الآن',
+                  ),
                   subtitle: Text(_working ?? _status()),
                   onTap: busy ? null : (s.needsSignIn ? _signIn : s.syncNow),
                 ),

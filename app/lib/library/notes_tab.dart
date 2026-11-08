@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../catalog/cover_image.dart';
 import '../notes/paper.dart';
+import '../notes/paper_templates.dart';
 import '../sync/google_account.dart';
 import '../ui/brand_widgets.dart';
 import '../ui/theme.dart';
@@ -50,14 +52,10 @@ class NotesTab extends StatelessWidget {
                 'ملاحظاتي',
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: 25,
-                  fontWeight: FontWeight.w900,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
                   height: 1.2,
                 ),
-              ),
-              Text(
-                'أوراقك خارج الكتب',
-                style: TextStyle(color: Color(0xFFCFDDF0), fontSize: 12.5),
               ),
             ],
           ),
@@ -87,7 +85,10 @@ class NotesTab extends StatelessWidget {
     return ListenableBuilder(
       listenable: library,
       builder: (context, _) {
-        final notes = [for (final b in library.books) if (b.isNote) b];
+        final notes = [
+          for (final b in library.books)
+            if (b.isNote) b,
+        ];
         return CustomScrollView(
           slivers: [
             SliverToBoxAdapter(child: _hero()),
@@ -181,13 +182,25 @@ class _NoteCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(12),
                     boxShadow: const [
                       BoxShadow(
-                        color: Color(0x1416233A),
-                        blurRadius: 14,
-                        offset: Offset(0, 5),
+                        color: Color(0x1A16233A),
+                        blurRadius: 6,
+                        offset: Offset(0, 3),
                       ),
                     ],
                   ),
-                  child: PaperPreview(PaperStyle.parse(note.author)),
+                  child: Paper.isTemplate(note.author)
+                      ? LayoutBuilder(
+                          builder: (context, c) => ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: CoverImage(
+                              '',
+                              ownId: note.id,
+                              width: c.maxWidth,
+                              height: c.maxHeight,
+                            ),
+                          ),
+                        )
+                      : PaperPreview(PaperStyle.parse(note.author)),
                 ),
               ),
               const SizedBox(height: 9),

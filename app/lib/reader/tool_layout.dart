@@ -47,7 +47,14 @@ enum ReaderTool {
 
   /// Tools that show their own options (kinds, colours, sizes) when chosen.
   bool get hasOptions => switch (this) {
-    pen || highlighter || eraser || shape || text || pin || word || laser => true,
+    pen ||
+    highlighter ||
+    eraser ||
+    shape ||
+    text ||
+    pin ||
+    word ||
+    laser => true,
     _ => false,
   };
 
@@ -113,8 +120,14 @@ class ToolLayout extends ChangeNotifier {
       // A tool missing from the file (added by a later version) goes to the
       // box; one named twice stays where it was first named.
       final seen = <ReaderTool>{};
-      _bar = [for (final t in bar) if (seen.add(t)) t];
-      _box = [for (final t in box) if (seen.add(t)) t];
+      _bar = [
+        for (final t in bar)
+          if (seen.add(t)) t,
+      ];
+      _box = [
+        for (final t in box)
+          if (seen.add(t)) t,
+      ];
       for (final t in ReaderTool.values) {
         if (t.offered && seen.add(t)) _box.add(t);
       }

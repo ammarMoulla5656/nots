@@ -17,6 +17,7 @@ import 'package:nots/ink/note_items.dart';
 import 'package:nots/library/library_store.dart';
 import 'package:nots/notes/note_pdf.dart';
 import 'package:nots/notes/paper.dart';
+import 'package:nots/notes/paper_templates.dart';
 import 'package:nots/reader/reader_chrome.dart';
 import 'package:nots/reader/reader_prefs.dart';
 import 'package:nots/reader/reader_screen.dart';
@@ -386,7 +387,7 @@ void main() {
       await _tap(t, find.byType(PagePill));
       await t.enterText(find.byType(TextField), '35');
       await _tap(t, find.text('انتقال'));
-      await _settle(t, 1500);
+      await _settle(t, 4000);
       expect(find.descendant(of: find.byType(PagePill), matching: find.textContaining('35')), findsWidgets);
       await _shot(t, '06_page_35');
     });
@@ -419,6 +420,50 @@ void main() {
       expect(find.text('ملف نوتس (.nots)'), findsOneWidget);
       await _shot(t, '08_export');
       await _closeSheet(t);
+    });
+
+    await step('a template page is repeated into a note of several pages', () async {
+      final src = await note();
+      final bytes = await Paper.repeatPage(lib.pathOf(src), 3);
+      final doc = await PdfDocument.openData(bytes, sourceName: 'repeat-check');
+      expect(doc.pages.length, 3);
+      await doc.dispose();
+    });
+
+    // ---- a blank page inside a book
+    await step('book: a blank page is added inside it, kept, and moved', () async {
+      await close();
+      await open(book, wait: 3000);
+      await _wake(t);
+      await _tap(t, find.byTooltip('المزيد'));
+      await _tap(t, find.text('إضافة صفحة فارغة هنا'));
+      await _tap(t, find.text('إضافة الصفحة'));
+      await _settle(t, 3000);
+      expect(find.byType(ExtraPageTab), findsWidgets, reason: 'the added page is shown');
+      await _shot(t, '11_added_page');
+      await close();
+      final pr = await ReaderPrefs.open(book.id);
+      expect(pr.extras.length, 1);
+      final id = pr.extras.single.id;
+      pr.moveExtra(id, 8);
+      await pr.flush();
+      pr.dispose();
+      await open(book, wait: 3000);
+      final again = await ReaderPrefs.open(book.id);
+      expect(again.extras.single.after, 8);
+      again.dispose();
+    });
+
+    // ---- a note grows a page at a time
+    await step('a note starts with one page; + adds the next', () async {
+      await close();
+      final n = await note();
+      await open(n, wait: 3000);
+      expect(find.textContaining('/ 1'), findsOneWidget);
+      await _tap(t, find.byTooltip('صفحة جديدة'));
+      await _settle(t, 2500);
+      expect(find.textContaining('/ 2'), findsOneWidget);
+      expect(notePageCount(await File(lib.pathOf(n)).readAsBytes()), 2);
     });
 
     // ---- a tablet

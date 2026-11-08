@@ -11,8 +11,10 @@ import 'package:path_provider/path_provider.dart';
 import '../catalog/catalog_screen.dart';
 import '../catalog/catalog_store.dart';
 import '../catalog/download_manager.dart';
+import '../catalog/own_covers.dart';
 import '../ink/ink_store.dart';
 import '../notes/note_pdf.dart';
+import '../notes/paper_templates.dart';
 import '../notes/paper.dart';
 import '../reader/reader_prefs.dart';
 import '../reader/reader_screen.dart';
@@ -96,6 +98,7 @@ class _HomeScreenState extends State<HomeScreen> {
       deviceName: deviceNameOfThis,
       drive: () =>
           DriveClient(({renew = false}) => account.accessToken(renew: renew)),
+      covers: OwnCovers.instance,
     );
     await sync.finishWipe();
     // Stopped while being asked about another account's data: ask again.
@@ -124,14 +127,31 @@ class _HomeScreenState extends State<HomeScreen> {
       },
     );
     sync.prefs = [
-      await fileIn('settings.json', AppSettings.dirProvider, AppSettings.instance.load),
-      await fileIn('tools.json', ToolLayout.dirProvider, ToolLayout.instance.load),
-      SyncedPref('reading.json', read: () async => lib.readingBytes(), write: lib.applyReading),
+      await fileIn(
+        'settings.json',
+        AppSettings.dirProvider,
+        AppSettings.instance.load,
+      ),
+      await fileIn(
+        'tools.json',
+        ToolLayout.dirProvider,
+        ToolLayout.instance.load,
+      ),
+      SyncedPref(
+        'reading.json',
+        read: () async => lib.readingBytes(),
+        write: lib.applyReading,
+      ),
     ];
     AppSettings.instance.addListener(sync.requestSoon);
     ToolLayout.instance.addListener(sync.requestSoon);
     if (!mounted) return;
     setState(() => _library = lib);
+    // A book with no cover gets a picture of its first page, now and
+    // whenever one arrives (added, or brought from the account).
+    lib.addListener(() => unawaited(OwnCovers.instance.fillMissing(lib)));
+    unawaited(OwnCovers.instance.fillMissing(lib));
+    unawaited(PaperTemplates.instance.load());
     unawaited(catalog.refresh());
     sync.requestSoon();
   }
@@ -235,16 +255,18 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (_) => const NewPaperSheet(),
     );
     if (r is PaperStyle) {
-      await _makeNote(r);
+      await _makeNote(r.encode());
+    } else if (r is PaperTemplate) {
+      await _makeNote(r.code);
     } else if (r == NewPaperSheet.addBook) {
       await _add();
     }
   }
 
-  Future<void> _makeNote(PaperStyle style) async {
+  Future<void> _makeNote(String paper) async {
     setState(() => _busy = true);
     try {
-      final entry = await createNote(_library!, style);
+      final entry = await createNoteOn(_library!, paper);
       await _sync.afterImport(entry);
       if (!mounted) return;
       setState(() => _tab = 2);
@@ -363,9 +385,8 @@ class _HomeScreenState extends State<HomeScreen> {
   /// What is known about a book, in a small window.
   Future<void> _showInfo(BookEntry b) async {
     final c = b.catalogId == null ? null : _catalog.byId(b.catalogId!);
-    String date(DateTime? d) => d == null
-        ? 'لم يُفتح بعد'
-        : '${d.year}/${d.month}/${d.day}';
+    String date(DateTime? d) =>
+        d == null ? 'لم يُفتح بعد' : '${d.year}/${d.month}/${d.day}';
     final pages = (await ReaderPrefs.peekProgress(b.id))?.count;
     final rows = <(String, String)>[
       ('العنوان', b.title),
@@ -529,6 +550,7 @@ class _HomeScreenState extends State<HomeScreen> {
       await lib.offload(b);
     } else if (choice == 'everywhere') {
       await lib.remove(b, deleteWriting: true);
+      await OwnCovers.instance.remove(b.id);
       try {
         await _sync.forget(b.id);
       } on Exception {
@@ -544,9 +566,7 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           title: Text(
-            b.isNote
-                ? 'حذف «${b.title}»؟'
-                : 'إزالة «${b.title}» من المكتبة؟',
+            b.isNote ? 'حذف «${b.title}»؟' : 'إزالة «${b.title}» من المكتبة؟',
           ),
           content: b.isNote
               ? const Text('تُحذف الورقة وكل ما كتبته عليها.')
@@ -574,6 +594,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (ok != true) return;
     await _library!.remove(b, deleteWriting: deleteWriting);
+    if (deleteWriting) await OwnCovers.instance.remove(b.id);
   }
 
   // ---- the category buttons ----
@@ -584,7 +605,9 @@ class _HomeScreenState extends State<HomeScreen> {
   List<String> _categories() {
     final counts = <String, int>{};
     for (final b in _catalog.books) {
-      if (b.subject.isNotEmpty) counts[b.subject] = (counts[b.subject] ?? 0) + 1;
+      if (b.subject.isNotEmpty) {
+        counts[b.subject] = (counts[b.subject] ?? 0) + 1;
+      }
     }
     final top = counts.keys.toList()
       ..sort((a, b) {
@@ -634,6 +657,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           onHistory: _showHistory,
                           onBrowse: () => setState(() => _tab = 1),
                           onDriveWarning: _showAccount,
+                          catalogTitle: (id) => _catalog.byId(id)?.title,
                         ),
                         ListenableBuilder(
                           listenable: _catalog,

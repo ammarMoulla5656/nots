@@ -25,7 +25,8 @@ enum ToolMode {
 
 /// Current tool, colours and sizes. Widths are in PDF points.
 class ToolController extends ChangeNotifier {
-  ToolController({bool fingerDraws = true}) : _fingerDraws = fingerDraws; // ignore: prefer_initializing_formals
+  ToolController({bool fingerDraws = true})
+    : _fingerDraws = fingerDraws; // ignore: prefer_initializing_formals
 
   ToolMode _mode = ToolMode.hand;
   InkTool _penKind = InkTool.pen;

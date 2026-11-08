@@ -45,7 +45,9 @@ class _TocSheetState extends State<TocSheet> {
   void initState() {
     super.initState();
     final i = _current;
-    _scroll = ScrollController(initialScrollOffset: i <= 3 ? 0 : (i - 3) * _row);
+    _scroll = ScrollController(
+      initialScrollOffset: i <= 3 ? 0 : (i - 3) * _row,
+    );
   }
 
   @override
@@ -129,10 +131,7 @@ class _TocSheetState extends State<TocSheet> {
                           ),
                           Text(
                             '${e.pdfPage}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Brand.muted,
-                            ),
+                            style: TextStyle(fontSize: 12, color: Brand.muted),
                           ),
                         ],
                       ),
@@ -185,7 +184,18 @@ class ReaderMenuSheet extends StatelessWidget {
                   () => pick('clean'),
                   subtitle: 'تختفي الأشرطة وتبقى الصفحة وحدها',
                 ),
-                ActionRow(Icons.ios_share, 'تصدير ومشاركة', () => pick('export')),
+                if (isBook)
+                  ActionRow(
+                    Icons.note_add_outlined,
+                    'إضافة صفحة فارغة هنا',
+                    () => pick('addpage'),
+                    subtitle: 'للملاحظات، بعد هذه الصفحة، وتُحفظ مع الكتاب',
+                  ),
+                ActionRow(
+                  Icons.ios_share,
+                  'تصدير ومشاركة',
+                  () => pick('export'),
+                ),
                 ActionRow(
                   Icons.edit_note,
                   'المكتوب عليها',
@@ -224,7 +234,11 @@ class ReaderMenuSheet extends StatelessWidget {
 /// Arranging the tools: drag one between the bar and the box, or tap it to
 /// send it to the other.
 class ToolSettingsSheet extends StatelessWidget {
-  const ToolSettingsSheet({super.key, required this.layout, required this.isBook});
+  const ToolSettingsSheet({
+    super.key,
+    required this.layout,
+    required this.isBook,
+  });
 
   final ToolLayout layout;
   final bool isBook;
@@ -245,7 +259,11 @@ class ToolSettingsSheet extends StatelessWidget {
                 padding: EdgeInsets.only(bottom: 4),
                 child: Text(
                   'اسحب الأداة بين الشريط والمربع أو غيّر ترتيبها، أو اضغطها لنقلها.',
-                  style: TextStyle(color: Brand.muted, height: 1.7, fontSize: 13.5),
+                  style: TextStyle(
+                    color: Brand.muted,
+                    height: 1.7,
+                    fontSize: 13.5,
+                  ),
                 ),
               ),
               _zone('في الشريط', true),
@@ -427,7 +445,9 @@ class _TextEntrySheetState extends State<TextEntrySheet> {
                     ? null
                     : TextStyle(
                         fontSize: size.clamp(12.0, 34.0),
-                        color: widget.color == null ? null : Color(widget.color!),
+                        color: widget.color == null
+                            ? null
+                            : Color(widget.color!),
                       ),
               ),
               if (size != null)
@@ -455,7 +475,10 @@ class _TextEntrySheetState extends State<TextEntrySheet> {
                     ),
                     SizedBox(
                       width: 30,
-                      child: Text('${size.round()}', textAlign: TextAlign.center),
+                      child: Text(
+                        '${size.round()}',
+                        textAlign: TextAlign.center,
+                      ),
                     ),
                   ],
                 ),
@@ -505,7 +528,12 @@ class _TextEntrySheetState extends State<TextEntrySheet> {
 
 /// A note or a word's comment, shown to read. Pops with 'delete' or 'edit'.
 class NoteViewSheet extends StatelessWidget {
-  const NoteViewSheet({super.key, required this.text, this.quote = '', this.color});
+  const NoteViewSheet({
+    super.key,
+    required this.text,
+    this.quote = '',
+    this.color,
+  });
 
   final String text;
   final String quote;

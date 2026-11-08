@@ -45,8 +45,8 @@ class PaperStyle {
   final int paper;
   final int line;
 
-  /// Pages a new note starts with.
-  static const pages = 50;
+  /// Pages a new note starts with; more are added with the "+" button.
+  static const pages = 1;
 
   PaperStyle copyWith({PaperKind? kind, int? paper, int? line}) => PaperStyle(
     kind: kind ?? this.kind,
@@ -64,7 +64,9 @@ class PaperStyle {
     final kind = PaperKind.values.where((k) => k.name == p[0]).firstOrNull;
     final paper = int.tryParse(p[1], radix: 16);
     final line = int.tryParse(p[2], radix: 16);
-    if (kind == null || paper == null || line == null) return const PaperStyle();
+    if (kind == null || paper == null || line == null) {
+      return const PaperStyle();
+    }
     return PaperStyle(kind: kind, paper: paper, line: line);
   }
 
@@ -146,7 +148,13 @@ class PaperPreview extends StatelessWidget {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(selected ? 9.5 : 11),
-        child: CustomPaint(painter: PaperPainter(style), child: const SizedBox.expand()),
+        child: RepaintBoundary(
+          child: CustomPaint(
+            painter: PaperPainter(style),
+            isComplex: true,
+            child: const SizedBox.expand(),
+          ),
+        ),
       ),
     ),
   );

@@ -8,11 +8,11 @@ import 'package:path_provider/path_provider.dart';
 
 import '../library/library_store.dart';
 import 'paper.dart';
+import 'paper_templates.dart';
 
 /// A4 in PDF points.
 const _pageW = 595.28;
 const _pageH = 841.89;
-const _mm = _pageW / 210;
 
 String _rgb(int argb) {
   String c(int shift) => (((argb >> shift) & 255) / 255).toStringAsFixed(4);
@@ -21,19 +21,24 @@ String _rgb(int argb) {
 
 /// The drawing of one sheet as PDF operators: the paper's colour, then its
 /// lines. Real vector lines, sharp at any zoom, a few kilobytes in all.
-String paperContent(PaperStyle s) {
+String paperContent(
+  PaperStyle s, {
+  double width = _pageW,
+  double height = _pageH,
+}) {
+  final mm = width / 210;
   final b = StringBuffer()
     ..writeln('${_rgb(s.paper)} rg')
-    ..writeln('0 0 $_pageW $_pageH re f');
+    ..writeln('0 0 $width $height re f');
   final lines = paperLines(s.kind);
   if (lines.isNotEmpty) {
     b
       ..writeln('${_rgb(s.line)} RG')
-      ..writeln('${(paperLineWidth(s.kind) * _mm).toStringAsFixed(3)} w');
+      ..writeln('${(paperLineWidth(s.kind) * mm).toStringAsFixed(3)} w');
     for (final (x1, y1, x2, y2) in lines) {
       b.writeln(
-        '${(x1 * _mm).toStringAsFixed(2)} ${(_pageH - y1 * _mm).toStringAsFixed(2)} m '
-        '${(x2 * _mm).toStringAsFixed(2)} ${(_pageH - y2 * _mm).toStringAsFixed(2)} l',
+        '${(x1 * mm).toStringAsFixed(2)} ${(height - y1 * mm).toStringAsFixed(2)} m '
+        '${(x2 * mm).toStringAsFixed(2)} ${(height - y2 * mm).toStringAsFixed(2)} l',
       );
     }
     b.writeln('S');
@@ -51,6 +56,8 @@ Uint8List buildNotePdf({
   required int pages,
   required String title,
   required String stamp,
+  double width = _pageW,
+  double height = _pageH,
 }) {
   final out = BytesBuilder();
   final offsets = <int>[];
@@ -62,7 +69,7 @@ Uint8List buildNotePdf({
     put('endobj\n');
   }
 
-  final draw = paperContent(style);
+  final draw = paperContent(style, width: width, height: height);
   // Objects: 1 catalog, 2 page tree, 3 drawing, 4 information, then pages.
   const first = 5;
   put('%PDF-1.4\n');
@@ -84,7 +91,7 @@ Uint8List buildNotePdf({
   for (var i = 0; i < pages; i++) {
     object(first + i, () {
       put(
-        '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 $_pageW $_pageH] '
+        '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 $width $height] '
         '/Resources << >> /Contents 3 0 R >>\n',
       );
     });
@@ -117,11 +124,19 @@ Future<BookEntry> createNote(
   LibraryStore library,
   PaperStyle style, {
   String title = 'ملاحظة بلا عنوان',
+}) => createNoteOn(library, style.encode(), title: title);
+
+/// Like [createNote], on any paper: a style, or a template of the server
+/// (see [Paper]).
+Future<BookEntry> createNoteOn(
+  LibraryStore library,
+  String paper, {
+  String title = 'ملاحظة بلا عنوان',
 }) async {
   final stamp =
       '${DateTime.now().microsecondsSinceEpoch}-${math.Random().nextInt(1 << 30)}';
-  final bytes = buildNotePdf(
-    style: style,
+  final bytes = await Paper.pdf(
+    paper,
     pages: PaperStyle.pages,
     title: title,
     stamp: stamp,
@@ -136,9 +151,35 @@ Future<BookEntry> createNote(
       title: title,
       fileName: '$title.pdf',
     );
-    await library.markNote(entry, template: style.encode());
+    await library.markNote(entry, template: paper);
     return entry;
   } finally {
     if (await file.exists()) await file.delete();
   }
+}
+
+/// The number of sheets of a note's PDF (as written by [buildNotePdf]).
+int notePageCount(Uint8List bytes) {
+  final m = RegExp(r'/Count (\d+)').firstMatch(latin1.decode(bytes));
+  return m == null ? 0 : int.parse(m.group(1)!);
+}
+
+/// Rewrites the PDF of [note] with [pages] sheets of its paper, and returns
+/// it. The note keeps its id, so its writing stays on its pages.
+Future<Uint8List> setNotePages(
+  LibraryStore library,
+  BookEntry note,
+  int pages,
+) async {
+  final bytes = await Paper.pdf(
+    note.author,
+    pages: pages,
+    title: note.title,
+    stamp: note.id,
+  );
+  final file = File(library.pathOf(note));
+  final tmp = File('${file.path}.grow');
+  await tmp.writeAsBytes(bytes, flush: true);
+  await tmp.rename(file.path);
+  return bytes;
 }

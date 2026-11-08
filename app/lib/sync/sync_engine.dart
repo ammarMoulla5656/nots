@@ -11,6 +11,7 @@ import 'package:path/path.dart' as p;
 
 import '../book/book_link_store.dart';
 import '../ink/ink_store.dart';
+import '../catalog/own_covers.dart';
 import '../library/library_store.dart';
 import '../reader/reader_prefs.dart';
 import 'drive_client.dart';
@@ -34,7 +35,9 @@ class WorkBundle {
     if (raw == null) return true;
     try {
       final j = jsonDecode(utf8.decode(raw)) as Map<String, dynamic>;
-      return (j['bookmarks'] as List?)?.isEmpty ?? true;
+      // Bookmarks and added pages are work too.
+      return ((j['bookmarks'] as List?)?.isEmpty ?? true) &&
+          ((j['extra'] as List?)?.isEmpty ?? true);
     } on FormatException {
       return true;
     }
@@ -207,6 +210,9 @@ class SyncedPref {
 
 const _prefPrefix = 'pref-';
 
+/// The cover made on a device from a book's first page.
+const _coverPrefix = 'cover-';
+
 class SyncEngine extends ChangeNotifier {
   /// The settings kept in the account (set by the app).
   List<SyncedPref> prefs = const [];
@@ -220,7 +226,15 @@ class SyncEngine extends ChangeNotifier {
     this.deviceName,
     this.fetchCatalogBook,
     this.statePath,
+    this.covers,
   }) : _newDrive = drive;
+
+  /// Covers made from the first page of books added from a file: kept in
+  /// Drive, so every device of the account shows the same.
+  final OwnCovers? covers;
+
+  /// Those covers in Drive, by book id.
+  final _coverFiles = <String, DriveFile>{};
 
   final LibraryStore _library;
   final bool Function() isLinked;
@@ -407,6 +421,7 @@ class SyncEngine extends ChangeNotifier {
     final prefFiles = <String, DriveFile>{};
     final pdfs = <String, DriveFile>{};
     final gone = <String, DriveFile>{};
+    final covers = <String, DriveFile>{};
     for (final f in files) {
       if (f.name == _settingsName) settings = f;
       if (f.name.startsWith(_prefPrefix)) prefFiles[f.name] = f;
@@ -417,7 +432,14 @@ class SyncEngine extends ChangeNotifier {
       if (f.name.startsWith(_gonePrefix)) {
         gone[f.name.substring(_gonePrefix.length)] = f;
       }
+      if (f.name.startsWith(_coverPrefix) && f.name.endsWith('.jpg')) {
+        final id = p.basenameWithoutExtension(f.name);
+        covers[id.substring(_coverPrefix.length)] = f;
+      }
     }
+    _coverFiles
+      ..clear()
+      ..addAll(covers);
     _settings = settings;
     _prefFiles = prefFiles;
     _gone = gone;
@@ -463,6 +485,7 @@ class SyncEngine extends ChangeNotifier {
       for (final pref in prefs) {
         await _syncPref(drive, pref);
       }
+      await _syncCovers(drive);
     } on DriveException catch (e) {
       if (e.storageFull) driveFull = true;
     }
@@ -698,6 +721,29 @@ class SyncEngine extends ChangeNotifier {
     }
   }
 
+  /// A cover made here goes up once; one made on another device comes down.
+  Future<void> _syncCovers(DriveClient drive) async {
+    final own = covers;
+    if (own == null) return;
+    await own.load();
+    for (final b in _library.books) {
+      if (!OwnCovers.wants(b)) continue;
+      final remote = _coverFiles[b.id];
+      if (own.has(b.id)) {
+        if (remote != null || driveFull) continue;
+        final bytes = await own.bytesOf(b.id);
+        if (bytes == null) continue;
+        _coverFiles[b.id] = await drive.upload(
+          name: '$_coverPrefix${b.id}.jpg',
+          description: '',
+          bytes: bytes,
+        );
+      } else if (remote != null) {
+        await own.save(b.id, await drive.download(remote.id));
+      }
+    }
+  }
+
   Future<void> _syncSettings(DriveClient drive) async {
     final f = _colors;
     final mine = await f.exists() ? await f.readAsBytes() : null;
@@ -793,7 +839,7 @@ class SyncEngine extends ChangeNotifier {
       return false; // damaged on the way: the next sync tries again
     }
     await part.rename(target.path);
-    await _library.setOffloaded(b, false);
+    await _library.fileArrived(b);
     return true;
   }
 
@@ -868,6 +914,8 @@ class SyncEngine extends ChangeNotifier {
     if (id != null) await drive.delete(id);
     final pdf = r?.pdfFile ?? _pdfs[bookId];
     if (pdf != null) await drive.delete(pdf.id);
+    final cover = _coverFiles.remove(bookId);
+    if (cover != null) await drive.delete(cover.id);
     _pdfs.remove(bookId);
     _state.remove(bookId);
     await _dropBase(bookId);

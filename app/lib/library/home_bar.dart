@@ -87,7 +87,9 @@ class HomeBar extends StatelessWidget {
           child: Glass(
             radius: 24,
             padding: const EdgeInsets.all(5),
-            child: Row(children: [for (var i = 0; i < _tabs.length; i++) _item(i)]),
+            child: Row(
+              children: [for (var i = 0; i < _tabs.length; i++) _item(i)],
+            ),
           ),
         ),
         Positioned(

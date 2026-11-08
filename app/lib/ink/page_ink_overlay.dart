@@ -1389,8 +1389,11 @@ class _LaserPainter extends CustomPainter {
 
   void _line(Canvas canvas, List<Offset> pts, Paint paint) {
     if (pts.length == 1) {
-      canvas.drawCircle(pts.first * scale, paint.strokeWidth / 2,
-          Paint()..color = paint.color);
+      canvas.drawCircle(
+        pts.first * scale,
+        paint.strokeWidth / 2,
+        Paint()..color = paint.color,
+      );
       return;
     }
     final path = Path()..moveTo(pts.first.dx * scale, pts.first.dy * scale);
