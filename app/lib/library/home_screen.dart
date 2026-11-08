@@ -25,6 +25,7 @@ import '../sync/sync_engine.dart';
 import '../sync/sync_sheet.dart';
 import '../ui/app_settings.dart';
 import '../ui/brand_widgets.dart';
+import '../ui/speed_log.dart';
 import '../ui/theme.dart';
 import 'book_widgets.dart';
 import 'books_tab.dart';
@@ -36,6 +37,9 @@ import 'package_import.dart';
 
 /// How many books "the last books" lists.
 const historyCount = 10;
+
+/// Names of the tabs in the speed log.
+const _screens = ['my-books', 'catalog', 'notes'];
 
 /// The main screen: three tabs (my books, the books to download, my notes),
 /// a floating bar to move between them and the star that starts a new paper.
@@ -147,6 +151,9 @@ class _HomeScreenState extends State<HomeScreen> {
     ToolLayout.instance.addListener(sync.requestSoon);
     if (!mounted) return;
     setState(() => _library = lib);
+    SpeedLog.instance
+      ..screen = _screens[_tab]
+      ..note('library ready: ${lib.books.length} items');
     // A book with no cover gets a picture of its first page, now and
     // whenever one arrives (added, or brought from the account).
     lib.addListener(() => unawaited(OwnCovers.instance.fillMissing(lib)));
@@ -211,6 +218,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     await lib.touch(b);
     if (!mounted) return;
+    SpeedLog.instance.note('open: ${b.isNote ? 'note' : 'book'} ${b.id}');
     _sync.openBook = b.id;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -218,6 +226,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
     _sync.openBook = null;
+    SpeedLog.instance.screen = _screens[_tab];
     _sync.requestSoon();
     unawaited(_progress.load([b.id]));
     if (mounted) setState(() {});
@@ -233,6 +242,7 @@ class _HomeScreenState extends State<HomeScreen> {
     builder: (_) => SyncSheet(
       account: _account,
       sync: _sync,
+      library: _library!,
       beforeWipe: _downloads.cancelAll,
     ),
   );
@@ -265,9 +275,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _makeNote(String paper) async {
     setState(() => _busy = true);
+    final log = SpeedLog.instance;
     try {
-      final entry = await createNoteOn(_library!, paper);
-      await _sync.afterImport(entry);
+      log.note('new note: start');
+      final entry = await log.span(
+        'new note: make PDF + add',
+        () => createNoteOn(_library!, paper),
+      );
+      await log.span(
+        'new note: Drive upload before opening',
+        () => _sync.afterImport(entry),
+      );
       if (!mounted) return;
       setState(() => _tab = 2);
       await _open(entry);
@@ -687,7 +705,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   HomeBar(
                     tab: _tab,
                     busy: _busy,
-                    onTab: (i) => setState(() => _tab = i),
+                    onTab: (i) {
+                      SpeedLog.instance.screen = _screens[i];
+                      setState(() => _tab = i);
+                    },
                     onNew: _showNew,
                   ),
                 ],

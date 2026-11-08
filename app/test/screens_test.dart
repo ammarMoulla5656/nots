@@ -317,7 +317,7 @@ void main() {
     await _shot(
       t,
       Scaffold(
-        body: SyncSheet(account: account, sync: sync, beforeWipe: () {}),
+        body: SyncSheet(account: account, sync: sync, beforeWipe: () {}, library: _lib),
       ),
       'account',
     );
@@ -469,7 +469,7 @@ void main() {
     );
     await _shot(
       t,
-      Scaffold(body: SyncSheet(account: account, sync: sync, beforeWipe: () {})),
+      Scaffold(body: SyncSheet(account: account, sync: sync, beforeWipe: () {}, library: _lib)),
       'night_account',
     );
     await _shot(t, const Scaffold(body: NewPaperSheet()), 'night_new_paper');

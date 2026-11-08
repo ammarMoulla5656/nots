@@ -47,9 +47,9 @@ class _PartsCard extends StatelessWidget {
   final List<BookEntry> parts;
   final double? Function(BookEntry) progress;
 
-  static const _circle = 62.0;
-  static const _gap = 18.0;
-  static const _pad = 22.0;
+  static const _circle = 42.0;
+  static const _gap = 12.0;
+  static const _pad = 14.0;
 
   @override
   Widget build(BuildContext context) {
@@ -59,7 +59,7 @@ class _PartsCard extends StatelessWidget {
     final natural =
         parts.length * _circle + (parts.length - 1) * _gap + 2 * _pad;
     final w = math.min(natural, maxW);
-    const h = _circle + 2 * 20.0;
+    const h = _circle + 2 * 12.0;
     final left = (anchor.center.dx - w / 2).clamp(16.0, screen.width - 16 - w);
     final top = (anchor.center.dy - h / 2).clamp(
       insets.top + 8,
@@ -76,12 +76,12 @@ class _PartsCard extends StatelessWidget {
             color: Colors.white,
             elevation: 6,
             shadowColor: const Color(0x3316233A),
-            borderRadius: BorderRadius.circular(22),
+            borderRadius: BorderRadius.circular(16),
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(
                 horizontal: _pad,
-                vertical: 20,
+                vertical: 12,
               ),
               itemCount: parts.length,
               separatorBuilder: (_, _) => const SizedBox(width: _gap),
@@ -132,7 +132,7 @@ class _PartCircle extends StatelessWidget {
               child: Text(
                 '$number',
                 style: const TextStyle(
-                  fontSize: 19,
+                  fontSize: 15,
                   color: Color(0xFF1B1B1F),
                   fontWeight: FontWeight.w500,
                 ),
@@ -153,7 +153,7 @@ class _RingPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    const stroke = 3.5;
+    const stroke = 2.5;
     final r = (Offset.zero & size).deflate(stroke / 2);
     canvas.drawArc(
       r,

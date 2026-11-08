@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pdfrx/pdfrx.dart';
 
 import '../library/library_store.dart';
+import '../ui/speed_log.dart';
 
 /// Covers made on the device for books that came without one (a PDF the
 /// user added): a small picture of the book's first page. Each is kept as
@@ -98,7 +99,10 @@ class OwnCovers extends ChangeNotifier {
       try {
         await load();
         if (has(b.id) || !await File(pdfPath).exists()) return;
-        final jpg = await renderFirstPage(pdfPath);
+        final jpg = await SpeedLog.instance.span(
+          'cover made from first page',
+          () => renderFirstPage(pdfPath),
+        );
         if (jpg != null) await save(b.id, jpg);
       } on Object catch (e) {
         debugPrint('cover of ${b.id}: $e');
@@ -111,6 +115,7 @@ class OwnCovers extends ChangeNotifier {
   /// Covers for every book of [library] that is here and has none.
   Future<void> fillMissing(LibraryStore library) async {
     await load();
+    SpeedLog.instance.note('covers: checking ${library.books.length} items');
     for (final b in library.books) {
       if (wants(b) && !has(b.id) && library.isOnDevice(b)) {
         await make(b, library.pathOf(b));

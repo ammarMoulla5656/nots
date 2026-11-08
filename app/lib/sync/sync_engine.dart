@@ -12,6 +12,7 @@ import 'package:path/path.dart' as p;
 import '../book/book_link_store.dart';
 import '../ink/ink_store.dart';
 import '../catalog/own_covers.dart';
+import '../ui/speed_log.dart';
 import '../library/library_store.dart';
 import '../reader/reader_prefs.dart';
 import 'drive_client.dart';
@@ -453,12 +454,20 @@ class SyncEngine extends ChangeNotifier {
     };
   }
 
+  /// Time spent reading the work of books and fingerprinting it, during a
+  /// pass (for the speed log).
+  final _readClock = Stopwatch(), _hashClock = Stopwatch();
+
   Future<void> _pass() async {
     if (await otherAccountsData()) return;
+    final log = SpeedLog.instance;
+    final passClock = Stopwatch()..start();
+    _readClock.reset();
+    _hashClock.reset();
     _owner ??= accountEmail?.call();
     final drive = _newDrive();
     _doing('جارٍ فحص درايف…');
-    await _fetchRemote(drive);
+    await log.span('sync: list Drive', () => _fetchRemote(drive));
     driveFull = false;
     for (final id in _forgetting.toList()) {
       await _forgetNow(drive, id);
@@ -490,6 +499,12 @@ class SyncEngine extends ChangeNotifier {
       if (e.storageFull) driveFull = true;
     }
     await _saveState();
+    log.took(
+      'sync pass',
+      passClock.elapsedMilliseconds,
+      '${books.length} books · reading work ${_readClock.elapsedMilliseconds}ms · '
+          'fingerprints ${_hashClock.elapsedMilliseconds}ms',
+    );
     try {
       quota = await drive.quota();
       if (quota?.full ?? false) driveFull = true;
@@ -545,17 +560,30 @@ class SyncEngine extends ChangeNotifier {
 
   /// The work on [b] on this device.
   Future<WorkBundle> _localWork(BookEntry b) async {
-    final written = await InkStore.hasWriting(b.id);
-    return WorkBundle(
-      ink: written ? await InkStore.rawBytes(b.id) : null,
-      prefs: await ReaderPrefs.rawBytes(b.id),
-      link: await BookLinkStore.handLinkedJson(b.id),
-    );
+    final running = _readClock.isRunning;
+    _readClock.start();
+    try {
+      final written = await InkStore.hasWriting(b.id);
+      return WorkBundle(
+        ink: written ? await InkStore.rawBytes(b.id) : null,
+        prefs: await ReaderPrefs.rawBytes(b.id),
+        link: await BookLinkStore.handLinkedJson(b.id),
+      );
+    } finally {
+      if (!running) _readClock.stop();
+    }
   }
 
   /// A book's state as agreed with Drive: its work and its name.
-  String _hashOf(BookEntry b, WorkBundle w) =>
-      sha256.convert(utf8.encode('${w.hash}|${b.title}')).toString();
+  String _hashOf(BookEntry b, WorkBundle w) {
+    final running = _hashClock.isRunning;
+    _hashClock.start();
+    try {
+      return sha256.convert(utf8.encode('${w.hash}|${b.title}')).toString();
+    } finally {
+      if (!running) _hashClock.stop();
+    }
+  }
 
   Future<void> _agree(BookEntry b, DriveFile f, WorkBundle w) async {
     _state[b.id] = _Synced(f.id, _hashOf(b, w), f.modified);
@@ -590,6 +618,12 @@ class SyncEngine extends ChangeNotifier {
         : _hashOf(b, work) != st.hash;
     final remoteChanged = r != null && r.file.modified != st?.remoteTime;
     final open = b.id == openBook;
+    // The test library is read and fingerprinted like a synced book (that
+    // is what is measured), but stays on this device.
+    if (b.isSpeedTest) {
+      _hashOf(b, work);
+      return;
+    }
 
     // The file first: another device must never see a book it cannot get.
     if (!driveFull &&
@@ -727,7 +761,7 @@ class SyncEngine extends ChangeNotifier {
     if (own == null) return;
     await own.load();
     for (final b in _library.books) {
-      if (!OwnCovers.wants(b)) continue;
+      if (!OwnCovers.wants(b) || b.isSpeedTest) continue;
       final remote = _coverFiles[b.id];
       if (own.has(b.id)) {
         if (remote != null || driveFull) continue;

@@ -66,6 +66,11 @@ android {
             }
         }
     }
+    // The profile build (for measuring speed with DevTools) is signed with
+    // the same key, so it installs over the user's copy and keeps the books.
+    buildTypes.matching { it.name == "profile" }.configureEach {
+        if (hasReleaseKey) signingConfig = signingConfigs.getByName("release")
+    }
 }
 
 kotlin {

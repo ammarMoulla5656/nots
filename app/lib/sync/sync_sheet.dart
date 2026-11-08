@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../catalog/catalog_screen.dart' show formatSize;
 import '../library/library_store.dart';
+import '../library/speed_test_books.dart' show SpeedPanel;
 import '../ui/app_settings.dart';
 import '../ui/brand_widgets.dart';
 import '../ui/theme.dart';
@@ -17,9 +18,11 @@ class SyncSheet extends StatefulWidget {
     required this.account,
     required this.sync,
     required this.beforeWipe,
+    required this.library,
   });
 
   final GoogleAccount account;
+  final LibraryStore library;
   final SyncEngine sync;
 
   /// Stops what still writes into the library.
@@ -511,6 +514,8 @@ class _SyncSheetState extends State<SyncSheet> {
               const SizedBox(height: 8),
               Text(_error!, style: const TextStyle(color: Brand.red)),
             ],
+            const SizedBox(height: 12),
+            SpeedPanel(library: widget.library),
             _rights(),
           ],
         ),

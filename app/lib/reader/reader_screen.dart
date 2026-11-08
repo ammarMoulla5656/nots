@@ -34,6 +34,7 @@ import '../library/home_sheets.dart' show ActionRow, ActionRows, HistorySheet;
 import '../library/book_widgets.dart' show ReadProgress;
 import '../ui/app_settings.dart';
 import '../ui/brand_widgets.dart';
+import '../ui/speed_log.dart';
 import '../ui/color_palette.dart';
 import '../ui/theme.dart';
 import 'conflict_bar.dart';
@@ -469,9 +470,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// Word boxes already loaded, per page, for instant taps.
   final _wordsReady = <int, List<WordBox>>{};
 
+  /// From the reader's start to its first page, for the speed log.
+  final _openClock = Stopwatch()..start();
+
   @override
   void initState() {
     super.initState();
+    SpeedLog.instance.screen = 'reader';
     _tools.addListener(_onToolChanged);
     _showTools();
     _palette.load();
@@ -2358,6 +2363,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 // Momentum scrolling: flicks carry on.
                 scrollPhysics: PdfViewerParams.getScrollPhysics(context),
                 onViewerReady: (doc, _) {
+                  if (_openClock.isRunning) {
+                    _openClock.stop();
+                    SpeedLog.instance.took(
+                      'reader: open to first page',
+                      _openClock.elapsedMilliseconds,
+                      '${doc.pages.length} pages',
+                    );
+                  }
                   if (_mixed == null) _loadOutline(doc);
                   _restorePage();
                   final go = _goAfterLoad;

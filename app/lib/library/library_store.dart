@@ -66,6 +66,10 @@ class BookEntry {
   /// A note: paper made in the app, not a book.
   bool get isNote => subject == noteSubject;
 
+  /// Part of the test library for measuring speed: kept on this device,
+  /// never sent to Drive.
+  bool get isSpeedTest => fileName.startsWith('speed-test-');
+
   Map<String, Object?> toJson() => {
     'id': id,
     'title': title,
@@ -397,6 +401,45 @@ class LibraryStore extends ChangeNotifier {
     await Directory(p.join(_root.path, 'books')).create(recursive: true);
     await _save();
     notifyListeners();
+  }
+
+  /// Adds many books whose files are already in place, saving once.
+  Future<void> addMany(List<BookEntry> entries) async {
+    final known = ids;
+    _books.addAll(entries.where((e) => !known.contains(e.id)));
+    await _save();
+    notifyListeners();
+  }
+
+  /// Removes every book [test] picks, like [remove], saving once. Returns
+  /// their ids.
+  Future<List<String>> removeWhere(
+    bool Function(BookEntry) test, {
+    bool deleteWriting = false,
+  }) async {
+    final gone = _books.where(test).toList();
+    _books.removeWhere(test);
+    final ids = {for (final b in gone) b.id};
+    for (final b in gone) {
+      final f = File(pathOf(b));
+      if (await f.exists()) await f.delete();
+    }
+    if (deleteWriting) {
+      for (final sub in ['ink', 'links', 'prefs', 'conflicts']) {
+        final dir = Directory(p.join(_root.path, sub));
+        if (!await dir.exists()) continue;
+        await for (final e in dir.list()) {
+          final name = p.basename(e.path);
+          final dot = name.indexOf('.');
+          if (ids.contains(dot < 0 ? name : name.substring(0, dot))) {
+            await e.delete();
+          }
+        }
+      }
+    }
+    await _save();
+    notifyListeners();
+    return ids.toList();
   }
 
   /// Removes the book's copy from the library. Its writing is kept unless
