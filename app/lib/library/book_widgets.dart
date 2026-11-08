@@ -134,8 +134,9 @@ class CoverGridSliver extends StatelessWidget {
     return SliverLayoutBuilder(
       builder: (context, c) {
         final w = c.crossAxisExtent;
-        // Two big covers to a row on a phone: fewer to draw, easier to see.
-        final cols = (w / 170).floor().clamp(2, 10);
+        // Few, big covers: two to a row on a phone, three on a small
+        // tablet, four on a large one. Fewer to draw, easier to see.
+        final cols = w < 600 ? 2 : (w < 900 ? 3 : 4);
         const gap = 12.0;
         final cell = (w - gap * (cols - 1)) / cols;
         return SliverGrid(
