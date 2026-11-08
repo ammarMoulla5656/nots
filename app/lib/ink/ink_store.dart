@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
@@ -85,36 +86,62 @@ class InkStore {
   }
 
   /// Ink files with writing that belong to no id in [knownIds].
+  /// Found once per run (and folder): looking means reading every such
+  /// file. Those taken back since, or gone, are left out when asked.
+  static Future<List<OrphanInk>>? _orphans;
+  static String? _orphansDir;
+
   static Future<List<OrphanInk>> orphans(Set<String> knownIds) async {
-    final out = <OrphanInk>[];
-    await for (final e in (await _dir()).list()) {
-      if (e is! File || !e.path.endsWith('.nots')) continue;
-      final key = p.basenameWithoutExtension(e.path);
-      if (knownIds.contains(key)) continue;
-      try {
-        final d = StrokeCodec.decodeDocument(await e.readAsBytes());
-        final pages = <int>{
-          for (final x in d.pages.entries)
-            if (x.value.isNotEmpty) x.key,
-          for (final x in d.items.entries)
-            if (x.value.isNotEmpty) x.key,
-        }.toList()..sort();
-        if (pages.isEmpty) continue;
-        out.add(
-          OrphanInk(
-            key: key,
-            modified: await e.lastModified(),
-            pages: pages,
-            strokes: d.pages.values.fold(0, (n, l) => n + l.length),
-            items: d.items.values.fold(0, (n, l) => n + l.length),
-          ),
-        );
-      } on FormatException {
-        // Not readable: not offered.
-      }
+    final dir = (await _dir()).path;
+    if (dir != _orphansDir) {
+      _orphansDir = dir;
+      _orphans = null;
     }
-    out.sort((a, b) => b.modified.compareTo(a.modified));
-    return out;
+    final found = await (_orphans ??= _findOrphans(knownIds));
+    return [
+      for (final o in found)
+        if (!knownIds.contains(o.key) &&
+            File(p.join(dir, '${o.key}.nots')).existsSync())
+          o,
+    ];
+  }
+
+  /// Reads the writing files of books not in [knownIds], away from the
+  /// screen (they may be many and large).
+  static Future<List<OrphanInk>> _findOrphans(Set<String> knownIds) async {
+    final dir = (await _dir()).path;
+    final known = Set.of(knownIds);
+    return Isolate.run(() async {
+      final out = <OrphanInk>[];
+      await for (final e in Directory(dir).list()) {
+        if (e is! File || !e.path.endsWith('.nots')) continue;
+        final key = p.basenameWithoutExtension(e.path);
+        if (known.contains(key)) continue;
+        try {
+          final d = StrokeCodec.decodeDocument(await e.readAsBytes());
+          final pages = <int>{
+            for (final x in d.pages.entries)
+              if (x.value.isNotEmpty) x.key,
+            for (final x in d.items.entries)
+              if (x.value.isNotEmpty) x.key,
+          }.toList()..sort();
+          if (pages.isEmpty) continue;
+          out.add(
+            OrphanInk(
+              key: key,
+              modified: await e.lastModified(),
+              pages: pages,
+              strokes: d.pages.values.fold(0, (n, l) => n + l.length),
+              items: d.items.values.fold(0, (n, l) => n + l.length),
+            ),
+          );
+        } on FormatException {
+          // Not readable: not offered.
+        }
+      }
+      out.sort((a, b) => b.modified.compareTo(a.modified));
+      return out;
+    });
   }
 
   /// Moves the writing saved under [fromKey] to the book [bookId], with the
@@ -167,13 +194,8 @@ class InkStore {
   static Future<bool> hasWriting(String bookId) async {
     final f = File(p.join((await _dir()).path, '$bookId.nots'));
     if (!await f.exists()) return false;
-    try {
-      final d = StrokeCodec.decodeDocument(await f.readAsBytes());
-      return d.pages.values.any((l) => l.isNotEmpty) ||
-          d.items.values.any((l) => l.isNotEmpty);
-    } on FormatException {
-      return true; // unreadable: never overwrite it silently
-    }
+    // The first bytes say it; reading every stroke is not needed.
+    return StrokeCodec.hasContent(await f.readAsBytes());
   }
 
   /// The saved writing of [bookId] as it is, or null.

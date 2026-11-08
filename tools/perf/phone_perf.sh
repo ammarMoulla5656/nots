@@ -46,7 +46,10 @@ for ((i = 1; i <= SECS; i++)); do
 done
 
 "$ADB" shell dumpsys meminfo "$PKG" | tr -d '\r' > "$OUT/meminfo-after.txt"
-"$ADB" pull "/sdcard/Android/data/$PKG/files/speed.log" "$OUT/speed.log" >/dev/null 2>&1 \
+# adb on Windows needs a Windows path for where to save.
+LOCAL="$OUT/speed.log"
+command -v cygpath >/dev/null && LOCAL=$(cygpath -w "$LOCAL")
+"$ADB" pull "/sdcard/Android/data/$PKG/files/speed.log" "$LOCAL" >/dev/null 2>&1 \
   || echo "(no speed.log: turn on «قياس السرعة» in the app)" > "$OUT/speed.log"
 
 # Average and highest CPU of each thread over the run.

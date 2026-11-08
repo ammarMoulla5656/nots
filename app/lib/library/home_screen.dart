@@ -61,6 +61,10 @@ class _HomeScreenState extends State<HomeScreen> {
   int _tab = 0;
   bool _busy = false;
 
+  /// Tabs shown at least once. The others are not built: at start only
+  /// «كتبي» does any work.
+  final _visited = <int>{};
+
   @override
   void initState() {
     super.initState();
@@ -156,11 +160,24 @@ class _HomeScreenState extends State<HomeScreen> {
       ..note('library ready: ${lib.books.length} items');
     // A book with no cover gets a picture of its first page, now and
     // whenever one arrives (added, or brought from the account).
-    lib.addListener(() => unawaited(OwnCovers.instance.fillMissing(lib)));
-    unawaited(OwnCovers.instance.fillMissing(lib));
+    // Not on every change of the library (a sync makes many): once it has
+    // been quiet for a moment.
+    Timer? coversSoon;
+    lib.addListener(() {
+      coversSoon?.cancel();
+      coversSoon = Timer(
+        const Duration(seconds: 2),
+        () => unawaited(OwnCovers.instance.fillMissing(lib)),
+      );
+    });
+    Timer(
+      const Duration(seconds: 4),
+      () => unawaited(OwnCovers.instance.fillMissing(lib)),
+    );
     unawaited(PaperTemplates.instance.load());
     unawaited(catalog.refresh());
-    sync.requestSoon();
+    // Not while the first screen is being shown and scrolled.
+    sync.requestSoon(after: const Duration(seconds: 8));
   }
 
   /// Older versions kept a list of opened file paths and keyed writing by
@@ -282,10 +299,9 @@ class _HomeScreenState extends State<HomeScreen> {
         'new note: make PDF + add',
         () => createNoteOn(_library!, paper),
       );
-      await log.span(
-        'new note: Drive upload before opening',
-        () => _sync.afterImport(entry),
-      );
+      // It opens at once; the next sync takes it to Drive meanwhile (it
+      // used to be sent first, which took seconds before the page showed).
+      _sync.requestSoon();
       if (!mounted) return;
       setState(() => _tab = 2);
       await _open(entry);
@@ -325,7 +341,8 @@ class _HomeScreenState extends State<HomeScreen> {
           title: p.basenameWithoutExtension(files.first.name),
         );
       }
-      await _sync.afterImport(entry);
+      // Opens at once; the sync sends it to Drive in the background.
+      _sync.requestSoon();
       if (mounted) await _open(entry);
     } catch (e) {
       _say('تعذّر إضافة الملف: $e');
@@ -646,6 +663,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final lib = _library;
+    _visited.add(_tab);
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
@@ -677,28 +695,34 @@ class _HomeScreenState extends State<HomeScreen> {
                           onDriveWarning: _showAccount,
                           catalogTitle: (id) => _catalog.byId(id)?.title,
                         ),
-                        ListenableBuilder(
-                          listenable: _catalog,
-                          builder: (context, _) => CatalogScreen(
-                            store: _catalog,
-                            downloads: _downloads,
+                        if (!_visited.contains(1))
+                          const SizedBox.shrink()
+                        else
+                          ListenableBuilder(
+                            listenable: _catalog,
+                            builder: (context, _) => CatalogScreen(
+                              store: _catalog,
+                              downloads: _downloads,
+                              library: lib,
+                              account: _account,
+                              categories: _categories(),
+                              onOpen: _open,
+                              onAccount: _showAccount,
+                              onHistory: _showHistory,
+                            ),
+                          ),
+                        if (!_visited.contains(2))
+                          const SizedBox.shrink()
+                        else
+                          NotesTab(
                             library: lib,
                             account: _account,
-                            categories: _categories(),
                             onOpen: _open,
+                            onMore: _showActions,
                             onAccount: _showAccount,
                             onHistory: _showHistory,
+                            onNew: _showNew,
                           ),
-                        ),
-                        NotesTab(
-                          library: lib,
-                          account: _account,
-                          onOpen: _open,
-                          onMore: _showActions,
-                          onAccount: _showAccount,
-                          onHistory: _showHistory,
-                          onNew: _showNew,
-                        ),
                       ],
                     ),
                   ),

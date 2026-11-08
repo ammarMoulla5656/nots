@@ -73,7 +73,11 @@ class CoverImage extends StatefulWidget {
     this.width = 56,
     this.height = 78,
     this.ownId,
+    this.clip = true,
   });
+
+  /// Round its corners itself; false when the one showing it already does.
+  final bool clip;
 
   /// Path of the cover on the server; empty when the book has none.
   final String cover;
@@ -130,22 +134,26 @@ class _CoverImageState extends State<CoverImage> {
   Widget _picture(BuildContext context, File? file) {
     final scheme = Theme.of(context).colorScheme;
     final dpr = MediaQuery.devicePixelRatioOf(context);
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(6),
-      child: SizedBox(
-        width: widget.width,
-        height: widget.height,
-        child: file != null
-            ? Image.file(
+    final picture = SizedBox(
+      width: widget.width,
+      height: widget.height,
+      child: file != null
+          ? ColoredBox(
+              // Seen only while the picture is being decoded.
+              color: scheme.secondaryContainer,
+              child: Image.file(
                 file,
                 fit: BoxFit.cover,
+                // Decoded at the size shown, not the file's own.
                 cacheWidth: (widget.width * dpr).round(),
                 gaplessPlayback: true,
                 errorBuilder: (_, _, _) => _plain(scheme),
-              )
-            : _plain(scheme),
-      ),
+              ),
+            )
+          : _plain(scheme),
     );
+    if (!widget.clip) return picture;
+    return ClipRRect(borderRadius: BorderRadius.circular(6), child: picture);
   }
 
   Widget _plain(ColorScheme scheme) => ColoredBox(

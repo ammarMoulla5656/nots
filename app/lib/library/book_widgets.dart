@@ -74,65 +74,41 @@ class BookGridItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, box) => Stack(
+    // Plain and light: no button of its own (a long press opens the
+    // options), one cover, two lines of text.
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      onLongPress: onMore,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          InkWell(
-            borderRadius: BorderRadius.circular(10),
-            onTap: onTap,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                BookCover(
-                  book.cover,
-                  ownId: book.id,
-                  width: box.maxWidth,
-                  progress: progress,
-                  badge: inAccountOnly
-                      ? Icons.cloud_outlined
-                      : volumes > 1
-                      ? Icons.layers_outlined
-                      : null,
-                ),
-                const SizedBox(height: 9),
-                Padding(
-                  padding: const EdgeInsetsDirectional.only(end: 22),
-                  child: Text(
-                    title ?? book.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.w700,
-                      height: 1.45,
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsetsDirectional.only(end: 22),
-                  child: Text(
-                    subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12, color: Brand.muted),
-                  ),
-                ),
-              ],
+          BookCover(
+            book.cover,
+            ownId: book.id,
+            progress: progress,
+            badge: inAccountOnly
+                ? Icons.cloud_outlined
+                : volumes > 1
+                ? Icons.layers_outlined
+                : null,
+          ),
+          const SizedBox(height: 9),
+          Text(
+            title ?? book.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              height: 1.45,
             ),
           ),
-          PositionedDirectional(
-            end: -6,
-            bottom: 0,
-            child: SizedBox(
-              width: 30,
-              height: 34,
-              child: IconButton(
-                padding: EdgeInsets.zero,
-                tooltip: 'خيارات',
-                icon: Icon(Icons.more_horiz, size: 18, color: Brand.muted),
-                onPressed: onMore,
-              ),
-            ),
+          Text(
+            subtitle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 12.5, color: Brand.muted),
           ),
         ],
       ),
@@ -158,7 +134,8 @@ class CoverGridSliver extends StatelessWidget {
     return SliverLayoutBuilder(
       builder: (context, c) {
         final w = c.crossAxisExtent;
-        final cols = (w / 130).floor().clamp(3, 12);
+        // Two big covers to a row on a phone: fewer to draw, easier to see.
+        final cols = (w / 170).floor().clamp(2, 10);
         const gap = 12.0;
         final cell = (w - gap * (cols - 1)) / cols;
         return SliverGrid(

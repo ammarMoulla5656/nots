@@ -64,10 +64,57 @@ class BooksTab extends StatefulWidget {
   State<BooksTab> createState() => _BooksTabState();
 }
 
-class _BooksTabState extends State<BooksTab> {
+class _BooksTabState extends State<BooksTab>
+    with SingleTickerProviderStateMixin {
   String _category = 'الكل';
   String _query = '';
   BookSort _sort = BookSort.mine;
+
+  /// «ترتيب»: the books shiver and any of them can be dragged to another
+  /// place. Outside it the books are plain, with nothing for dragging.
+  bool _arranging = false;
+  AnimationController? _shiver;
+
+  void _setArranging(bool on) {
+    setState(() {
+      _arranging = on;
+      if (on) {
+        _sort = BookSort.mine;
+        _shiver = AnimationController(
+          vsync: this,
+          duration: const Duration(milliseconds: 260),
+        )..repeat(reverse: true);
+      } else {
+        _shiver?.dispose();
+        _shiver = null;
+      }
+    });
+  }
+
+  Widget _arrangeBar() => Container(
+    margin: const EdgeInsets.only(bottom: 12),
+    padding: const EdgeInsetsDirectional.fromSTEB(14, 6, 6, 6),
+    decoration: BoxDecoration(
+      color: Brand.blue.withValues(alpha: 0.08),
+      borderRadius: BorderRadius.circular(14),
+    ),
+    child: Row(
+      children: [
+        Icon(Icons.open_with, size: 18, color: Brand.blue),
+        const SizedBox(width: 8),
+        const Expanded(
+          child: Text(
+            'اسحب أي كتاب إلى مكانه، ويُحفظ الترتيب.',
+            style: TextStyle(fontSize: 13.5),
+          ),
+        ),
+        FilledButton(
+          onPressed: () => _setArranging(false),
+          child: const Text('تم'),
+        ),
+      ],
+    ),
+  );
 
   @override
   void initState() {
@@ -79,10 +126,22 @@ class _BooksTabState extends State<BooksTab> {
   @override
   void dispose() {
     widget.library.removeListener(_progressNeeded);
+    _shiver?.dispose();
     super.dispose();
   }
 
-  void _progressNeeded() => widget.progress.load(widget.library.ids);
+  /// Books whose reading progress was read. The others are read when they
+  /// appear; a book closed in the reader is read again by the home screen.
+  /// Reading every book's file on each change of the library used to cost
+  /// hundreds of file reads during a sync.
+  final _progressKnown = <String>{};
+
+  void _progressNeeded() {
+    final fresh = widget.library.ids.difference(_progressKnown);
+    if (fresh.isEmpty) return;
+    _progressKnown.addAll(fresh);
+    widget.progress.load(fresh);
+  }
 
   bool _loading(BookEntry b) {
     final id = b.catalogId;
@@ -425,12 +484,23 @@ class _BooksTabState extends State<BooksTab> {
                         ),
                         const SizedBox(width: 8),
                         SquareButton(
+                          icon: Icons.open_with,
+                          tooltip: 'ترتيب الكتب',
+                          on: _arranging,
+                          onPressed: () => _setArranging(!_arranging),
+                        ),
+                        const SizedBox(width: 8),
+                        SquareButton(
                           icon: Icons.sort,
                           tooltip: 'الترتيب',
-                          onPressed: _pickSort,
+                          onPressed: _arranging ? null : _pickSort,
                         ),
                       ],
                     ),
+                    if (_arranging) ...[
+                      const SizedBox(height: 10),
+                      _arrangeBar(),
+                    ],
                     SectionTitle(
                       _category == 'الكل' ? 'كل الكتب' : _category,
                       count: all
@@ -472,11 +542,15 @@ class _BooksTabState extends State<BooksTab> {
                   itemBuilder: (context, i) {
                     final g = shown[i];
                     final item = _gridItem(g);
-                    if (_sort != BookSort.mine) return item;
+                    final shiver = _shiver;
+                    if (!_arranging || shiver == null) return item;
                     return _Movable(
                       book: g.first,
+                      shiver: shiver,
+                      tilt: i.isEven ? 1 : -1,
                       onDrop: (moved) => _move(moved, before: g.first),
-                      child: item,
+                      // While arranging a tap does not open the book.
+                      child: IgnorePointer(child: item),
                     );
                   },
                 ),
@@ -545,11 +619,19 @@ String sizeLine(BookEntry b) => b.size > 0 ? formatSize(b.size) : '';
 class _Movable extends StatelessWidget {
   const _Movable({
     required this.book,
+    required this.shiver,
+    required this.tilt,
     required this.onDrop,
     required this.child,
   });
 
   final BookEntry book;
+
+  /// Drives the small back-and-forth of every book while arranging.
+  final Animation<double> shiver;
+
+  /// Its direction, so neighbours move against each other.
+  final double tilt;
   final void Function(BookEntry moved) onDrop;
   final Widget child;
 
@@ -561,17 +643,21 @@ class _Movable extends StatelessWidget {
         onAcceptWithDetails: (d) => onDrop(d.data),
         builder: (context, incoming, _) => LongPressDraggable<BookEntry>(
           data: book,
+          // Taken at once (a short touch), and a quick flick still scrolls.
+          delay: const Duration(milliseconds: 120),
           feedback: SizedBox(
             width: c.maxWidth,
             height: c.maxHeight,
-            child: Opacity(
-              opacity: 0.85,
-              child: Material(color: Colors.transparent, child: child),
+            child: Transform.scale(
+              scale: 1.06,
+              child: Opacity(
+                opacity: 0.9,
+                child: Material(color: Colors.transparent, child: child),
+              ),
             ),
           ),
-          childWhenDragging: Opacity(opacity: 0.25, child: child),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
+          childWhenDragging: Opacity(opacity: 0.2, child: child),
+          child: DecoratedBox(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
@@ -579,7 +665,14 @@ class _Movable extends StatelessWidget {
                 width: 2,
               ),
             ),
-            child: child,
+            child: AnimatedBuilder(
+              animation: shiver,
+              builder: (context, child) => Transform.rotate(
+                angle: tilt * (shiver.value - 0.5) * 0.03,
+                child: child,
+              ),
+              child: child,
+            ),
           ),
         ),
       ),

@@ -44,19 +44,9 @@ class BookCover extends StatelessWidget {
       builder: (context, box) {
         final w = width ?? (box.maxWidth.isFinite ? box.maxWidth : 100.0);
         final h = w / ratio;
-        return DecoratedBox(
-          decoration: const BoxDecoration(
-            borderRadius: _radius,
-            // One small shadow: a screen full of covers stays light to draw
-            // on weak phones.
-            boxShadow: [
-              BoxShadow(
-                color: Color(0x33123A70),
-                blurRadius: 6,
-                offset: Offset(0, 3),
-              ),
-            ],
-          ),
+        // Flat, with no shadow: a screen full of covers stays light to draw
+        // on weak phones. One clip for the round corners, nothing else.
+        return RepaintBoundary(
           child: ClipRRect(
             borderRadius: _radius,
             child: SizedBox(
@@ -65,7 +55,13 @@ class BookCover extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  CoverImage(cover, width: w, height: h, ownId: ownId),
+                  CoverImage(
+                    cover,
+                    width: w,
+                    height: h,
+                    ownId: ownId,
+                    clip: false,
+                  ),
                   // The spine.
                   Positioned(
                     left: 0,

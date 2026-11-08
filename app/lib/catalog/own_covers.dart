@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
@@ -104,6 +105,8 @@ class OwnCovers extends ChangeNotifier {
           () => renderFirstPage(pdfPath),
         );
         if (jpg != null) await save(b.id, jpg);
+        // A breath between covers, so many of them never crowd the screen.
+        await Future<void>.delayed(const Duration(milliseconds: 250));
       } on Object catch (e) {
         debugPrint('cover of ${b.id}: $e');
       } finally {
@@ -140,14 +143,17 @@ class OwnCovers extends ChangeNotifier {
       final pixels = Uint8List.fromList(pic.pixels);
       final (pw, ph) = (pic.width, pic.height);
       pic.dispose();
-      final image = img.Image.fromBytes(
-        width: pw,
-        height: ph,
-        bytes: pixels.buffer,
-        numChannels: 4,
-        order: img.ChannelOrder.bgra,
-      );
-      return img.encodeJpg(image, quality: 80);
+      // Making the JPEG is the slow part: not on the thread that draws.
+      return await Isolate.run(() {
+        final image = img.Image.fromBytes(
+          width: pw,
+          height: ph,
+          bytes: pixels.buffer,
+          numChannels: 4,
+          order: img.ChannelOrder.bgra,
+        );
+        return img.encodeJpg(image, quality: 80);
+      });
     } finally {
       await doc.dispose();
     }

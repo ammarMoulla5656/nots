@@ -169,6 +169,24 @@ class StrokeCodec {
     return w.takeBytes();
   }
 
+  /// Whether an encoded document holds any writing, read from its first
+  /// bytes only (the encoder leaves empty pages out). A file that cannot be
+  /// read counts as written: it must never be overwritten unseen.
+  static bool hasContent(Uint8List data) {
+    try {
+      final r = _Reader(data);
+      for (final b in _magic) {
+        if (r.byte() != b) return true;
+      }
+      final version = r.byte();
+      r.varint(); // next stroke id
+      if (r.varint() > 0) return true; // pages with strokes
+      return version >= 2 && r.varint() > 0; // pages with items
+    } on FormatException {
+      return true;
+    }
+  }
+
   static ({
     Map<int, List<Stroke>> pages,
     int nextStrokeId,

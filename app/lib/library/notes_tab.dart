@@ -168,77 +168,47 @@ class _NoteCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: onTap,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0x1A16233A),
-                        blurRadius: 6,
-                        offset: Offset(0, 3),
+    // Flat and plain like the books: a long press opens the options.
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      onLongPress: onMore,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Paper.isTemplate(note.author)
+                ? LayoutBuilder(
+                    builder: (context, c) => ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: CoverImage(
+                        '',
+                        ownId: note.id,
+                        width: c.maxWidth,
+                        height: c.maxHeight,
+                        clip: false,
                       ),
-                    ],
-                  ),
-                  child: Paper.isTemplate(note.author)
-                      ? LayoutBuilder(
-                          builder: (context, c) => ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: CoverImage(
-                              '',
-                              ownId: note.id,
-                              width: c.maxWidth,
-                              height: c.maxHeight,
-                            ),
-                          ),
-                        )
-                      : PaperPreview(PaperStyle.parse(note.author)),
-                ),
-              ),
-              const SizedBox(height: 9),
-              Padding(
-                padding: const EdgeInsetsDirectional.only(end: 22),
-                child: Text(
-                  note.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w700,
-                    height: 1.45,
-                  ),
-                ),
-              ),
-              Text(
-                NotesTab.when(note.lastOpened),
-                style: TextStyle(fontSize: 12, color: Brand.muted),
-              ),
-            ],
+                    ),
+                  )
+                : PaperPreview(PaperStyle.parse(note.author)),
           ),
-        ),
-        PositionedDirectional(
-          end: -6,
-          bottom: 0,
-          child: SizedBox(
-            width: 30,
-            height: 34,
-            child: IconButton(
-              padding: EdgeInsets.zero,
-              tooltip: 'خيارات',
-              icon: Icon(Icons.more_horiz, size: 18, color: Brand.muted),
-              onPressed: onMore,
+          const SizedBox(height: 9),
+          Text(
+            note.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w700,
+              height: 1.45,
             ),
           ),
-        ),
-      ],
+          Text(
+            NotesTab.when(note.lastOpened),
+            style: TextStyle(fontSize: 12, color: Brand.muted),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
@@ -11,6 +12,7 @@ import 'package:path/path.dart' as p;
 
 import '../book/book_link_store.dart';
 import '../ink/ink_store.dart';
+import '../ink/stroke.dart';
 import '../catalog/own_covers.dart';
 import '../ui/speed_log.dart';
 import '../library/library_store.dart';
@@ -169,16 +171,30 @@ const _settingsKey = '@settings';
 
 /// What was last agreed with Drive for a book.
 class _Synced {
-  const _Synced(this.fileId, this.hash, this.remoteTime);
+  const _Synced(this.fileId, this.hash, this.remoteTime, [this.stamp = '']);
 
   final String fileId;
   final String hash;
   final String remoteTime;
 
-  Map<String, String> toJson() => {'f': fileId, 'h': hash, 't': remoteTime};
+  /// How the files of the work looked (sizes and times) when this was
+  /// agreed; the same again means nothing changed, without reading them.
+  /// Empty when not known.
+  final String stamp;
 
-  static _Synced fromJson(Map<String, dynamic> j) =>
-      _Synced(j['f'] as String, j['h'] as String, j['t'] as String);
+  Map<String, String> toJson() => {
+    'f': fileId,
+    'h': hash,
+    't': remoteTime,
+    if (stamp.isNotEmpty) 's': stamp,
+  };
+
+  static _Synced fromJson(Map<String, dynamic> j) => _Synced(
+    j['f'] as String,
+    j['h'] as String,
+    j['t'] as String,
+    j['s'] as String? ?? '',
+  );
 }
 
 /// Keeps everything of an account in its Drive: every book in the library
@@ -363,10 +379,10 @@ class SyncEngine extends ChangeNotifier {
 
   /// Syncs a little later, so that writing just finished is on disk and a
   /// burst of events is one sync.
-  void requestSoon() {
+  void requestSoon({Duration after = const Duration(seconds: 3)}) {
     if (!isLinked()) return;
     _soon?.cancel();
-    _soon = Timer(const Duration(seconds: 3), () => unawaited(syncNow()));
+    _soon = Timer(after, () => unawaited(syncNow()));
   }
 
   /// Syncs, and returns when no sync is running: a caller that must know the
@@ -476,11 +492,16 @@ class SyncEngine extends ChangeNotifier {
     await _listAccountBooks();
     Object? failed;
     final books = _library.books;
+    _workDirs = null;
+    var read = 0;
     for (var i = 0; i < books.length; i++) {
-      _doing('جارٍ المزامنة ${i + 1} من ${books.length}…');
+      // Telling every book would rebuild what listens many times a second.
+      if (i % 20 == 0) _doing('جارٍ المزامنة ${i + 1} من ${books.length}…');
       try {
-        await _syncBook(drive, books[i]);
-        await _saveState();
+        if (await _syncBook(drive, books[i])) {
+          read++;
+          await _saveState();
+        }
       } on DriveException catch (e) {
         if (e.storageFull) {
           driveFull = true;
@@ -502,7 +523,7 @@ class SyncEngine extends ChangeNotifier {
     log.took(
       'sync pass',
       passClock.elapsedMilliseconds,
-      '${books.length} books · reading work ${_readClock.elapsedMilliseconds}ms · '
+      '${books.length} books, $read read · reading work ${_readClock.elapsedMilliseconds}ms · '
           'fingerprints ${_hashClock.elapsedMilliseconds}ms',
     );
     try {
@@ -524,7 +545,9 @@ class SyncEngine extends ChangeNotifier {
       if (b == null || b.id == openBook) continue;
       final work = await _localWork(b);
       final st = _state[b.id];
-      final untouched = st == null ? work.isEmpty : _hashOf(b, work) == st.hash;
+      final untouched = st == null
+          ? work.isEmpty
+          : await _hashOf(b, work) == st.hash;
       if (untouched) {
         await _library.remove(b, deleteWriting: true);
         _state.remove(b.id);
@@ -563,9 +586,9 @@ class SyncEngine extends ChangeNotifier {
     final running = _readClock.isRunning;
     _readClock.start();
     try {
-      final written = await InkStore.hasWriting(b.id);
+      final raw = await InkStore.rawBytes(b.id);
       return WorkBundle(
-        ink: written ? await InkStore.rawBytes(b.id) : null,
+        ink: raw != null && StrokeCodec.hasContent(raw) ? raw : null,
         prefs: await ReaderPrefs.rawBytes(b.id),
         link: await BookLinkStore.handLinkedJson(b.id),
       );
@@ -575,18 +598,55 @@ class SyncEngine extends ChangeNotifier {
   }
 
   /// A book's state as agreed with Drive: its work and its name.
-  String _hashOf(BookEntry b, WorkBundle w) {
+  Future<String> _hashOf(BookEntry b, WorkBundle w) async {
     final running = _hashClock.isRunning;
     _hashClock.start();
     try {
-      return sha256.convert(utf8.encode('${w.hash}|${b.title}')).toString();
+      final title = b.title;
+      final size = (w.ink?.length ?? 0) + (w.prefs?.length ?? 0);
+      // A large book's writing takes a while to fingerprint: not on the
+      // thread that draws the screen.
+      return size > 64 * 1024
+          ? await Isolate.run(() => _bundleHash(w, title))
+          : _bundleHash(w, title);
     } finally {
       if (!running) _hashClock.stop();
     }
   }
 
-  Future<void> _agree(BookEntry b, DriveFile f, WorkBundle w) async {
-    _state[b.id] = _Synced(f.id, _hashOf(b, w), f.modified);
+  static String _bundleHash(WorkBundle w, String title) =>
+      sha256.convert(utf8.encode('${w.hash}|$title')).toString();
+
+  /// Folders of the work's files, looked up once per pass.
+  ({String ink, String prefs, String links})? _workDirs;
+
+  /// How the files of [b]'s work look on disk (size and time of each) and
+  /// its title. The same as when last agreed means nothing changed here,
+  /// and nothing needs reading.
+  Future<String> _stampOf(BookEntry b) async {
+    final d = _workDirs ??= (
+      ink: (await InkStore.dirProvider()).path,
+      prefs: (await ReaderPrefs.dirProvider()).path,
+      links: (await BookLinkStore.dirProvider()).path,
+    );
+    Future<String> one(String dir, String ext) async {
+      final st = await FileStat.stat(p.join(dir, '${b.id}$ext'));
+      return st.type == FileSystemEntityType.notFound
+          ? '-'
+          : '${st.size}@${st.modified.microsecondsSinceEpoch}';
+    }
+
+    return '${await one(d.ink, '.nots')}|${await one(d.prefs, '.json')}|'
+        '${await one(d.links, '.json')}|${b.title}';
+  }
+
+  Future<void> _agree(
+    BookEntry b,
+    DriveFile f,
+    WorkBundle w, {
+    String stamp = '',
+  }) async {
+    _state[b.id] = _Synced(f.id, await _hashOf(b, w), f.modified, stamp);
     final base = _baseFile(b.id);
     await base.parent.create(recursive: true);
     final tmp = File('${base.path}.tmp');
@@ -609,49 +669,65 @@ class SyncEngine extends ChangeNotifier {
     if (await f.exists()) await f.delete();
   }
 
-  Future<void> _syncBook(DriveClient drive, BookEntry b) async {
-    final work = await _localWork(b);
+  /// Brings [b] and Drive to the same state. Returns false when nothing
+  /// had changed on either side: then not one of its files was read.
+  Future<bool> _syncBook(DriveClient drive, BookEntry b) async {
     final r = _remoteOf(b);
     final st = _state[b.id];
+    final remoteChanged = r != null && r.file.modified != st?.remoteTime;
+    // The file first: another device must never see a book it cannot get.
+    final needsPdf =
+        !driveFull &&
+        !b.isSpeedTest &&
+        b.catalogId == null &&
+        r?.pdfFile == null &&
+        !_pdfs.containsKey(b.id) &&
+        _library.isOnDevice(b);
+    final stamp = await _stampOf(b);
+    if (st != null &&
+        st.stamp == stamp &&
+        !remoteChanged &&
+        !needsPdf &&
+        (r != null || b.isSpeedTest)) {
+      return false;
+    }
+    final work = await _localWork(b);
     final localChanged = st == null
         ? !work.isEmpty
-        : _hashOf(b, work) != st.hash;
-    final remoteChanged = r != null && r.file.modified != st?.remoteTime;
+        : await _hashOf(b, work) != st.hash;
     final open = b.id == openBook;
     // The test library is read and fingerprinted like a synced book (that
     // is what is measured), but stays on this device.
     if (b.isSpeedTest) {
-      _hashOf(b, work);
-      return;
+      _state[b.id] = _Synced('', await _hashOf(b, work), '', stamp);
+      return true;
     }
 
-    // The file first: another device must never see a book it cannot get.
-    if (!driveFull &&
-        b.catalogId == null &&
-        r?.pdfFile == null &&
-        !_pdfs.containsKey(b.id) &&
-        _library.isOnDevice(b)) {
-      await _pushPdf(drive, b);
-    }
+    if (needsPdf) await _pushPdf(drive, b);
     if (r == null) {
-      if (!driveFull) await _push(drive, b, work, null);
+      if (!driveFull) await _push(drive, b, work, null, stamp: stamp);
     } else if (remoteChanged && open) {
-      return; // it comes when the book is closed
+      return true; // it comes when the book is closed
     } else if (localChanged && remoteChanged) {
       await _merge(drive, b, work, r);
     } else if (remoteChanged) {
       await _pull(drive, b, r);
     } else if (localChanged && !driveFull) {
-      await _push(drive, b, work, r);
+      await _push(drive, b, work, r, stamp: stamp);
+    } else if (st != null && !localChanged) {
+      // The same work; only the files were touched. Remember how they look.
+      _state[b.id] = _Synced(st.fileId, st.hash, st.remoteTime, stamp);
     }
+    return true;
   }
 
   Future<void> _push(
     DriveClient drive,
     BookEntry b,
     WorkBundle work,
-    RemoteBook? r,
-  ) async {
+    RemoteBook? r, {
+    String stamp = '',
+  }) async {
     final device = await deviceName?.call();
     final description = jsonEncode({
       'title': b.title,
@@ -679,7 +755,7 @@ class SyncEngine extends ChangeNotifier {
       if (!e.notFound) rethrow;
       f = await send(null); // removed from Drive meanwhile
     }
-    await _agree(b, f, work);
+    await _agree(b, f, work, stamp: stamp);
     final parsed = RemoteBook.parse(f, r?.pdfFile ?? _pdfs[b.id]);
     if (parsed != null) _remote[b.id] = parsed;
     if (r != null && r.id != b.id) _remote.remove(r.id);
@@ -715,7 +791,8 @@ class SyncEngine extends ChangeNotifier {
     final w = WorkBundle.decode(await drive.download(r.file.id));
     await _write(b, w);
     if (r.title != b.title) await _library.rename(b, r.title);
-    await _agree(b, r.file, await _localWork(b));
+    final stamp = await _stampOf(b);
+    await _agree(b, r.file, await _localWork(b), stamp: stamp);
   }
 
   /// Both sides changed: keeps what each one did, and sends the result.
@@ -751,7 +828,8 @@ class SyncEngine extends ChangeNotifier {
       // It goes up when there is room; until then Drive's state is the base.
       await _agree(b, r.file, theirs);
     } else {
-      await _push(drive, b, await _localWork(b), r);
+      final stamp = await _stampOf(b);
+      await _push(drive, b, await _localWork(b), r, stamp: stamp);
     }
   }
 
@@ -968,7 +1046,8 @@ class SyncEngine extends ChangeNotifier {
       final saved =
           st != null &&
           r != null &&
-          st.hash == _hashOf(b, await _localWork(b)) &&
+          (st.stamp.isNotEmpty && st.stamp == await _stampOf(b) ||
+              st.hash == await _hashOf(b, await _localWork(b))) &&
           (b.catalogId != null || r.pdfFile != null);
       if (!saved) out.add(b);
     }

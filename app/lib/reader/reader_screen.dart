@@ -496,11 +496,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
         _restorePage();
       }
     });
-    BookLinkStore.open(widget.book.id, widget.library.pathOf(widget.book)).then(
-      (b) {
-        if (mounted && b != null) _bookArrived(b);
-      },
-    );
+    // A note has no book text to look for.
+    if (!widget.book.isNote) {
+      BookLinkStore.open(widget.book.id, widget.library.pathOf(widget.book)).then(
+        (b) {
+          if (mounted && b != null) _bookArrived(b);
+        },
+      );
+    }
     _openInk();
     if (widget.book.isNote) unawaited(_loadNote());
   }
@@ -659,7 +662,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
       });
       _fitNoteToWriting();
       unawaited(_openConflicts(s));
-      if (s.document.strokeCount == 0 &&
+      // Writing left from older versions can only belong to a book.
+      if (!widget.book.isNote &&
+          s.document.strokeCount == 0 &&
           s.document.items.values.every((l) => l.isEmpty)) {
         unawaited(_offerOrphans());
       }
