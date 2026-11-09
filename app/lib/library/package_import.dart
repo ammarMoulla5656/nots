@@ -5,7 +5,9 @@ import 'package:path/path.dart' as p;
 
 import '../book/book_link_store.dart';
 import '../export/exporter.dart';
+import '../export/share_file.dart';
 import '../ink/ink_store.dart';
+import '../notes/text_note.dart';
 import '../reader/reader_prefs.dart';
 import 'library_store.dart';
 
@@ -39,4 +41,14 @@ Future<BookEntry> importPackage(
   } finally {
     await dir.delete(recursive: true);
   }
+}
+
+/// Adds the text note of a text note package as a new note, with its drawing.
+Future<BookEntry> importTextNote(LibraryStore library, Uint8List bytes) async {
+  final pkg = readTextNotePackage(bytes);
+  final entry = await createTextNote(library, title: pkg.title);
+  await TextNoteStore.write(entry.id, pkg.ops);
+  final ink = pkg.ink;
+  if (ink != null) await InkStore.writeRaw(entry.id, ink);
+  return entry;
 }

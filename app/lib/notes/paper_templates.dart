@@ -174,9 +174,7 @@ class PaperTemplates extends ChangeNotifier {
     final j = jsonDecode(text);
     final list = j is Map ? j['papers'] : j;
     if (list is! List) return const [];
-    return [
-      for (final e in list) ?PaperTemplate.fromJson(e),
-    ];
+    return [for (final e in list) ?PaperTemplate.fromJson(e)];
   }
 
   /// The PDF page of the template file [name], fetched once. Null without a

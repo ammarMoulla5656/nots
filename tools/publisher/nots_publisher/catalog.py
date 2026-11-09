@@ -20,6 +20,9 @@ VERSION = 1
 TEXT_FIELDS = (
     "title", "author", "investigator", "edition",
     "language", "subject", "publisher",
+    # The book's id in the Masdar app; empty when it is not there. With it the
+    # reader shows Masdar's logo and opens the same page there.
+    "masdar",
 )
 FEATURES = ("search", "marks", "copy", "toc", "exact")
 

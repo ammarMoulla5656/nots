@@ -97,6 +97,7 @@ class CatalogBook {
     required this.added,
     required this.cover,
     required this.parts,
+    this.masdarId,
   }) : searchKey = normalizeForSearch(
          '$title $author $investigator $publisher $subject',
        ).text,
@@ -118,6 +119,10 @@ class CatalogBook {
   final String added;
   final String cover;
   final List<CatalogPart> parts;
+
+  /// The book's id in the Masdar app, when it is there: its logo shows in
+  /// the reader and opens the same page there. Null when it is not.
+  final int? masdarId;
 
   /// Normalised once here, so typing in the search box stays instant.
   final String searchKey;
@@ -159,6 +164,13 @@ class CatalogBook {
       added: s('added'),
       cover: s('cover'),
       parts: parts,
+      masdarId: switch (j['masdar']) {
+        final num n when n > 0 => n.toInt(),
+        final String t when (int.tryParse(t.trim()) ?? 0) > 0 => int.parse(
+          t.trim(),
+        ),
+        _ => null,
+      },
     );
   }
 }

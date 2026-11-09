@@ -12,7 +12,15 @@ import posixpath
 import tempfile
 from dataclasses import dataclass, field
 
+import pymupdf
 from PIL import Image, ImageOps
+
+try:  # phone photos (HEIC); every other format is in Pillow itself
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+except ImportError:
+    pass
 
 from . import catalog as cat
 from .server import CATALOG, CATALOG_BACKUP, Server
@@ -55,14 +63,52 @@ def save_catalog(server: Server, catalog: dict) -> None:
     server.write_text(CATALOG, cat.dumps(catalog))
 
 
+def cover_extensions() -> list[str]:
+    """Every picture format that can be chosen as a cover."""
+    Image.init()
+    known = {e for e, f in Image.registered_extensions().items() if f in Image.OPEN}
+    return sorted(known | {".svg", ".pdf"})
+
+
+def _on_white(im: Image.Image) -> Image.Image:
+    """Without this, the transparent parts of a picture come out black."""
+    im = im.convert("RGBA")
+    page = Image.new("RGBA", im.size, "white")
+    page.alpha_composite(im)
+    return page.convert("RGB")
+
+
+def _rendered(source: str) -> Image.Image:
+    """Formats that are drawn, not stored as pixels: SVG, PDF and the like."""
+    with pymupdf.open(source) as doc:
+        page = doc[0]
+        zoom = COVER_MAX / max(page.rect.width, page.rect.height, 1)
+        pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
+        return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+
+
+def open_cover(source: str) -> Image.Image:
+    """The chosen file as a plain picture, or OSError when it is not one. An
+    animation gives its first frame."""
+    try:
+        with Image.open(source) as im:
+            return _on_white(ImageOps.exif_transpose(im))
+    except OSError:
+        pass
+    try:
+        return _rendered(source)
+    except Exception as e:
+        raise OSError(f"لا يمكن قراءة هذه الصورة: {os.path.basename(source)}") from e
+
+
 def make_cover(source: str) -> bytes:
-    """A JPEG small enough for lists, whatever was chosen."""
-    with Image.open(source) as im:
-        im = ImageOps.exif_transpose(im).convert("RGB")
-        im.thumbnail((COVER_MAX, COVER_MAX))
-        out = io.BytesIO()
-        im.save(out, "JPEG", quality=82, optimize=True)
-        return out.getvalue()
+    """A JPEG small enough for lists, whatever was chosen: the app only ever
+    receives this one format, so every device can show it."""
+    im = open_cover(source)
+    im.thumbnail((COVER_MAX, COVER_MAX))
+    out = io.BytesIO()
+    im.save(out, "JPEG", quality=82, optimize=True)
+    return out.getvalue()
 
 
 def _upload_cover(server: Server, book_id: str, source: str, say) -> str:

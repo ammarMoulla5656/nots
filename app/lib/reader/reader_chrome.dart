@@ -104,6 +104,7 @@ class ReaderBars extends StatelessWidget {
     required this.onTool,
     required this.onBox,
     required this.boxOpen,
+    this.inMasdar = false,
   });
 
   final ToolController tools;
@@ -125,6 +126,9 @@ class ReaderBars extends StatelessWidget {
   final VoidCallback onBox;
   final bool boxOpen;
 
+  /// The book is in the Masdar app: its logo shows and opens the same page.
+  final bool inMasdar;
+
   bool _active(ReaderTool t) {
     final m = t.mode;
     if (m != null) return tools.mode == m;
@@ -135,10 +139,7 @@ class ReaderBars extends StatelessWidget {
     return ListenableBuilder(
       listenable: Listenable.merge([tools, layout, document, tools.ruler]),
       builder: (context, _) {
-        final bar = [
-          for (final t in layout.bar)
-            if (isBook || !t.forBooksOnly) t,
-        ];
+        final bar = _barTools;
         final inBox = layout.box.where((t) => _active(t)).firstOrNull;
         return Glass(
           radius: 16,
@@ -243,7 +244,7 @@ class ReaderBars extends StatelessWidget {
         onPressed: onBack,
       ),
     );
-    final masdar = isBook
+    final masdar = inMasdar
         ? Tooltip(
             message: 'فتح في المصدر',
             child: GestureDetector(
@@ -270,31 +271,87 @@ class ReaderBars extends StatelessWidget {
             ),
           )
         : const SizedBox.shrink();
-    final head = Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        back,
-        if (isBook) ...[const SizedBox(width: 6), masdar],
-        const Spacer(),
-        if (wide) ...[_toolRow(context), const Spacer()],
-        _group(),
-      ],
-    );
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 4, 10, 0),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          head,
-          if (!wide) ...[
-            const SizedBox(height: 6),
-            Center(child: _toolRow(context)),
-          ],
-        ],
+    return ListenableBuilder(
+      // Tools put into the bar or taken out change what fits.
+      listenable: layout,
+      builder: (context, _) => LayoutBuilder(
+        builder: (context, box) {
+          // The real width of the screen decides: the tools go on the top
+          // row only when they fit there beside everything else; otherwise
+          // they have a row of their own, and if even that is too narrow
+          // they scroll inside it. Nothing is ever pushed off the screen.
+          final room = box.maxWidth - 20;
+          final tools = _toolRowWidth();
+          final headWidth = 44 + (inMasdar ? 6 + 44 : 0) + _groupWidth();
+          final oneRow = wide && headWidth + tools + 2 * 16 <= room;
+          final head = Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              back,
+              if (inMasdar) ...[const SizedBox(width: 6), masdar],
+              const Spacer(),
+              if (oneRow) ...[_toolRow(context), const Spacer()],
+              _group(),
+            ],
+          );
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(10, 4, 10, 0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                head,
+                if (!oneRow) ...[
+                  const SizedBox(height: 6),
+                  Center(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: room),
+                      child: tools > room
+                          ? _fadeEnds(_toolRow(context))
+                          : _toolRow(context),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          );
+        },
       ),
     );
   }
+
+  /// Tools shown in the bar (some are for books only).
+  /// The tools in the bar: the user's, and for a note always the text tool
+  /// too (a note is written on, so typing is at hand beside the pen).
+  List<ReaderTool> get _barTools => [
+    for (final t in layout.bar)
+      if (isBook || !t.forBooksOnly) t,
+    if (!isBook && !layout.bar.contains(ReaderTool.text)) ReaderTool.text,
+  ];
+
+  int get _barCount => _barTools.length;
+
+  /// Width of the tools' row: its buttons, the box, the line, undo and
+  /// redo, and the frame around them.
+  double _toolRowWidth() => (_barCount + 3) * 40 + 5 + 6;
+
+  /// Width of the group of buttons on the other side.
+  double _groupWidth() => (isBook ? 5 : 3) * 39 + 4;
+
+  /// Both ends fade a little: a row that scrolls shows there is more.
+  Widget _fadeEnds(Widget child) => ShaderMask(
+    blendMode: BlendMode.dstIn,
+    shaderCallback: (r) => const LinearGradient(
+      colors: [
+        Colors.transparent,
+        Colors.black,
+        Colors.black,
+        Colors.transparent,
+      ],
+      stops: [0, 0.05, 0.95, 1],
+    ).createShader(r),
+    child: child,
+  );
 }
 
 /// The options of the chosen tool: its kinds, its colours, its size.
@@ -367,7 +424,8 @@ class ToolOptions extends StatelessWidget {
   Widget _toggle(String label, bool on, ValueChanged<bool> set) => Row(
     mainAxisAlignment: MainAxisAlignment.spaceBetween,
     children: [
-      Text(label, style: const TextStyle(fontSize: 13)),
+      // A long label wraps instead of pushing the switch off the panel.
+      Flexible(child: Text(label, style: const TextStyle(fontSize: 13))),
       const SizedBox(width: 12),
       SizedBox(
         height: 28,
@@ -658,6 +716,34 @@ class ToolBox extends StatelessWidget {
   }
 }
 
+/// Holds a panel under the bars (tool box, tool options, selection): never
+/// wider than the screen nor taller than the room left under the bars, as
+/// the device's own size says. What does not fit scrolls.
+class PanelFrame extends StatelessWidget {
+  const PanelFrame({super.key, required this.child, this.reserved = 150});
+
+  final Widget child;
+
+  /// Height taken by the bars above and the margins.
+  final double reserved;
+
+  @override
+  Widget build(BuildContext context) {
+    final mq = MediaQuery.of(context);
+    final maxH = math.max(
+      120.0,
+      mq.size.height - mq.padding.vertical - reserved,
+    );
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxWidth: math.max(0, mq.size.width - 20),
+        maxHeight: maxH,
+      ),
+      child: SingleChildScrollView(child: child),
+    );
+  }
+}
+
 /// Delete or copy what the lasso selected.
 class SelectionBar extends StatelessWidget {
   const SelectionBar({
@@ -674,8 +760,10 @@ class SelectionBar extends StatelessWidget {
     return Glass(
       radius: 15,
       padding: const EdgeInsets.all(4),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+      // On a narrow screen the buttons go on a second line.
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           TextButton(
             style: TextButton.styleFrom(

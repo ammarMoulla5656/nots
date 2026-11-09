@@ -7,6 +7,7 @@ import '../sync/google_account.dart';
 import '../ui/brand_widgets.dart';
 import '../ui/theme.dart';
 import 'book_cover.dart';
+import 'category_screen.dart';
 import 'book_detail_screen.dart';
 import 'catalog_models.dart';
 import 'catalog_store.dart';
@@ -113,6 +114,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
         downloads: widget.downloads,
         library: widget.library,
         onOpen: widget.onOpen,
+        store: widget.store,
       ),
     ),
   );
@@ -140,7 +142,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                     'الكتب',
                     style: TextStyle(
                       color: Colors.white,
-                      fontSize: 20,
+                      fontSize: 22,
                       fontWeight: FontWeight.w700,
                       height: 1.2,
                     ),
@@ -167,34 +169,9 @@ class _CatalogScreenState extends State<CatalogScreen> {
           ],
         ),
         const SizedBox(height: 10),
-        Container(
-          height: 44,
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.14),
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: TextField(
-            onChanged: (v) => _ask(_query.copyWith(text: v)),
-            style: const TextStyle(color: Colors.white, fontSize: 15),
-            cursorColor: Colors.white,
-            decoration: InputDecoration(
-              filled: false,
-              border: InputBorder.none,
-              enabledBorder: InputBorder.none,
-              focusedBorder: InputBorder.none,
-              hintText: 'ابحث بالعنوان أو المؤلف أو المحقق',
-              hintStyle: const TextStyle(
-                color: Color(0xFFCFDDF0),
-                fontSize: 14.5,
-              ),
-              prefixIcon: Icon(
-                Icons.search,
-                size: 20,
-                color: Colors.white.withValues(alpha: 0.85),
-              ),
-              contentPadding: const EdgeInsets.symmetric(vertical: 12),
-            ),
-          ),
+        HeroSearch(
+          hint: 'ابحث بالعنوان أو المؤلف أو المحقق',
+          onChanged: (v) => _ask(_query.copyWith(text: v)),
         ),
       ],
     ),
@@ -345,35 +322,75 @@ class _CatalogScreenState extends State<CatalogScreen> {
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Padding(
-                            padding: EdgeInsets.fromLTRB(
-                              sidePadding(context),
-                              22,
-                              sidePadding(context),
-                              12,
+                          // The whole bar opens all the books of the category.
+                          InkWell(
+                            onTap: () => CategoryScreen.open(
+                              context,
+                              subject: shelf.key,
+                              store: widget.store,
+                              downloads: widget.downloads,
+                              library: widget.library,
+                              onOpen: widget.onOpen,
                             ),
-                            child: Row(
-                              children: [
-                                Transform.rotate(
-                                  angle: 0.785398,
-                                  child: Container(
-                                    width: 9,
-                                    height: 9,
-                                    color: Brand.gold,
-                                  ),
-                                ),
-                                const SizedBox(width: 9),
-                                Expanded(
-                                  child: Text(
-                                    shelf.key,
-                                    style: const TextStyle(
-                                      fontSize: 15.5,
-                                      fontWeight: FontWeight.w900,
-                                      height: 1.45,
+                            child: Padding(
+                              padding: EdgeInsets.fromLTRB(
+                                sidePadding(context),
+                                16,
+                                sidePadding(context),
+                                8,
+                              ),
+                              child: Row(
+                                children: [
+                                  Transform.rotate(
+                                    angle: 0.785398,
+                                    child: Container(
+                                      width: 9,
+                                      height: 9,
+                                      color: Brand.gold,
                                     ),
                                   ),
-                                ),
-                              ],
+                                  const SizedBox(width: 9),
+                                  Expanded(
+                                    child: Text(
+                                      shelf.key,
+                                      style: const TextStyle(
+                                        fontSize: 15.5,
+                                        fontWeight: FontWeight.w900,
+                                        height: 1.45,
+                                      ),
+                                    ),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 6,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Brand.tint,
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          'عرض الكل (${shelf.value.length})',
+                                          style: TextStyle(
+                                            fontSize: 12.5,
+                                            fontWeight: FontWeight.w700,
+                                            color: Brand.onTint,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 2),
+                                        Icon(
+                                          Icons.chevron_left,
+                                          size: 18,
+                                          color: Brand.onTint,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                           SizedBox(

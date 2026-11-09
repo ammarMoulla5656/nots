@@ -2,7 +2,9 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../book/book_text.dart' show normalizeForSearch;
 import '../ink/tool_controller.dart';
+import '../library/book_widgets.dart' show SearchBox;
 import '../library/home_sheets.dart';
 import '../ui/brand_widgets.dart';
 import '../ui/theme.dart';
@@ -16,7 +18,16 @@ class TocSheet extends StatefulWidget {
     required this.entries,
     required this.currentPdfPage,
     required this.onLink,
+    this.showPages = true,
+    this.emptyMessage,
   });
+
+  /// Show each entry's page number (a text note has none: its entries are
+  /// places in the text).
+  final bool showPages;
+
+  /// What to say when there are no entries, in place of the book's advice.
+  final String? emptyMessage;
 
   final List<TocEntry> entries;
   final int currentPdfPage;
@@ -31,6 +42,21 @@ class TocSheet extends StatefulWidget {
 class _TocSheetState extends State<TocSheet> {
   static const _row = 46.0;
   late final ScrollController _scroll;
+
+  /// The titles as searched: without diacritics, one form of each letter.
+  late final List<String> _keys = [
+    for (final e in widget.entries) normalizeForSearch(e.title).text,
+  ];
+  String _query = '';
+
+  /// Places in [TocSheet.entries] of the titles shown.
+  List<int> get _shown {
+    final q = normalizeForSearch(_query).text.trim();
+    return [
+      for (var i = 0; i < widget.entries.length; i++)
+        if (q.isEmpty || _keys[i].contains(q)) i,
+    ];
+  }
 
   int get _current {
     var idx = -1;
@@ -59,88 +85,119 @@ class _TocSheetState extends State<TocSheet> {
   @override
   Widget build(BuildContext context) {
     final current = _current;
-    return SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const SheetHeader('الفهرس'),
-          if (widget.entries.isEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    'لا يوجد فهرس لهذا الملف.\n\nاربط ملف Word (docx) للكتاب نفسه، مطابقاً للأصل صفحةً بصفحة، فيظهر فهرسه هنا ويعمل البحث في نصه.',
-                    style: TextStyle(color: Brand.muted, height: 1.7),
-                  ),
-                  const SizedBox(height: 14),
-                  FilledButton.tonalIcon(
-                    onPressed: widget.onLink,
-                    icon: const Icon(Icons.link),
-                    label: const Text('ربط ملف Word (docx)'),
-                  ),
-                ],
+    final shown = _shown;
+    return Padding(
+      // Typing a search: the keyboard pushes the list up, not over it.
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SheetHeader('الفهرس'),
+            if (widget.entries.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                child: SearchBox(
+                  hint: 'ابحث في الفهرس',
+                  onChanged: (v) {
+                    setState(() => _query = v);
+                    if (_scroll.hasClients) _scroll.jumpTo(0);
+                  },
+                ),
               ),
-            )
-          else
-            Flexible(
-              child: ListView.builder(
-                controller: _scroll,
-                itemExtent: _row,
-                padding: const EdgeInsets.fromLTRB(10, 0, 10, 16),
-                itemCount: widget.entries.length,
-                itemBuilder: (context, i) {
-                  final e = widget.entries[i];
-                  final on = i == current;
-                  return InkWell(
-                    borderRadius: BorderRadius.circular(11),
-                    onTap: () => Navigator.pop(context, e.pdfPage),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: on ? Brand.tint : null,
-                        borderRadius: BorderRadius.circular(11),
+            if (widget.entries.isNotEmpty && shown.isEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+                child: Text(
+                  'لا يوجد عنوان بهذا البحث.',
+                  style: TextStyle(color: Brand.muted),
+                ),
+              ),
+            if (widget.entries.isEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      widget.emptyMessage ?? 'لا يوجد فهرس لهذا الملف.\n\nاربط ملف Word (docx) للكتاب نفسه، مطابقاً للأصل صفحةً بصفحة، فيظهر فهرسه هنا ويعمل البحث في نصه.',
+                      style: TextStyle(color: Brand.muted, height: 1.7),
+                    ),
+                    if (widget.emptyMessage == null) ...[
+                      const SizedBox(height: 14),
+                      FilledButton.tonalIcon(
+                        onPressed: widget.onLink,
+                        icon: const Icon(Icons.link),
+                        label: const Text('ربط ملف Word (docx)'),
                       ),
-                      padding: EdgeInsetsDirectional.only(
-                        start: 10.0 + 16 * (e.level - 1).clamp(0, 4),
-                        end: 10,
-                      ),
-                      alignment: AlignmentDirectional.centerStart,
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              e.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: e.level == 1 ? 15 : 14,
-                                fontWeight: on || e.level == 1
-                                    ? FontWeight.w700
-                                    : null,
-                                color: on
-                                    ? Brand.onTint
-                                    : e.level == 1
-                                    ? Brand.blue
-                                    : e.level >= 3
-                                    ? Brand.muted
-                                    : null,
+                    ],
+                  ],
+                ),
+              )
+            else
+              Flexible(
+                child: ListView.builder(
+                  controller: _scroll,
+                  itemExtent: _row,
+                  padding: const EdgeInsets.fromLTRB(10, 0, 10, 16),
+                  itemCount: shown.length,
+                  itemBuilder: (context, k) {
+                    final i = shown[k];
+                    final e = widget.entries[i];
+                    final on = i == current;
+                    return InkWell(
+                      borderRadius: BorderRadius.circular(11),
+                      onTap: () => Navigator.pop(context, e.pdfPage),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: on ? Brand.tint : null,
+                          borderRadius: BorderRadius.circular(11),
+                        ),
+                        padding: EdgeInsetsDirectional.only(
+                          start: 10.0 + 16 * (e.level - 1).clamp(0, 4),
+                          end: 10,
+                        ),
+                        alignment: AlignmentDirectional.centerStart,
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                e.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: e.level == 1 ? 15 : 14,
+                                  fontWeight: on || e.level == 1
+                                      ? FontWeight.w700
+                                      : null,
+                                  color: on
+                                      ? Brand.onTint
+                                      : e.level == 1
+                                      ? Brand.blue
+                                      : e.level >= 3
+                                      ? Brand.muted
+                                      : null,
+                                ),
                               ),
                             ),
-                          ),
-                          Text(
-                            '${e.pdfPage}',
-                            style: TextStyle(fontSize: 12, color: Brand.muted),
-                          ),
-                        ],
+                            if (widget.showPages)
+                              Text(
+                                '${e.pdfPage}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Brand.muted,
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
-                    ),
-                  );
-                },
+                    );
+                  },
+                ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -155,7 +212,11 @@ class ReaderMenuSheet extends StatelessWidget {
     required this.isBook,
     required this.linked,
     required this.canUnlink,
+    this.inMasdar = false,
   });
+
+  /// The book is in Masdar: its page can be shared as a link.
+  final bool inMasdar;
 
   final int annotated;
   final int marked;
@@ -190,6 +251,13 @@ class ReaderMenuSheet extends StatelessWidget {
                     'إضافة صفحة فارغة هنا',
                     () => pick('addpage'),
                     subtitle: 'للملاحظات، بعد هذه الصفحة، وتُحفظ مع الكتاب',
+                  ),
+                if (inMasdar)
+                  ActionRow(
+                    Icons.link,
+                    'مشاركة رابط الصفحة',
+                    () => pick('share-link'),
+                    subtitle: 'يفتح الصفحة نفسها في المصدر وفي قلم المصدر',
                   ),
                 ActionRow(
                   Icons.ios_share,

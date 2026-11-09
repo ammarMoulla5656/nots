@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import sys
@@ -114,6 +115,65 @@ class Inspecting(unittest.TestCase):
             z.writestr("x", "y")
         with self.assertRaises(ValueError):
             inspect(p)
+
+
+class Covers(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+
+    def _path(self, name):
+        return os.path.join(self.dir.name, name)
+
+    def _is_jpeg_of(self, path, colour):
+        data = publishing.make_cover(path)
+        self.assertEqual(data[:2], bytes([0xFF, 0xD8]))
+        with Image.open(io.BytesIO(data)) as im:
+            got = im.convert("RGB").getpixel((im.width // 2, im.height // 2))
+        for a, b in zip(got, colour):
+            self.assertLess(abs(a - b), 24, got)
+
+    def test_every_common_format_becomes_a_jpeg(self):
+        red = Image.new("RGB", (60, 90), (200, 20, 20))
+        for ext in ("jpg", "png", "webp", "bmp", "gif", "tiff", "avif", "heic", "ico", "tga"):
+            with self.subTest(ext):
+                path = self._path(f"c.{ext}")
+                red.save(path)
+                self._is_jpeg_of(path, (200, 20, 20))
+
+    def test_the_format_is_read_from_the_file_not_its_name(self):
+        path = self._path("really_a_webp.jpg")
+        Image.new("RGB", (60, 90), (20, 20, 200)).save(path, "WEBP")
+        self._is_jpeg_of(path, (20, 20, 200))
+
+    def test_transparent_parts_are_white_not_black(self):
+        path = self._path("c.png")
+        Image.new("RGBA", (60, 90), (0, 0, 0, 0)).save(path)
+        self._is_jpeg_of(path, (255, 255, 255))
+
+    def test_drawn_formats(self):
+        path = self._path("c.svg")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="60">'
+                    '<rect width="40" height="60" fill="#0a0"/></svg>')
+        self._is_jpeg_of(path, (0, 170, 0))
+        doc = pymupdf.open()
+        page = doc.new_page(width=100, height=140)
+        page.draw_rect(page.rect, fill=(0, 0, 1))
+        doc.save(self._path("c.pdf"))
+        self._is_jpeg_of(self._path("c.pdf"), (0, 0, 255))
+
+    def test_a_file_that_is_no_picture_says_so(self):
+        path = self._path("c.png")
+        with open(path, "wb") as f:
+            f.write(b"not a picture")
+        with self.assertRaises(OSError):
+            publishing.make_cover(path)
+
+    def test_the_file_dialog_offers_them(self):
+        names = publishing.cover_extensions()
+        for ext in (".jpg", ".png", ".webp", ".heic", ".avif", ".svg", ".tiff"):
+            self.assertIn(ext, names)
 
 
 class Publishing(unittest.TestCase):

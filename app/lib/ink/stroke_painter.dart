@@ -120,21 +120,121 @@ ui.Path _smoothPath(List<StrokePoint> pts, double scale) {
   return path;
 }
 
+/// The strokes of one page kept as a ready picture, in PDF points.
+///
+/// Drawing every stroke again on each change made a page slow once it held
+/// hundreds of strokes. Now a new stroke is recorded on top of the picture
+/// already made (the old ones are not drawn again), zooming only scales the
+/// picture, and only removing or changing strokes records them all anew.
+class StrokeLayer {
+  ui.Picture? _picture;
+
+  /// Pictures the current one draws on top of; kept alive until it is
+  /// recorded flat again.
+  final _under = <ui.Picture>[];
+
+  /// The strokes in the picture. Strokes never change in place (a changed
+  /// stroke is a new object), so comparing references tells what changed.
+  List<Stroke> _drawn = const [];
+  int _hiddenKey = 0;
+  int _appends = 0;
+
+  /// How many times all strokes were recorded (for tests).
+  int fullRecords = 0;
+
+  /// Recorded flat again after this many strokes added on top.
+  static const flattenEvery = 64;
+
+  /// Whether the first [n] of [strokes] are the ones in the picture.
+  bool _samePrefix(List<Stroke> strokes, int n) {
+    for (var i = 0; i < n; i++) {
+      if (!identical(strokes[i], _drawn[i])) return false;
+    }
+    return true;
+  }
+
+  /// The picture of [strokes] without the [hidden] ones (being moved by the
+  /// selection).
+  ui.Picture pictureFor(List<Stroke> strokes, Set<int> hidden) {
+    final hiddenKey = hidden.isEmpty ? 0 : Object.hashAllUnordered(hidden);
+    final pic = _picture;
+    final n = _drawn.length;
+    final sameHidden = hiddenKey == _hiddenKey;
+    if (pic != null &&
+        sameHidden &&
+        strokes.length == n &&
+        _samePrefix(strokes, n)) {
+      return pic;
+    }
+    final appended =
+        pic != null &&
+        sameHidden &&
+        n > 0 &&
+        strokes.length > n &&
+        _appends < flattenEvery &&
+        _samePrefix(strokes, n);
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    if (appended) {
+      canvas.drawPicture(pic);
+      for (var i = n; i < strokes.length; i++) {
+        if (!hidden.contains(strokes[i].id)) paintStroke(canvas, strokes[i], 1);
+      }
+      _under.add(pic);
+      _appends++;
+    } else {
+      for (final s in strokes) {
+        if (!hidden.contains(s.id)) paintStroke(canvas, s, 1);
+      }
+      _release();
+      pic?.dispose();
+      _appends = 0;
+      fullRecords++;
+    }
+    _picture = recorder.endRecording();
+    _drawn = List.of(strokes);
+    _hiddenKey = hiddenKey;
+    return _picture!;
+  }
+
+  void _release() {
+    for (final p in _under) {
+      p.dispose();
+    }
+    _under.clear();
+  }
+
+  void dispose() {
+    _release();
+    _picture?.dispose();
+    _picture = null;
+  }
+}
+
 class StrokesPainter extends CustomPainter {
   StrokesPainter({
+    required this.layer,
     required this.strokes,
+    required this.hidden,
     required this.scale,
     required Listenable repaint,
   }) : super(repaint: repaint);
 
+  final StrokeLayer layer;
   final List<Stroke> Function() strokes;
+
+  /// Strokes not drawn here (the selection draws them while they move).
+  final Set<int> Function() hidden;
   final double scale;
 
   @override
   void paint(Canvas canvas, Size size) {
-    for (final s in strokes()) {
-      paintStroke(canvas, s, scale);
-    }
+    final picture = layer.pictureFor(strokes(), hidden());
+    canvas
+      ..save()
+      ..scale(scale)
+      ..drawPicture(picture)
+      ..restore();
   }
 
   @override

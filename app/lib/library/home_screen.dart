@@ -8,12 +8,18 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../book/masdar_link.dart';
+import '../catalog/author_screen.dart';
+import '../catalog/book_detail_screen.dart';
 import '../catalog/catalog_screen.dart';
 import '../catalog/catalog_store.dart';
 import '../catalog/download_manager.dart';
 import '../catalog/own_covers.dart';
 import '../ink/ink_store.dart';
+import '../export/share_file.dart' show isTextNotePackage;
 import '../notes/note_pdf.dart';
+import '../notes/text_note.dart';
+import '../notes/text_note_screen.dart';
 import '../notes/paper_templates.dart';
 import '../notes/paper.dart';
 import '../reader/reader_prefs.dart';
@@ -31,6 +37,8 @@ import 'book_widgets.dart';
 import 'books_tab.dart';
 import 'home_bar.dart';
 import 'home_sheets.dart';
+import 'collections.dart';
+import 'collections_ui.dart';
 import 'library_store.dart';
 import 'notes_tab.dart';
 import 'package_import.dart';
@@ -150,11 +158,22 @@ class _HomeScreenState extends State<HomeScreen> {
         read: () async => lib.readingBytes(),
         write: lib.applyReading,
       ),
+      // The collections: merged, the later change of each one winning.
+      SyncedPref(
+        Collections.fileName,
+        read: () async => Collections.instance.bytes(),
+        write: Collections.instance.applyBytes,
+      ),
     ];
+    await Collections.instance.load();
+    Collections.instance.addListener(sync.requestSoon);
     AppSettings.instance.addListener(sync.requestSoon);
     ToolLayout.instance.addListener(sync.requestSoon);
     if (!mounted) return;
     setState(() => _library = lib);
+    // The reader asks here which books are in Masdar, and at which volume.
+    MasdarRef.resolve = _masdarOf;
+    unawaited(_listenForLinks());
     SpeedLog.instance
       ..screen = _screens[_tab]
       ..note('library ready: ${lib.books.length} items');
@@ -227,7 +246,92 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _open(BookEntry b) async {
+  /// The book in the Masdar app, from the library's catalogue.
+  MasdarRef? _masdarOf(BookEntry b) {
+    final id = b.catalogId;
+    final book = id == null ? null : _catalog.byId(id);
+    final masdar = book?.masdarId;
+    if (book == null || masdar == null) return null;
+    return MasdarRef(
+      masdar,
+      MasdarRef.volumeOf(multiPart: book.multiPart, part: b.part ?? 1),
+    );
+  }
+
+  static const _app = MethodChannel('nots/app');
+
+  /// Masdar links opened with the app, or shared to it: the link the app
+  /// was started with, then each one that comes while it runs.
+  Future<void> _listenForLinks() async {
+    _app.setMethodCallHandler((call) async {
+      if (call.method == 'link' && call.arguments is String) {
+        await _openLink(call.arguments as String);
+      }
+    });
+    try {
+      final first = await _app.invokeMethod<String>('takeLink');
+      if (first != null) await _openLink(first);
+    } on MissingPluginException {
+      // Not on Android: links do not come this way.
+    }
+  }
+
+  /// Opens the page a Masdar link points to, in the same book here.
+  Future<void> _openLink(String text) async {
+    final link = parseMasdarLink(text);
+    if (link == null) {
+      _say('لا يوجد في هذا النص رابط من المصدر.');
+      return;
+    }
+    final book = _catalog.books.where((b) => b.masdarId == link.id).firstOrNull;
+    if (book == null) {
+      _say('هذا الكتاب من المصدر ليس في مكتبة قلم المصدر بعد.');
+      return;
+    }
+    // A book without volumes is volume 0 in the link.
+    final part = link.volume == 0
+        ? (book.parts.firstOrNull?.number ?? 1)
+        : link.volume;
+    final lib = _library!;
+    final here = lib.installedCatalog(book.id, part);
+    if (here != null) {
+      await _open(here, page: link.page);
+      return;
+    }
+    final file = book.partNumbered(part);
+    if (file == null) {
+      _say('هذا الجزء من «${book.title}» غير متوفر في المكتبة بعد.');
+      return;
+    }
+    // Not on this device yet: it downloads, and opens at the page when it
+    // is here.
+    _downloads.enqueue(book, file);
+    _say(
+      'جارٍ تنزيل «${book.titleOf(file)}»، وتُفتح الصفحة ${link.page} حين يكتمل.',
+    );
+    void arrived() {
+      final entry = lib.installedCatalog(book.id, part);
+      if (entry == null) return;
+      lib.removeListener(arrived);
+      if (mounted) unawaited(_open(entry, page: link.page));
+    }
+
+    lib.addListener(arrived);
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => BookDetailScreen(
+          book: book,
+          downloads: _downloads,
+          library: lib,
+          onOpen: _open,
+          store: _catalog,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _open(BookEntry b, {int? page}) async {
     final lib = _library!;
     if (!lib.isOnDevice(b)) {
       if (!_busy) await _bring(b);
@@ -239,12 +343,16 @@ class _HomeScreenState extends State<HomeScreen> {
     _sync.openBook = b.id;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => ReaderScreen(library: lib, book: b),
+        // A text note has its own screen (typing); the rest are read.
+        builder: (_) => isTextNote(b)
+            ? TextNoteScreen(library: lib, book: b)
+            : ReaderScreen(library: lib, book: b, openAtPage: page),
       ),
     );
     _sync.openBook = null;
     SpeedLog.instance.screen = _screens[_tab];
-    _sync.requestSoon();
+    // Leaving a book or a note saves everything to Drive at once.
+    if (_library != null) unawaited(_sync.syncNow());
     unawaited(_progress.load([b.id]));
     if (mounted) setState(() {});
   }
@@ -287,6 +395,23 @@ class _HomeScreenState extends State<HomeScreen> {
       await _makeNote(r.code);
     } else if (r == NewPaperSheet.addBook) {
       await _add();
+    } else if (r == NewPaperSheet.textNote) {
+      await _makeTextNote();
+    }
+  }
+
+  Future<void> _makeTextNote() async {
+    setState(() => _busy = true);
+    try {
+      final entry = await createTextNote(_library!);
+      _sync.requestSoon();
+      if (!mounted) return;
+      setState(() => _tab = 2);
+      await _open(entry);
+    } catch (e) {
+      _say('تعذّر إنشاء الملف: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -330,11 +455,14 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final BookEntry entry;
       if (ext == '.nots') {
-        entry = await importPackage(
-          _library!,
-          await File(path).readAsBytes(),
-          confirmReplace: _confirmReplace,
-        );
+        final bytes = await File(path).readAsBytes();
+        entry = isTextNotePackage(bytes)
+            ? await importTextNote(_library!, bytes)
+            : await importPackage(
+                _library!,
+                bytes,
+                confirmReplace: _confirmReplace,
+              );
       } else {
         entry = await _library!.importPdf(
           path,
@@ -395,6 +523,17 @@ class _HomeScreenState extends State<HomeScreen> {
                     () => Navigator.pop(context, 'info'),
                   ),
                   ActionRow(
+                    Icons.folder_special_outlined,
+                    'إضافة إلى تجميعة',
+                    () => Navigator.pop(context, 'collect'),
+                  ),
+                  if (!b.isNote && b.author.isNotEmpty)
+                    ActionRow(
+                      Icons.person_search_outlined,
+                      'كل مؤلفات ${b.author}',
+                      () => Navigator.pop(context, 'author'),
+                    ),
+                  ActionRow(
                     Icons.edit_outlined,
                     'إعادة التسمية',
                     () => Navigator.pop(context, 'rename'),
@@ -413,6 +552,17 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
     if (r == 'info') await _showInfo(b);
+    if (r == 'collect' && mounted) await showCollectionPicker(context, b);
+    if (r == 'author' && mounted) {
+      await AuthorScreen.open(
+        context,
+        author: b.author,
+        store: _catalog,
+        downloads: _downloads,
+        library: _library!,
+        onOpen: _open,
+      );
+    }
     if (r == 'rename') await _rename(b);
     if (r == 'remove') await _remove(b);
   }
@@ -585,6 +735,7 @@ class _HomeScreenState extends State<HomeScreen> {
       await lib.offload(b);
     } else if (choice == 'everywhere') {
       await lib.remove(b, deleteWriting: true);
+      Collections.instance.forget(b.id);
       await OwnCovers.instance.remove(b.id);
       try {
         await _sync.forget(b.id);
@@ -629,6 +780,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (ok != true) return;
     await _library!.remove(b, deleteWriting: deleteWriting);
+    Collections.instance.forget(b.id);
     if (deleteWriting) await OwnCovers.instance.remove(b.id);
   }
 

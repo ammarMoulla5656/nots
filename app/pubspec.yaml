@@ -52,6 +52,7 @@ dependencies:
   flutter_secure_storage: ^11.2.0
   wakelock_plus: ^1.8.2
   image_picker: ^1.2.4
+  flutter_quill: ^11.6.0
 
 dependency_overrides:
   # The same package without its empty C++ part, which needs Visual Studio's
@@ -71,6 +72,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  xml: ^7.1.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -98,6 +100,22 @@ flutter:
           weight: 700
         - asset: assets/fonts/Muna-Black.ttf
           weight: 900
+    # Fonts of the text notes (free, OFL licence).
+    - family: Amiri
+      fonts:
+        - asset: assets/fonts/Amiri-Regular.ttf
+        - asset: assets/fonts/Amiri-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/Amiri-Italic.ttf
+          style: italic
+    - family: Scheherazade
+      fonts:
+        - asset: assets/fonts/ScheherazadeNew-Regular.ttf
+        - asset: assets/fonts/ScheherazadeNew-Bold.ttf
+          weight: 700
+    - family: Kufi
+      fonts:
+        - asset: assets/fonts/NotoKufiArabic.ttf
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

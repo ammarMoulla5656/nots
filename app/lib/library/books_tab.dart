@@ -8,6 +8,7 @@ import '../sync/sync_engine.dart';
 import '../ui/brand_widgets.dart';
 import '../ui/theme.dart';
 import 'book_widgets.dart';
+import 'collections_ui.dart';
 import 'library_store.dart';
 import 'parts_popup.dart';
 
@@ -76,6 +77,7 @@ class _BooksTabState extends State<BooksTab>
   AnimationController? _shiver;
 
   void _setArranging(bool on) {
+    if (on == _arranging) return;
     setState(() {
       _arranging = on;
       if (on) {
@@ -91,28 +93,30 @@ class _BooksTabState extends State<BooksTab>
     });
   }
 
-  Widget _arrangeBar() => Container(
-    margin: const EdgeInsets.only(bottom: 12),
-    padding: const EdgeInsetsDirectional.fromSTEB(14, 6, 6, 6),
-    decoration: BoxDecoration(
-      color: Brand.blue.withValues(alpha: 0.08),
-      borderRadius: BorderRadius.circular(14),
-    ),
-    child: Row(
-      children: [
-        Icon(Icons.open_with, size: 18, color: Brand.blue),
-        const SizedBox(width: 8),
-        const Expanded(
-          child: Text(
-            'اسحب أي كتاب إلى مكانه، ويُحفظ الترتيب.',
-            style: TextStyle(fontSize: 13.5),
+  /// A small, quiet button beside the title (arranging, sorting).
+  Widget _smallButton(
+    IconData icon,
+    String tooltip,
+    VoidCallback onTap, {
+    bool on = false,
+  }) => Tooltip(
+    message: tooltip,
+    child: Material(
+      color: on ? Brand.blue : Colors.transparent,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: on ? null : Border.all(color: Brand.line),
           ),
+          child: Icon(icon, size: 18, color: on ? Colors.white : Brand.muted),
         ),
-        FilledButton(
-          onPressed: () => _setArranging(false),
-          child: const Text('تم'),
-        ),
-      ],
+      ),
     ),
   );
 
@@ -304,42 +308,54 @@ class _BooksTabState extends State<BooksTab>
   }
 
   Widget _hero(BuildContext context) => HeroHeader(
-    child: Row(
+    bottom: 4,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const AppLogo(size: 34),
-        const SizedBox(width: 10),
-        const Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'قلم المصدر',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  height: 1.2,
-                ),
+        Row(
+          children: [
+            const AppLogo(size: 40),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'قلم المصدر',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700,
+                      height: 1.2,
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+            HeroButton(
+              icon: Icons.schedule,
+              tooltip: 'آخر ١٠ كتب',
+              onPressed: widget.onHistory,
+            ),
+            const SizedBox(width: 8),
+            ListenableBuilder(
+              listenable: widget.account,
+              builder: (_, _) => HeroButton(
+                icon: Icons.person_outline,
+                photo: widget.account.photo,
+                tooltip: 'الحساب',
+                dot: widget.account.linked,
+                onPressed: widget.onAccount,
+              ),
+            ),
+          ],
         ),
-        HeroButton(
-          icon: Icons.schedule,
-          tooltip: 'آخر ١٠ كتب',
-          onPressed: widget.onHistory,
-        ),
-        const SizedBox(width: 8),
-        ListenableBuilder(
-          listenable: widget.account,
-          builder: (_, _) => HeroButton(
-            icon: Icons.person_outline,
-            photo: widget.account.photo,
-            tooltip: 'الحساب',
-            dot: widget.account.linked,
-            onPressed: widget.onAccount,
-          ),
+        const SizedBox(height: 10),
+        // The same search as in «الكتب», in the same place.
+        HeroSearch(
+          hint: 'ابحث في كتبك بالعنوان أو المؤلف',
+          onChanged: (v) => setState(() => _query = v),
         ),
       ],
     ),
@@ -441,123 +457,136 @@ class _BooksTabState extends State<BooksTab>
             if (!b.isNote) b,
         ];
         final shown = _grouped(_shown(all));
-        return CustomScrollView(
-          slivers: [
-            SliverToBoxAdapter(child: _hero(context)),
-            SliverPadding(
-              padding: EdgeInsets.fromLTRB(
-                sidePadding(context),
-                0,
-                sidePadding(context),
-                0,
-              ),
-              sliver: SliverList.list(
-                children: [
-                  ListenableBuilder(
-                    listenable: widget.sync,
-                    builder: (context, _) {
-                      final warn =
-                          widget.sync.driveFull ||
-                          (widget.sync.quota?.nearlyFull ?? false);
-                      final conflict = all.where(lib.hasConflicts).firstOrNull;
-                      return Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          if (warn) _driveWarning(context),
-                          if (conflict != null) _conflictBanner(conflict),
-                        ],
-                      );
-                    },
-                  ),
-                  if (all.isEmpty)
-                    _empty()
-                  else ...[
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Pills(
-                            labels: widget.categories,
-                            selected: _category,
-                            onSelected: (c) => setState(() => _category = c),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        SquareButton(
-                          icon: Icons.open_with,
-                          tooltip: 'ترتيب الكتب',
-                          on: _arranging,
-                          onPressed: () => _setArranging(!_arranging),
-                        ),
-                        const SizedBox(width: 8),
-                        SquareButton(
-                          icon: Icons.sort,
-                          tooltip: 'الترتيب',
-                          onPressed: _arranging ? null : _pickSort,
-                        ),
-                      ],
-                    ),
-                    if (_arranging) ...[
-                      const SizedBox(height: 10),
-                      _arrangeBar(),
-                    ],
-                    SectionTitle(
-                      _category == 'الكل' ? 'كل الكتب' : _category,
-                      count: all
-                          .where(
-                            (b) =>
-                                _category == 'الكل' || b.subject == _category,
-                          )
-                          .length,
-                    ),
-                    SearchBox(
-                      hint: 'ابحث في كتبك',
-                      onChanged: (v) => setState(() => _query = v),
-                    ),
-                    const SizedBox(height: 14),
-                    if (shown.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Text(
-                          _query.isNotEmpty
-                              ? 'لا يوجد كتاب بهذا البحث.'
-                              : 'لا توجد كتب في هذا التصنيف بعد.',
-                          style: TextStyle(color: Brand.muted),
-                        ),
-                      ),
-                  ],
-                ],
-              ),
-            ),
-            if (shown.isNotEmpty)
+        // While arranging, a tap anywhere (not a drag) ends it.
+        return GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: _arranging ? () => _setArranging(false) : null,
+          child: CustomScrollView(
+            slivers: [
+              SliverToBoxAdapter(child: _hero(context)),
               SliverPadding(
                 padding: EdgeInsets.fromLTRB(
                   sidePadding(context),
                   0,
                   sidePadding(context),
-                  130,
+                  0,
                 ),
-                sliver: CoverGridSliver(
-                  count: shown.length,
-                  itemBuilder: (context, i) {
-                    final g = shown[i];
-                    final item = _gridItem(g);
-                    final shiver = _shiver;
-                    if (!_arranging || shiver == null) return item;
-                    return _Movable(
-                      book: g.first,
-                      shiver: shiver,
-                      tilt: i.isEven ? 1 : -1,
-                      onDrop: (moved) => _move(moved, before: g.first),
-                      // While arranging a tap does not open the book.
-                      child: IgnorePointer(child: item),
-                    );
-                  },
+                sliver: SliverList.list(
+                  children: [
+                    // The collections come first, to slide through.
+                    CollectionsStrip(library: lib, onOpen: widget.onOpen),
+                    ListenableBuilder(
+                      listenable: widget.sync,
+                      builder: (context, _) {
+                        final warn =
+                            widget.sync.driveFull ||
+                            (widget.sync.quota?.nearlyFull ?? false);
+                        final conflict = all
+                            .where(lib.hasConflicts)
+                            .firstOrNull;
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (warn) _driveWarning(context),
+                            if (conflict != null) _conflictBanner(conflict),
+                          ],
+                        );
+                      },
+                    ),
+                    if (all.isEmpty)
+                      _empty()
+                    else ...[
+                      Pills(
+                        labels: widget.categories,
+                        selected: _category,
+                        onSelected: (c) => setState(() => _category = c),
+                      ),
+                      // The title, with the two small buttons at its end.
+                      Row(
+                        children: [
+                          Expanded(
+                            child: SectionTitle(
+                              _category == 'الكل' ? 'كل الكتب' : _category,
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.only(top: 10),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _smallButton(
+                                  Icons.open_with,
+                                  'ترتيب الكتب',
+                                  () => _setArranging(!_arranging),
+                                  on: _arranging,
+                                ),
+                                const SizedBox(width: 6),
+                                _smallButton(Icons.sort, 'الترتيب', () {
+                                  _setArranging(false);
+                                  _pickSort();
+                                }),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (_arranging)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: Text(
+                            'اسحب أي كتاب إلى مكانه. اضغط في أي مكان للإنهاء.',
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              color: Brand.muted,
+                            ),
+                          ),
+                        ),
+
+                      if (shown.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(
+                            _query.isNotEmpty
+                                ? 'لا يوجد كتاب بهذا البحث.'
+                                : 'لا توجد كتب في هذا التصنيف بعد.',
+                            style: TextStyle(color: Brand.muted),
+                          ),
+                        ),
+                    ],
+                  ],
                 ),
-              )
-            else
-              const SliverToBoxAdapter(child: SizedBox(height: 130)),
-          ],
+              ),
+              if (shown.isNotEmpty)
+                SliverPadding(
+                  padding: EdgeInsets.fromLTRB(
+                    sidePadding(context),
+                    0,
+                    sidePadding(context),
+                    130,
+                  ),
+                  sliver: CoverGridSliver(
+                    count: shown.length,
+                    itemBuilder: (context, i) {
+                      final g = shown[i];
+                      final item = _gridItem(g);
+                      final shiver = _shiver;
+                      if (!_arranging || shiver == null) return item;
+                      return _Movable(
+                        book: g.first,
+                        shiver: shiver,
+                        tilt: i.isEven ? 1 : -1,
+                        onDrop: (moved) => _move(moved, before: g.first),
+                        // While arranging a tap does not open the book.
+                        child: IgnorePointer(child: item),
+                      );
+                    },
+                  ),
+                )
+              else
+                const SliverToBoxAdapter(child: SizedBox(height: 130)),
+            ],
+          ),
         );
       },
     );

@@ -5,9 +5,12 @@ import 'package:flutter/material.dart';
 import '../library/library_store.dart';
 import '../ui/brand_widgets.dart';
 import '../ui/theme.dart';
+import 'author_screen.dart';
+import 'category_screen.dart';
 import 'book_cover.dart';
 import 'catalog_models.dart';
 import 'catalog_screen.dart' show formatSize, joinFacts;
+import 'catalog_store.dart';
 import 'cover_image.dart';
 import 'download_manager.dart';
 
@@ -20,7 +23,11 @@ class BookDetailScreen extends StatelessWidget {
     required this.downloads,
     required this.library,
     required this.onOpen,
+    this.store,
   });
+
+  /// The library's books: with it, the author's name opens all their works.
+  final CatalogStore? store;
 
   final CatalogBook book;
   final DownloadManager downloads;
@@ -49,6 +56,15 @@ class BookDetailScreen extends StatelessWidget {
     ('التصنيف', book.subject),
     ('الناشر', book.publisher),
   ].where((f) => f.$2.isNotEmpty).toList();
+
+  Future<void> _openAuthor(BuildContext context) => AuthorScreen.open(
+    context,
+    author: book.author,
+    store: store!,
+    downloads: downloads,
+    library: library,
+    onOpen: onOpen,
+  );
 
   void _open(BuildContext context, BookEntry entry) {
     Navigator.of(context).pop();
@@ -111,14 +127,54 @@ class BookDetailScreen extends StatelessWidget {
               if (book.author.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 3),
-                  child: Text(
-                    book.author,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Color(0xFFDCE7F5),
-                      fontSize: 14,
-                    ),
-                  ),
+                  child: store == null
+                      ? Text(
+                          book.author,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Color(0xFFDCE7F5),
+                            fontSize: 14,
+                          ),
+                        )
+                      // A tap on the author: all their books.
+                      : InkWell(
+                          borderRadius: BorderRadius.circular(8),
+                          onTap: () => _openAuthor(context),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    book.author,
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 14,
+                                      decoration: TextDecoration.underline,
+                                      decorationColor: Color(0x99FFFFFF),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                const Icon(
+                                  Icons.person_search_outlined,
+                                  size: 16,
+                                  color: Color(0xFFDCE7F5),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                ),
+              if (book.author.isNotEmpty && store != null)
+                const Text(
+                  'اضغط لعرض كل مؤلفاته',
+                  style: TextStyle(color: Color(0xB3DCE7F5), fontSize: 11.5),
                 ),
             ],
           ),
@@ -206,7 +262,25 @@ class BookDetailScreen extends StatelessWidget {
                             runSpacing: 10,
                             children: [
                               for (final f in _facts)
-                                _Fact(label: f.$1, value: f.$2),
+                                _Fact(
+                                  label: f.$1,
+                                  value: f.$2,
+                                  // The author, or the category: all their books.
+                                  onTap: store == null
+                                      ? null
+                                      : f.$1 == 'المؤلف'
+                                      ? () => _openAuthor(context)
+                                      : f.$1 == 'التصنيف'
+                                      ? () => CategoryScreen.open(
+                                          context,
+                                          subject: book.subject,
+                                          store: store!,
+                                          downloads: downloads,
+                                          library: library,
+                                          onOpen: onOpen,
+                                        )
+                                      : null,
+                                ),
                             ],
                           ),
                         ],
@@ -287,15 +361,18 @@ class _Cta extends StatelessWidget {
 }
 
 class _Fact extends StatelessWidget {
-  const _Fact({required this.label, required this.value});
+  const _Fact({required this.label, required this.value, this.onTap});
 
   final String label;
   final String value;
 
+  /// When set, the box opens something (the author's books).
+  final VoidCallback? onTap;
+
   @override
   Widget build(BuildContext context) {
     final w = (MediaQuery.sizeOf(context).width.clamp(0, 640) - 46) / 2;
-    return Container(
+    final box = Container(
       width: w,
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
       decoration: BoxDecoration(
@@ -313,10 +390,25 @@ class _Fact extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label, style: TextStyle(fontSize: 12, color: Brand.muted)),
-          Text(value, style: const TextStyle(fontSize: 14), maxLines: 2),
+          Text(
+            value,
+            maxLines: 2,
+            style: TextStyle(
+              fontSize: 14,
+              color: onTap == null ? null : Brand.blue,
+              fontWeight: onTap == null ? null : FontWeight.w700,
+            ),
+          ),
+          if (onTap != null)
+            Text(
+              label == 'المؤلف' ? 'اضغط لعرض كل مؤلفاته' : 'اضغط لعرض كل كتبه',
+              style: TextStyle(fontSize: 11, color: Brand.muted),
+            ),
         ],
       ),
     );
+    if (onTap == null) return box;
+    return GestureDetector(onTap: onTap, child: box);
   }
 }
 

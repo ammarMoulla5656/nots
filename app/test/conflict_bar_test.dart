@@ -126,7 +126,11 @@ void main() {
     await t.runAsync(() async {
       await t.tap(find.text('اعتماد ما يظهر الآن'));
       await t.pump();
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      // The settling writes files: wait until it is done, not a fixed time
+      // (a busy machine takes longer).
+      for (var i = 0; i < 100 && settled.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
     });
     await t.pump();
     expect(settled.single.page, 3);

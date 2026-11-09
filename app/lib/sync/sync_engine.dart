@@ -13,6 +13,7 @@ import 'package:path/path.dart' as p;
 import '../book/book_link_store.dart';
 import '../ink/ink_store.dart';
 import '../ink/stroke.dart';
+import '../notes/text_note.dart';
 import '../catalog/own_covers.dart';
 import '../ui/speed_log.dart';
 import '../library/library_store.dart';
@@ -23,17 +24,23 @@ import 'google_account.dart';
 import 'merge.dart';
 
 /// The work on one book, as kept in Drive: the writing, the place reached,
-/// the bookmarks and a Word text linked by hand.
+/// the bookmarks and a Word text linked by hand. For a text note also its
+/// text.
 class WorkBundle {
-  const WorkBundle({this.ink, this.prefs, this.link});
+  const WorkBundle({this.ink, this.prefs, this.link, this.doc});
 
   final Uint8List? ink;
   final Uint8List? prefs;
   final String? link;
 
+  /// A text note's text (see TextNoteStore).
+  final Uint8List? doc;
+
   /// Nothing the user would miss: at most the page reached.
   bool get isEmpty {
     if (ink != null || link != null) return false;
+    final d = doc;
+    if (d != null && !isBlankTextDoc(d)) return false;
     final raw = prefs;
     if (raw == null) return true;
     try {
@@ -53,6 +60,7 @@ class WorkBundle {
     if (link != null) {
       a.add(ArchiveFile.bytes('link.json', utf8.encode(link!)));
     }
+    if (doc != null) a.add(ArchiveFile.bytes('doc.json', doc!));
     return Uint8List.fromList(ZipEncoder().encode(a));
   }
 
@@ -63,13 +71,21 @@ class WorkBundle {
       ink: zip.findFile('ink.nots')?.content,
       prefs: zip.findFile('prefs.json')?.content,
       link: link == null ? null : utf8.decode(link.content),
+      doc: zip.findFile('doc.json')?.content,
     );
   }
 
   /// Tells apart two states of the work.
   String get hash {
     final all = BytesBuilder(copy: false);
-    for (final part in [ink, prefs, if (link != null) utf8.encode(link!)]) {
+    // The text joins the fingerprint only when there is one: the books
+    // that have none keep the fingerprints they were agreed with.
+    for (final part in [
+      ink,
+      prefs,
+      if (link != null) utf8.encode(link!),
+      ?doc,
+    ]) {
       all
         ..add(part ?? const [])
         ..add(const [0xFF, 0x00, 0xFF]);
@@ -581,6 +597,27 @@ class SyncEngine extends ChangeNotifier {
     }
   }
 
+  /// A text note changed on two devices: the side that changed alone wins;
+  /// when both changed, the later text stays whole and the other is put
+  /// under it, marked, so nothing is lost.
+  static Uint8List? _mergeDoc(
+    Uint8List? base,
+    Uint8List? mine,
+    Uint8List? theirs,
+    bool theirsNewer,
+  ) {
+    if (mine == null) return theirs;
+    if (theirs == null) return mine;
+    bool same(Uint8List? a, Uint8List? b) =>
+        a != null && b != null && listEquals(a, b);
+    if (same(mine, theirs)) return mine;
+    if (same(mine, base)) return theirs;
+    if (same(theirs, base)) return mine;
+    return theirsNewer
+        ? TextNoteStore.mergeBoth(theirs, mine)
+        : TextNoteStore.mergeBoth(mine, theirs);
+  }
+
   /// The work on [b] on this device.
   Future<WorkBundle> _localWork(BookEntry b) async {
     final running = _readClock.isRunning;
@@ -591,6 +628,7 @@ class SyncEngine extends ChangeNotifier {
         ink: raw != null && StrokeCodec.hasContent(raw) ? raw : null,
         prefs: await ReaderPrefs.rawBytes(b.id),
         link: await BookLinkStore.handLinkedJson(b.id),
+        doc: isTextNote(b) ? await TextNoteStore.rawBytes(b.id) : null,
       );
     } finally {
       if (!running) _readClock.stop();
@@ -618,7 +656,7 @@ class SyncEngine extends ChangeNotifier {
       sha256.convert(utf8.encode('${w.hash}|$title')).toString();
 
   /// Folders of the work's files, looked up once per pass.
-  ({String ink, String prefs, String links})? _workDirs;
+  ({String ink, String prefs, String links, String docs})? _workDirs;
 
   /// How the files of [b]'s work look on disk (size and time of each) and
   /// its title. The same as when last agreed means nothing changed here,
@@ -628,6 +666,7 @@ class SyncEngine extends ChangeNotifier {
       ink: (await InkStore.dirProvider()).path,
       prefs: (await ReaderPrefs.dirProvider()).path,
       links: (await BookLinkStore.dirProvider()).path,
+      docs: (await TextNoteStore.dirProvider()).path,
     );
     Future<String> one(String dir, String ext) async {
       final st = await FileStat.stat(p.join(dir, '${b.id}$ext'));
@@ -637,7 +676,7 @@ class SyncEngine extends ChangeNotifier {
     }
 
     return '${await one(d.ink, '.nots')}|${await one(d.prefs, '.json')}|'
-        '${await one(d.links, '.json')}|${b.title}';
+        '${await one(d.links, '.json')}|${await one(d.docs, '.json')}|${b.title}';
   }
 
   Future<void> _agree(
@@ -784,6 +823,11 @@ class SyncEngine extends ChangeNotifier {
     if (prefs != null) await ReaderPrefs.writeRaw(b.id, prefs);
     final link = w.link;
     if (link != null) await BookLinkStore.saveRawIfMissing(b.id, link);
+    final doc = w.doc;
+    if (doc != null) {
+      await TextNoteStore.writeRaw(b.id, doc);
+      TextNoteStore.forgetPreview(b.id);
+    }
   }
 
   /// Takes the state of Drive: nothing changed here since the last agreement.
@@ -818,6 +862,7 @@ class SyncEngine extends ChangeNotifier {
           theirsNewer: theirsNewer,
         ),
         link: mine.link ?? theirs.link,
+        doc: _mergeDoc(base.doc, mine.doc, theirs.doc, theirsNewer),
       ),
     );
     if (ink.sides.isNotEmpty) {
@@ -895,12 +940,9 @@ class SyncEngine extends ChangeNotifier {
     if (r != null && r.modified != st?.remoteTime) {
       final bytes = await drive.download(r.id);
       await pref.write(bytes);
-      final now = await pref.read();
-      _state[key] = _Synced(
-        r.id,
-        now == null ? '' : sha256.convert(now).toString(),
-        r.modified,
-      );
+      // What Drive holds is what was agreed. A file that merges what came
+      // with what is here then differs from it, and goes up next.
+      _state[key] = _Synced(r.id, sha256.convert(bytes).toString(), r.modified);
     } else if (mine != null && hash != st?.hash && !driveFull) {
       final sent = await drive.upload(
         id: r?.id,

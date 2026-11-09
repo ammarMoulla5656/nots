@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_quill/flutter_quill.dart'
+    show FlutterQuillLocalizations;
 import 'package:pdfrx/pdfrx.dart';
 
 import 'library/home_screen.dart';
@@ -76,6 +78,8 @@ class _NotsAppState extends State<NotsApp> {
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
+        // The text notes' editor and its toolbar.
+        FlutterQuillLocalizations.delegate,
       ],
       theme: buildTheme(),
       home: const HomeScreen(),

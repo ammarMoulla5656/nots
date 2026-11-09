@@ -14,6 +14,7 @@ from tkinter import filedialog, messagebox, ttk
 from PIL import Image, ImageOps, ImageTk
 
 from nots_publisher import catalog as cat
+from nots_publisher import masdar
 from nots_publisher import publishing
 from nots_publisher.inspect_book import inspect
 from nots_publisher.publishing import BookDraft, PartDraft
@@ -169,6 +170,25 @@ class App(tk.Tk):
                 w = ttk.Entry(fields, textvariable=var, justify="right")
             w.grid(row=i, column=0, sticky="ew", pady=2)
             ttk.Label(fields, text=label).grid(row=i, column=1, sticky="e", padx=(8, 0))
+            if key == "title":
+                self.title_entry = w
+
+        # The book in the Masdar app: found from the title, or written by hand,
+        # or left empty when the book is not there (then no Masdar logo).
+        row = len(FIELD_LABELS)
+        ms = ttk.Frame(fields)
+        ms.grid(row=row, column=0, sticky="ew", pady=(6, 2))
+        ms.columnconfigure(2, weight=1)
+        self.inputs["masdar"] = tk.StringVar()
+        ttk.Entry(ms, textvariable=self.inputs["masdar"], width=8, justify="center").grid(row=0, column=3, sticky="e")
+        ttk.Button(ms, text="بحث في المصدر", command=lambda: self._masdar_lookup(auto=False)).grid(row=0, column=1, padx=6)
+        self.masdar_note = ttk.Label(ms, text="", foreground="#555")
+        self.masdar_note.grid(row=0, column=2, sticky="e", padx=6)
+        ttk.Label(fields, text="رقم الكتاب في المصدر").grid(row=row, column=1, sticky="e", padx=(8, 0))
+        self.inputs["masdar"].trace_add("write", lambda *_: self._masdar_shown())
+        # Looked for once the title is written (leaving the field), not at
+        # each letter: «الكافي في الفقه» must not stop at «الكافي».
+        self.title_entry.bind("<FocusOut>", lambda _: self._masdar_lookup(auto=True))
 
         kind = ttk.Frame(box)
         kind.grid(row=1, column=0, sticky="ew", pady=(10, 4))
@@ -336,6 +356,86 @@ class App(tk.Tk):
         self._fill_parts()
         self.publish_button["text"] = "حفظ التعديلات"
 
+    # ---------------------------------------------------------- the Masdar app
+
+    def _masdar_shown(self) -> None:
+        """What the id in the field is in Masdar, under it."""
+        text = self.inputs["masdar"].get().strip()
+        if not text:
+            note = "فارغ: ليس في المصدر، فلا يظهر شعار المصدر"
+        elif not text.isdigit():
+            note = "اكتب رقماً فقط"
+        else:
+            b = masdar.by_id(int(text))
+            note = (f"المصدر: {b.title} ({b.parts} جزء، {b.pages} صفحة)" if b
+                    else "رقم غير موجود في قائمة كتب المصدر")
+        self.masdar_note.configure(text=note)
+
+    def _masdar_lookup(self, auto: bool) -> None:
+        """Finds the book in Masdar from its title and author. While typing
+        the title only a sure match is filled in, and never over an id
+        already there; the button offers every possible book."""
+        title = self.inputs["title"].get().strip()
+        author = self.inputs["author"].get().strip()
+        if auto:
+            if self.inputs["masdar"].get().strip():
+                return
+            try:
+                parts = int(self.total.get()) if self.kind.get() == "multi" else 1
+            except ValueError:
+                parts = None
+            sure = masdar.best(title, author, parts)
+            if sure:
+                self._masdar_apply(sure)
+            return
+        found = masdar.find(title, author)
+        if not found:
+            messagebox.showinfo(
+                "المصدر",
+                "لم يُعثر على هذا الكتاب في قائمة كتب المصدر.\n"
+                "اكتب رقمه بنفسك إن كان موجوداً، أو اتركه فارغاً.",
+            )
+            return
+        if len(found) == 1:
+            self._masdar_apply(found[0])
+            return
+        self._masdar_choose(found[:12])
+
+    def _masdar_apply(self, b) -> None:
+        """The book is Masdar's book [b]: its name, author, category and
+        volumes become this book's, the same as in Masdar."""
+        # The id first: setting the title then finds it there and searches
+        # no further.
+        self.inputs["masdar"].set(str(b.id))
+        self.inputs["title"].set(b.title)
+        self.inputs["author"].set(b.author)
+        self.inputs["subject"].set(masdar.category(b.subject))
+        self.kind.set("multi" if b.parts > 1 else "single")
+        self.total.set(str(max(1, b.parts)))
+        self._kind_changed()
+
+    def _masdar_choose(self, books) -> None:
+        """Several books of Masdar could be this one: the uploader picks."""
+        win = tk.Toplevel(self)
+        win.title("اختر الكتاب في المصدر")
+        win.transient(self)
+        lst = tk.Listbox(win, width=80, height=min(12, len(books)), justify="right")
+        for b in books:
+            lst.insert("end", f"{b.title} | {b.author} | {b.parts} جزء | رقم {b.id}")
+        lst.pack(fill="both", expand=True, padx=8, pady=8)
+
+        def take(_=None) -> None:
+            pick = lst.curselection()
+            win.destroy()
+            if pick:
+                self._masdar_apply(books[pick[0]])
+
+        row = ttk.Frame(win)
+        row.pack(fill="x", padx=8, pady=(0, 8))
+        ttk.Button(row, text="اختيار", command=take).pack(side="right")
+        ttk.Button(row, text="ليس في المصدر", command=lambda: (self.inputs["masdar"].set(""), win.destroy())).pack(side="right", padx=6)
+        lst.bind("<Double-Button-1>", take)
+
     def _kind_changed(self) -> None:
         multi = self.kind.get() == "multi"
         state = ["!disabled"] if multi else ["disabled"]
@@ -352,7 +452,10 @@ class App(tk.Tk):
     def _pick_cover(self) -> None:
         path = filedialog.askopenfilename(
             title="صورة الكتاب",
-            filetypes=[("صور", "*.jpg *.jpeg *.png *.webp *.bmp"), ("الكل", "*.*")],
+            filetypes=[
+                ("صور", " ".join(f"*{e}" for e in publishing.cover_extensions())),
+                ("الكل", "*.*"),
+            ],
         )
         if path:
             self.cover_local = path
@@ -364,10 +467,9 @@ class App(tk.Tk):
             self.cover_view.configure(image="", text=text, width=18, height=9)
             return
         try:
-            with Image.open(path) as im:
-                im = ImageOps.exif_transpose(im).convert("RGB")
-                im.thumbnail((130, 170))
-                self.cover_image = ImageTk.PhotoImage(im)
+            im = publishing.open_cover(path)
+            im.thumbnail((130, 170))
+            self.cover_image = ImageTk.PhotoImage(im)
             self.cover_view.configure(image=self.cover_image, text="", width=130, height=170)
         except OSError as e:
             self.cover_local = None

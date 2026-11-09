@@ -88,7 +88,20 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
   // Items: dragging one (stand-in preview in _itemPreview), or a tap that
   // may select it, edit it, or create a new one.
   NoteItem? _itemDrag;
-  NoteItem? _itemPreview;
+  NoteItem? _previewValue;
+  NoteItem? get _itemPreview => _previewValue;
+  set _itemPreview(NoteItem? v) {
+    if (identical(v, _previewValue)) return;
+    _previewValue = v;
+    _previewTick.value++;
+  }
+
+  /// Changes only when the item preview does: the layers of items listen
+  /// to it, not to every move of the finger.
+  final _previewTick = ValueNotifier<int>(0);
+
+  /// This page's strokes as a ready picture (see [StrokeLayer]).
+  final _strokeLayer = StrokeLayer();
   bool _itemWasSelected = false;
   Offset _itemFrom = Offset.zero;
   Offset _itemOffset = Offset.zero;
@@ -253,6 +266,8 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
     _laserTimer?.cancel();
     _laserTick.dispose();
     _live.dispose();
+    _previewTick.dispose();
+    _strokeLayer.dispose();
     super.dispose();
   }
 
@@ -1190,20 +1205,20 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
               ],
               preview: () => _itemPreview,
               scale: scale,
-              repaint: Listenable.merge([revision, _live]),
+              repaint: Listenable.merge([revision, _previewTick]),
             ),
           ),
         ),
         IgnorePointer(
           child: RepaintBoundary(
             child: CustomPaint(
+              // A picture that rarely changes: the engine may keep it drawn.
+              isComplex: true,
               painter: StrokesPainter(
-                strokes: () {
-                  final all = widget.document.strokesOf(widget.pageNumber);
-                  if (!_selectionHere || sel.ids.isEmpty) return all;
-                  final hidden = sel.ids;
-                  return all.where((s) => !hidden.contains(s.id)).toList();
-                },
+                layer: _strokeLayer,
+                strokes: () => widget.document.strokesOf(widget.pageNumber),
+                hidden: () =>
+                    _selectionHere && sel.ids.isNotEmpty ? sel.ids : const {},
                 scale: scale,
                 repaint: Listenable.merge([revision, sel]),
               ),
@@ -1219,7 +1234,11 @@ class _PageInkOverlayState extends State<PageInkOverlay> {
               ],
               preview: () => _itemPreview,
               scale: scale,
-              repaint: Listenable.merge([revision, _live, ImageItems.instance]),
+              repaint: Listenable.merge([
+                revision,
+                _previewTick,
+                ImageItems.instance,
+              ]),
             ),
           ),
         ),

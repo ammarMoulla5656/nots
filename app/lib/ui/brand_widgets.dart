@@ -61,11 +61,13 @@ class HeroHeader extends StatelessWidget {
         children: [
           Positioned.fill(
             child: Opacity(
-              opacity: 0.09,
+              opacity: 0.12,
               child: Image.asset(
                 'assets/images/tile-script.webp',
                 repeat: ImageRepeat.repeat,
-                scale: 1.7,
+                // The script of «المصدر» repeats about three times across
+                // a phone, instead of one large piece.
+                scale: 4.5,
                 fit: BoxFit.none,
                 alignment: Alignment.topLeft,
               ),
@@ -96,6 +98,42 @@ class HeroHeader extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The search field on the blue header, the same in «كتبي» and «الكتب».
+class HeroSearch extends StatelessWidget {
+  const HeroSearch({super.key, required this.hint, required this.onChanged});
+
+  final String hint;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    height: 44,
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: 0.14),
+      borderRadius: BorderRadius.circular(16),
+    ),
+    child: TextField(
+      onChanged: onChanged,
+      style: const TextStyle(color: Colors.white, fontSize: 15),
+      cursorColor: Colors.white,
+      decoration: InputDecoration(
+        filled: false,
+        border: InputBorder.none,
+        enabledBorder: InputBorder.none,
+        focusedBorder: InputBorder.none,
+        hintText: hint,
+        hintStyle: const TextStyle(color: Color(0xFFCFDDF0), fontSize: 14.5),
+        prefixIcon: Icon(
+          Icons.search,
+          size: 20,
+          color: Colors.white.withValues(alpha: 0.85),
+        ),
+        contentPadding: const EdgeInsets.symmetric(vertical: 12),
+      ),
+    ),
+  );
 }
 
 /// A round button on the blue header.
@@ -130,8 +168,8 @@ class HeroButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
           onTap: onPressed,
           child: SizedBox(
-            width: 38,
-            height: 38,
+            width: 44,
+            height: 44,
             child: Stack(
               alignment: Alignment.center,
               children: [
@@ -139,15 +177,15 @@ class HeroButton extends StatelessWidget {
                   ClipOval(
                     child: Image(
                       image: ResizeImage(NetworkImage(photo!), width: 96),
-                      width: 28,
-                      height: 28,
+                      width: 32,
+                      height: 32,
                       fit: BoxFit.cover,
                       errorBuilder: (_, _, _) =>
-                          Icon(icon, size: 21, color: Colors.white),
+                          Icon(icon, size: 24, color: Colors.white),
                     ),
                   )
                 else
-                  Icon(icon, size: 21, color: Colors.white),
+                  Icon(icon, size: 24, color: Colors.white),
                 if (dot && photo == null)
                   Positioned(
                     top: 8,

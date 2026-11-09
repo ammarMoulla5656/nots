@@ -13,6 +13,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../book/book_link_store.dart';
 import '../book/book_text.dart';
+import '../book/masdar_link.dart';
 import '../export/exporter.dart';
 import '../ink/image_items.dart';
 import '../ink/ink_store.dart';
@@ -53,10 +54,19 @@ import 'toc_panel.dart';
 import 'touch_navigator.dart';
 
 class ReaderScreen extends StatefulWidget {
-  const ReaderScreen({super.key, required this.library, required this.book});
+  const ReaderScreen({
+    super.key,
+    required this.library,
+    required this.book,
+    this.openAtPage,
+  });
 
   final LibraryStore library;
   final BookEntry book;
+
+  /// Open at this page (of the book), not where the reading stopped: a
+  /// page that came in a Masdar link.
+  final int? openAtPage;
 
   @override
   State<ReaderScreen> createState() => _ReaderScreenState();
@@ -359,6 +369,23 @@ class _ReaderScreenState extends State<ReaderScreen> {
   final _palette = ColorPalette();
   static const _commentColor = 0xFF0D47A1;
 
+  /// The book in the Masdar app, or null when it is not there.
+  late final MasdarRef? _masdar = MasdarRef.resolve(widget.book);
+
+  /// The page in view as the book counts it (an added page counts as the
+  /// page it follows).
+  int get _bookPageNow => math.max(1, _map.bookPageAt(_viewer.pageNumber ?? 1));
+
+  /// The link to [page] in Masdar, with the book's name: what is shared.
+  String _pageMessage(int page, {String? quote}) {
+    final link = _masdar!.pageLink(page);
+    final where = '${widget.book.title}، صفحة $page';
+    return quote == null ? '$where\n$link' : '«$quote»\n\n$where\n$link';
+  }
+
+  Future<void> _shareText(String text) =>
+      SharePlus.instance.share(ShareParams(text: text));
+
   void _toggleRuler() {
     if (_tools.ruler.value != null) {
       _tools.ruler.value = null;
@@ -498,11 +525,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
     });
     // A note has no book text to look for.
     if (!widget.book.isNote) {
-      BookLinkStore.open(widget.book.id, widget.library.pathOf(widget.book)).then(
-        (b) {
-          if (mounted && b != null) _bookArrived(b);
-        },
-      );
+      BookLinkStore.open(
+        widget.book.id,
+        widget.library.pathOf(widget.book),
+      ).then((b) {
+        if (mounted && b != null) _bookArrived(b);
+      });
     }
     _openInk();
     if (widget.book.isNote) unawaited(_loadNote());
@@ -796,6 +824,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _restored = true;
     pr.setPageCount(_bookPageCount);
     _viewer.addListener(_onViewMoved);
+    final linked = widget.openAtPage;
+    if (linked != null) {
+      _goToPlace(_placeOf(linked.clamp(1, _bookPageCount)));
+      return;
+    }
     final pos = pr.position;
     if (pos != null &&
         pos.page >= 1 &&
@@ -1455,6 +1488,25 @@ class _ReaderScreenState extends State<ReaderScreen> {
       params.dismissContextMenu();
     }
 
+    // The words chosen, with the link to their page in Masdar.
+    Future<void> share() async {
+      final ranges = await delegate.getSelectedTextRanges();
+      if (ranges.isEmpty) return;
+      final text =
+          await _selectedBookText(ranges) ??
+          [
+            for (final r in ranges)
+              r.pageText.fullText.substring(
+                r.start.clamp(0, r.pageText.fullText.length),
+                r.end.clamp(0, r.pageText.fullText.length),
+              ),
+          ].join('\n');
+      final page = math.max(1, _map.bookPageAt(ranges.first.pageNumber));
+      await delegate.clearTextSelection();
+      params.dismissContextMenu();
+      await _shareText(_pageMessage(page, quote: text.trim()));
+    }
+
     Future<void> mark(MarkStyle style, int color) async {
       final ranges = await delegate.getSelectedTextRanges();
       final doc = _store?.document;
@@ -1547,6 +1599,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
         (label: 'تعليق', onPressed: (c) => markWith(MarkStyle.comment, c)),
         (label: 'نسخ الفقرة', onPressed: (_) => copyParagraph()),
         if (delegate.isCopyAllowed) (label: 'نسخ', onPressed: (_) => copy()),
+        if (_masdar != null && delegate.isCopyAllowed)
+          (label: 'مشاركة', onPressed: (_) => share()),
       ],
     );
   }
@@ -1984,7 +2038,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         if (panel == null) return const SizedBox.shrink();
         return Padding(
           padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
-          child: Center(child: panel),
+          child: Center(child: PanelFrame(child: panel)),
         );
       },
     );
@@ -2003,6 +2057,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
             _viewer.isReady &&
             (_prefs?.isBookmarked(_keyOf(_pageNow.value)) ?? false),
         boxOpen: _pop == ReaderPop.box,
+        inMasdar: _masdar != null,
         onBack: () => Navigator.of(context).maybePop(),
         onMasdar: _openMasdar,
         onHistory: _showRecent,
@@ -2082,9 +2137,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
         isBook: _isBook,
         linked: _book != null,
         canUnlink: _book != null && !_book!.embedded,
+        inMasdar: _masdar != null,
       ),
     );
     switch (r) {
+      case 'share-link':
+        await _shareText(_pageMessage(_bookPageNow));
       case 'export':
         await _export();
       case 'annotated':
@@ -2111,18 +2169,22 @@ class _ReaderScreenState extends State<ReaderScreen> {
     builder: (_) => ToolSettingsSheet(layout: _layout, isBook: _isBook),
   );
 
-  /// Opens the Masdar app (when it is on this phone).
+  /// Opens the page in view in the Masdar app (in the browser when the app
+  /// is not on this phone).
   Future<void> _openMasdar() async {
-    var opened = false;
+    final ref = _masdar;
+    if (ref == null || !_viewer.isReady) return;
+    String? how;
     try {
-      opened =
-          await const MethodChannel('nots/app')
-              .invokeMethod<bool>('openApp', {'package': masdarPackage}) ??
-          false;
+      how = await const MethodChannel('nots/app')
+          .invokeMethod<String>('openMasdarLink', {
+            'url': ref.pageLink(_bookPageNow).toString(),
+            'package': masdarPackage,
+          });
     } on MissingPluginException {
-      opened = false;
+      how = null;
     }
-    if (!opened) _say('تطبيق المصدر غير مثبت على هذا الجهاز.');
+    if (how == null) _say('تعذّر فتح المصدر على هذا الجهاز.');
   }
 
   /// Asks for a picture and puts it on the page in view, selected, ready to
