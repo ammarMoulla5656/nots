@@ -145,7 +145,10 @@ void main() {
     await _finish(t);
   });
 
-  testWidgets('pictures of the text note', (t) async {
+  // The pictures are compared with files made on the developer's computer
+  // (the design folder is only there), like the screens test.
+  final haveDesign = Directory('../des').existsSync();
+  testWidgets('pictures of the text note', skip: !haveDesign, (t) async {
     await t.runAsync(() async {
       Future<void> load(String family, List<String> files) async {
         final l = FontLoader(family);
