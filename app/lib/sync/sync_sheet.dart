@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../catalog/catalog_screen.dart' show formatSize;
 import '../library/library_store.dart';
-import '../library/speed_test_books.dart' show SpeedPanel;
+import '../stats/admin_api.dart';
+import '../stats/admin_screen.dart';
+import '../stats/feedback_sheet.dart';
+import '../stats/usage.dart';
 import '../ui/app_settings.dart';
 import '../ui/brand_widgets.dart';
 import '../ui/theme.dart';
@@ -383,6 +386,86 @@ class _SyncSheetState extends State<SyncSheet> {
     },
   );
 
+  /// Seven taps on the foundation's logo, by an administrator's account,
+  /// open the administrators' panel (and show its row from then on).
+  int _taps = 0;
+  DateTime _firstTap = DateTime(0);
+
+  Future<void> _tappedLogo() async {
+    final now = DateTime.now();
+    if (now.difference(_firstTap) > const Duration(seconds: 4)) {
+      _firstTap = now;
+      _taps = 0;
+    }
+    if (++_taps < 7) return;
+    _taps = 0;
+    if (!_account.linked) return;
+    final who = await AdminApi(_account).whoAmI();
+    if (!who.admin || !mounted) return;
+    Usage.instance.data['admin'] = _account.email;
+    Usage.instance.data['owner'] = who.owner;
+    await Usage.instance.save();
+    setState(() {});
+    if (mounted) await _openAdmin();
+  }
+
+  bool get _isAdminHere =>
+      _account.linked &&
+      _account.email != null &&
+      Usage.instance.data['admin'] == _account.email;
+
+  Future<void> _openAdmin() => AdminScreen.open(
+    context,
+    _account,
+    owner: Usage.instance.data['owner'] == true,
+  );
+
+  /// Messages to the administrators, and the statistics switch.
+  Widget _contact() => Card(
+    clipBehavior: Clip.antiAlias,
+    child: Column(
+      children: [
+        if (_isAdminHere) ...[
+          ListTile(
+            leading: Icon(Icons.insights_outlined, color: Brand.blue),
+            title: const Text('لوحة الإدارة'),
+            onTap: _openAdmin,
+          ),
+          const Divider(),
+        ],
+        ListTile(
+          leading: const Icon(Icons.menu_book_outlined),
+          title: const Text('اقترح كتاباً'),
+          subtitle: const Text(
+            'كتاب تريده في المكتبة',
+            style: TextStyle(fontSize: 12.5),
+          ),
+          onTap: () => showFeedbackSheet(context, 'book'),
+        ),
+        const Divider(),
+        ListTile(
+          leading: const Icon(Icons.report_problem_outlined),
+          title: const Text('الإبلاغ عن مشكلة'),
+          subtitle: const Text(
+            'مشكلة تقنية في كتاب أو في التطبيق',
+            style: TextStyle(fontSize: 12.5),
+          ),
+          onTap: () => showFeedbackSheet(context, 'problem'),
+        ),
+        const Divider(),
+        StatefulBuilder(
+          builder: (context, set) => _switchRow(
+            Icons.insights_outlined,
+            'مشاركة إحصاءات الاستعمال',
+            'وقت القراءة والأدوات المستعملة، وحسابك إن سجّلت الدخول؛ تُرسل عبر الواي فاي فقط لتحسين التطبيق',
+            Usage.instance.sharing,
+            (on) => set(() => Usage.instance.sharing = on),
+          ),
+        ),
+      ],
+    ),
+  );
+
   Widget _rights() => Container(
     margin: const EdgeInsets.only(top: 14),
     padding: const EdgeInsets.all(14),
@@ -392,7 +475,13 @@ class _SyncSheetState extends State<SyncSheet> {
     ),
     child: Row(
       children: [
-        Image.asset('assets/images/alhikmeh-white-logo.webp', height: 56),
+        GestureDetector(
+          onTap: _tappedLogo,
+          child: Image.asset(
+            'assets/images/alhikmeh-white-logo.webp',
+            height: 56,
+          ),
+        ),
         const SizedBox(width: 14),
         const Expanded(
           child: Text(
@@ -515,7 +604,7 @@ class _SyncSheetState extends State<SyncSheet> {
               Text(_error!, style: const TextStyle(color: Brand.red)),
             ],
             const SizedBox(height: 12),
-            SpeedPanel(library: widget.library),
+            _contact(),
             _rights(),
           ],
         ),

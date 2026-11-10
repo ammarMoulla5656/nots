@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../book/book_text.dart';
 import '../catalog/catalog_screen.dart' show formatSize;
 import '../catalog/download_manager.dart';
+import '../stats/usage.dart';
 import '../sync/google_account.dart';
 import '../sync/sync_engine.dart';
 import '../ui/brand_widgets.dart';
@@ -355,7 +356,12 @@ class _BooksTabState extends State<BooksTab>
         // The same search as in «الكتب», in the same place.
         HeroSearch(
           hint: 'ابحث في كتبك بالعنوان أو المؤلف',
-          onChanged: (v) => setState(() => _query = v),
+          onChanged: (v) {
+            if (_query.isEmpty && v.isNotEmpty) {
+              Usage.instance.feature('library_search');
+            }
+            setState(() => _query = v);
+          },
         ),
       ],
     ),

@@ -22,7 +22,10 @@ void main() {
 
     // The same strokes: the same picture, nothing recorded.
     final same = layer.pictureFor(strokes, const {});
-    expect(identical(same, layer.pictureFor(List.of(strokes), const {})), isTrue);
+    expect(
+      identical(same, layer.pictureFor(List.of(strokes), const {})),
+      isTrue,
+    );
     expect(layer.fullRecords, 1);
 
     // Writing: one stroke after another, never all again.

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../book/book_text.dart' show normalizeForSearch;
+
 import '../catalog/book_cover.dart';
 import '../notes/paper.dart';
 import '../ui/brand_widgets.dart';
@@ -127,10 +129,6 @@ class CollectionsStrip extends StatelessWidget {
                 fontSize: 13.5,
                 fontWeight: FontWeight.w700,
               ),
-            ),
-            Text(
-              '${items.length} ${items.length == 1 ? 'عنصر' : 'عناصر'}',
-              style: TextStyle(fontSize: 12, color: Brand.muted),
             ),
           ],
         ),
@@ -341,50 +339,97 @@ Future<void> showAddToCollection(
 ) => showNotsSheet<void>(
   context,
   tall: true,
-  builder: (context) => ListenableBuilder(
-    listenable: Collections.instance,
-    builder: (context, _) {
-      final all = library.books..sort((a, b) => a.title.compareTo(b.title));
-      return SafeArea(
+  builder: (context) => _AddToCollection(collection: c, library: library),
+);
+
+/// The books and notes to add, with a search by title or author.
+class _AddToCollection extends StatefulWidget {
+  const _AddToCollection({required this.collection, required this.library});
+
+  final Collection collection;
+  final LibraryStore library;
+
+  @override
+  State<_AddToCollection> createState() => _AddToCollectionState();
+}
+
+class _AddToCollectionState extends State<_AddToCollection> {
+  String _query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.collection;
+    final q = normalizeForSearch(_query).text.trim();
+    final all = [
+      for (final b in widget.library.books)
+        if (q.isEmpty ||
+            normalizeForSearch('${b.title} ${b.author}').text.contains(q))
+          b,
+    ]..sort((a, b) => a.title.compareTo(b.title));
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             SheetHeader('إضافة إلى «${c.name}»'),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: SearchBox(
+                hint: 'ابحث بالعنوان أو المؤلف',
+                onChanged: (v) => setState(() => _query = v),
+              ),
+            ),
+            if (all.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  'لا يوجد كتاب بهذا البحث.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Brand.muted),
+                ),
+              ),
             Expanded(
-              child: ListView.builder(
-                itemCount: all.length,
-                itemBuilder: (context, i) {
-                  final b = all[i];
-                  final on = c.items.contains(b.id);
-                  return ListTile(
-                    leading: SizedBox(width: 38, child: collectionThumb(b, 38)),
-                    title: Text(
-                      b.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text(
-                      b.isNote ? 'ملاحظة' : b.author,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: Icon(
-                      on ? Icons.check_circle : Icons.circle_outlined,
-                      color: on ? Brand.blue : Brand.line,
-                    ),
-                    onTap: () => on
-                        ? Collections.instance.take(c, b.id)
-                        : Collections.instance.add(c, b.id),
-                  );
-                },
+              child: ListenableBuilder(
+                listenable: Collections.instance,
+                builder: (context, _) => ListView.builder(
+                  itemCount: all.length,
+                  itemBuilder: (context, i) {
+                    final b = all[i];
+                    final on = c.items.contains(b.id);
+                    return ListTile(
+                      leading: SizedBox(
+                        width: 38,
+                        child: collectionThumb(b, 38),
+                      ),
+                      title: Text(
+                        b.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        b.isNote ? 'ملاحظة' : b.author,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: Icon(
+                        on ? Icons.check_circle : Icons.circle_outlined,
+                        color: on ? Brand.blue : Brand.line,
+                      ),
+                      onTap: () => on
+                          ? Collections.instance.take(c, b.id)
+                          : Collections.instance.add(c, b.id),
+                    );
+                  },
+                ),
               ),
             ),
           ],
         ),
-      );
-    },
-  ),
-);
+      ),
+    );
+  }
+}
 
 /// The sheet of «إضافة إلى تجميعة» for one book or note: the collections
 /// with a tick on the ones it is in, and a new one.

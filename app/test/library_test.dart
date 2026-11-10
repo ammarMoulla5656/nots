@@ -37,55 +37,86 @@ void main() {
     expect(lib.books.length, 1);
     expect(File(lib.pathOf(a)).lengthSync(), data.length);
 
-    final other = await lib.importPdf((await pdf('x.pdf', bytes(1000, 17))).path);
+    final other = await lib.importPdf(
+      (await pdf('x.pdf', bytes(1000, 17))).path,
+    );
     expect(other.id, isNot(a.id));
     expect(lib.books.length, 2);
   });
 
   test('the library survives a restart', () async {
     final lib = await LibraryStore.openAt(root);
-    final e = await lib.importPdf((await pdf('k.pdf', bytes(5000, 3))).path, title: 'كتاب');
+    final e = await lib.importPdf(
+      (await pdf('k.pdf', bytes(5000, 3))).path,
+      title: 'كتاب',
+    );
     await lib.rename(e, 'المسائل المنتخبة');
     final again = await LibraryStore.openAt(root);
     expect(again.books.single.title, 'المسائل المنتخبة');
     expect(again.byId(e.id), isNotNull);
   });
 
-  test('writing follows the book id, and old path-keyed writing can be adopted',
-      () async {
-    final lib = await LibraryStore.openAt(root);
-    final src = await pdf('old/place.pdf', bytes(4000, 5));
+  test(
+    'writing follows the book id, and old path-keyed writing can be adopted',
+    () async {
+      final lib = await LibraryStore.openAt(root);
+      final src = await pdf('old/place.pdf', bytes(4000, 5));
 
-    // Writing saved by an older version under the path-based key.
-    final legacy = InkStore.legacyKey(src.path);
-    final old = await InkStore.open(legacy);
-    old.document.add(3, Stroke(id: 1, tool: InkTool.pen, color: 0xFF000000, width: 1,
-        points: const [StrokePoint(1, 1, 0.5, 0), StrokePoint(9, 9, 0.5, 5)]));
-    await old.dispose();
+      // Writing saved by an older version under the path-based key.
+      final legacy = InkStore.legacyKey(src.path);
+      final old = await InkStore.open(legacy);
+      old.document.add(
+        3,
+        Stroke(
+          id: 1,
+          tool: InkTool.pen,
+          color: 0xFF000000,
+          width: 1,
+          points: const [StrokePoint(1, 1, 0.5, 0), StrokePoint(9, 9, 0.5, 5)],
+        ),
+      );
+      await old.dispose();
 
-    final entry = await lib.importPdf(src.path);
-    // Opening the book once creates its (empty) ink file.
-    await (await InkStore.open(entry.id)).dispose();
+      final entry = await lib.importPdf(src.path);
+      // Opening the book once creates its (empty) ink file.
+      await (await InkStore.open(entry.id)).dispose();
 
-    final orphans = await InkStore.orphans(lib.ids);
-    expect(orphans.single.key, legacy);
-    expect(orphans.single.pages, [3]);
+      final orphans = await InkStore.orphans(lib.ids);
+      expect(orphans.single.key, legacy);
+      expect(orphans.single.pages, [3]);
 
-    expect(await InkStore.adopt(legacy, entry.id), isTrue);
-    final store = await InkStore.open(entry.id);
-    expect(store.document.strokesOf(3).length, 1);
-    await store.dispose();
-    expect(await InkStore.orphans(lib.ids), isEmpty);
-  });
+      expect(await InkStore.adopt(legacy, entry.id), isTrue);
+      final store = await InkStore.open(entry.id);
+      expect(store.document.strokesOf(3).length, 1);
+      await store.dispose();
+      expect(await InkStore.orphans(lib.ids), isEmpty);
+    },
+  );
 
   test('adopting never overwrites a book that already has writing', () async {
     final a = await InkStore.open('aaaa');
-    a.document.add(1, Stroke(id: 1, tool: InkTool.pen, color: 0, width: 1,
-        points: const [StrokePoint(0, 0, 0.5, 0)]));
+    a.document.add(
+      1,
+      Stroke(
+        id: 1,
+        tool: InkTool.pen,
+        color: 0,
+        width: 1,
+        points: const [StrokePoint(0, 0, 0.5, 0)],
+      ),
+    );
     await a.dispose();
     final b = await InkStore.open('bbbb');
-    b.document.add(2, Stroke(id: 1, tool: InkTool.pen, color: 0, width: 1,
-        points: const [StrokePoint(0, 0, 0.5, 0)]));
+    b.document.add(
+      2,
+      Stroke(
+        id: 1,
+        tool: InkTool.pen,
+        color: 0,
+        width: 1,
+        points: const [StrokePoint(0, 0, 0.5, 0)],
+      ),
+    );
     await b.dispose();
     expect(await InkStore.adopt('aaaa', 'bbbb'), isFalse);
     final check = await InkStore.open('bbbb');
@@ -98,18 +129,31 @@ void main() {
     final lib = await LibraryStore.openAt(root);
     final e = await lib.importPdf((await pdf('r.pdf', bytes(2000, 9))).path);
     final s = await InkStore.open(e.id);
-    s.document.add(1, Stroke(id: 1, tool: InkTool.pen, color: 0, width: 1,
-        points: const [StrokePoint(0, 0, 0.5, 0)]));
+    s.document.add(
+      1,
+      Stroke(
+        id: 1,
+        tool: InkTool.pen,
+        color: 0,
+        width: 1,
+        points: const [StrokePoint(0, 0, 0.5, 0)],
+      ),
+    );
     await s.dispose();
 
     await lib.remove(e);
     expect(File(lib.pathOf(e)).existsSync(), isFalse);
     expect(File(p.join(root.path, 'ink', '${e.id}.nots')).existsSync(), isTrue);
 
-    final again = await lib.importPdf((await pdf('r2.pdf', bytes(2000, 9))).path);
+    final again = await lib.importPdf(
+      (await pdf('r2.pdf', bytes(2000, 9))).path,
+    );
     expect(again.id, e.id); // same content: the writing is back
     await lib.remove(again, deleteWriting: true);
-    expect(File(p.join(root.path, 'ink', '${e.id}.nots')).existsSync(), isFalse);
+    expect(
+      File(p.join(root.path, 'ink', '${e.id}.nots')).existsSync(),
+      isFalse,
+    );
   });
 
   test('an empty document is never offered as old writing', () async {
@@ -119,7 +163,10 @@ void main() {
   });
 
   test('export file names always have a dot and the right extension', () {
-    expect(exportFileName('المسائل المنتخبة 1441', 'pdf'), 'المسائل المنتخبة 1441.pdf');
+    expect(
+      exportFileName('المسائل المنتخبة 1441', 'pdf'),
+      'المسائل المنتخبة 1441.pdf',
+    );
     expect(exportFileName('Book v1.2', 'nots'), 'Book v1.2.nots');
     expect(exportFileName('a/b:c*d', 'png'), 'a b c d.png');
     expect(exportFileName('   ', '.nots'), 'nots.nots');

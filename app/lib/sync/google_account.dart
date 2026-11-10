@@ -211,9 +211,13 @@ class GoogleAccount extends ChangeNotifier {
   static const _kEmail = 'google.email';
   static const _kRefresh = 'google.refresh';
   static const _kPhoto = 'google.photo';
+  static const _kName = 'google.name';
 
   /// The picture of the Google account, when it has one.
   String? photo;
+
+  /// The account's name as Google shows it, when known.
+  String? name;
 
   String? _mode;
   String? _email;
@@ -233,6 +237,7 @@ class GoogleAccount extends ChangeNotifier {
     _email = await _storage.read(key: _kEmail);
     _refresh = await _storage.read(key: _kRefresh);
     photo = await _storage.read(key: _kPhoto);
+    name = await _storage.read(key: _kName);
     notifyListeners();
     if (linked) unawaited(loadPhoto());
   }
@@ -243,15 +248,20 @@ class GoogleAccount extends ChangeNotifier {
       final token = await accessToken();
       final r = await http.get(
         Uri.parse(
-          'https://www.googleapis.com/drive/v3/about?fields=user(photoLink)',
+          'https://www.googleapis.com/drive/v3/about?fields=user(photoLink,displayName)',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (r.statusCode != 200) return;
-      final link =
-          ((jsonDecode(r.body) as Map<String, dynamic>)['user']
-                  as Map<String, dynamic>?)?['photoLink']
-              as String?;
+      final user =
+          (jsonDecode(r.body) as Map<String, dynamic>)['user']
+              as Map<String, dynamic>?;
+      final shown = user?['displayName'] as String?;
+      if (shown != null && shown != name && linked) {
+        name = shown;
+        await _storage.write(key: _kName, value: shown);
+      }
+      final link = user?['photoLink'] as String?;
       if (link == null || link == photo || !linked) return;
       photo = link;
       await _storage.write(key: _kPhoto, value: link);
@@ -373,8 +383,9 @@ class GoogleAccount extends ChangeNotifier {
         // Forget it here all the same.
       }
     }
-    _mode = _email = _refresh = _token = photo = null;
+    _mode = _email = _refresh = _token = photo = name = null;
     await _storage.delete(key: _kPhoto);
+    await _storage.delete(key: _kName);
     _native = null;
     await _storage.delete(key: _kMode);
     await _storage.delete(key: _kEmail);

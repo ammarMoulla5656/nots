@@ -28,15 +28,22 @@ void main() {
     });
 
     test('fingers moving together without spreading only scroll', () {
-      final m = pinchMatrix(Matrix4.identity(), const Offset(100, 100), 80,
-          const Offset(100, 40), 80);
+      final m = pinchMatrix(
+        Matrix4.identity(),
+        const Offset(100, 100),
+        80,
+        const Offset(100, 40),
+        80,
+      );
       expect(m.getMaxScaleOnAxis(), closeTo(1, 1e-9));
       expect(_apply(m, Offset.zero), const Offset(0, -60));
     });
 
     test('panMatrix shifts the view', () {
-      final m = panMatrix(Matrix4.identity()..scaleByDouble(2, 2, 1, 1),
-          const Offset(5, -7));
+      final m = panMatrix(
+        Matrix4.identity()..scaleByDouble(2, 2, 1, 1),
+        const Offset(5, -7),
+      );
       expect(_apply(m, const Offset(1, 1)), const Offset(7, -5));
     });
   });
@@ -69,8 +76,13 @@ void main() {
       // "ab cd" on one line, then "ef" on the next line with no space
       const text = 'ab cdef';
       final rects = <Rect?>[
-        ch(100, 10), ch(94, 10), null, ch(80, 10), ch(74, 10),
-        ch(100, 30), ch(94, 30),
+        ch(100, 10),
+        ch(94, 10),
+        null,
+        ch(80, 10),
+        ch(74, 10),
+        ch(100, 30),
+        ch(94, 30),
       ];
       final w = splitWords(text, rects);
       expect(w.map((e) => e.text), ['ab', 'cd', 'ef']);
@@ -79,7 +91,13 @@ void main() {
     });
 
     test('wordAt finds the word under a finger, with tolerance', () {
-      final w = splitWords('ab cd', [ch(100, 10), ch(94, 10), null, ch(80, 10), ch(74, 10)]);
+      final w = splitWords('ab cd', [
+        ch(100, 10),
+        ch(94, 10),
+        null,
+        ch(80, 10),
+        ch(74, 10),
+      ]);
       expect(wordAt(w, const Offset(97, 15)), 0);
       expect(wordAt(w, const Offset(77, 15)), 1);
       expect(wordAt(w, const Offset(77, 25)), isNull);

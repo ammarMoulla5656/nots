@@ -12,7 +12,6 @@ import 'package:nots/ink/note_items.dart';
 import 'package:nots/ink/stroke.dart';
 import 'package:nots/library/library_store.dart';
 import 'package:nots/reader/reader_prefs.dart';
-import 'package:nots/notes/text_note.dart';
 import 'package:nots/sync/conflicts.dart';
 import 'package:nots/sync/drive_client.dart';
 import 'package:nots/sync/google_account.dart';
@@ -189,8 +188,6 @@ class Device {
 
   void activate() {
     InkStore.dirProvider = () async => Directory(p.join(root.path, 'ink'));
-    TextNoteStore.dirProvider = () async =>
-        Directory(p.join(root.path, 'docs'));
     ReaderPrefs.dirProvider = () async => Directory(p.join(root.path, 'prefs'));
     ConflictStore.dirProvider = () async =>
         Directory(p.join(root.path, 'conflicts'));

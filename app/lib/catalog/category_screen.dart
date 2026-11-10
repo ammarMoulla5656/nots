@@ -66,12 +66,7 @@ class CategoryScreen extends StatelessWidget {
           ]..sort((a, b) => a.title.compareTo(b.title));
           return CustomScrollView(
             slivers: [
-              SliverPadding(
-                padding: EdgeInsets.fromLTRB(side, 8, side, 0),
-                sliver: SliverToBoxAdapter(
-                  child: SectionTitle(subject, count: books.length, top: 8),
-                ),
-              ),
+              const SliverToBoxAdapter(child: SizedBox(height: 16)),
               if (books.isEmpty)
                 SliverToBoxAdapter(
                   child: Padding(

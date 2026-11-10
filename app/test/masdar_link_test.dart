@@ -21,10 +21,11 @@ void main() {
   });
 
   test('a link is read alone or inside shared text', () {
-    expect(
-      parseMasdarLink('https://alhikmeh.org/source/7045/0/89/0-4/'),
-      (id: 7045, volume: 0, page: 89),
-    );
+    expect(parseMasdarLink('https://alhikmeh.org/source/7045/0/89/0-4/'), (
+      id: 7045,
+      volume: 0,
+      page: 89,
+    ));
     expect(
       parseMasdarLink(
         '«نص مختار من الكتاب»\n\nالأحكام الفقهية، صفحة 89\n'

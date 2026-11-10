@@ -13,9 +13,7 @@ import 'package:path/path.dart' as p;
 import '../book/book_link_store.dart';
 import '../ink/ink_store.dart';
 import '../ink/stroke.dart';
-import '../notes/text_note.dart';
 import '../catalog/own_covers.dart';
-import '../ui/speed_log.dart';
 import '../library/library_store.dart';
 import '../reader/reader_prefs.dart';
 import 'drive_client.dart';
@@ -24,23 +22,17 @@ import 'google_account.dart';
 import 'merge.dart';
 
 /// The work on one book, as kept in Drive: the writing, the place reached,
-/// the bookmarks and a Word text linked by hand. For a text note also its
-/// text.
+/// the bookmarks and a Word text linked by hand.
 class WorkBundle {
-  const WorkBundle({this.ink, this.prefs, this.link, this.doc});
+  const WorkBundle({this.ink, this.prefs, this.link});
 
   final Uint8List? ink;
   final Uint8List? prefs;
   final String? link;
 
-  /// A text note's text (see TextNoteStore).
-  final Uint8List? doc;
-
   /// Nothing the user would miss: at most the page reached.
   bool get isEmpty {
     if (ink != null || link != null) return false;
-    final d = doc;
-    if (d != null && !isBlankTextDoc(d)) return false;
     final raw = prefs;
     if (raw == null) return true;
     try {
@@ -60,7 +52,6 @@ class WorkBundle {
     if (link != null) {
       a.add(ArchiveFile.bytes('link.json', utf8.encode(link!)));
     }
-    if (doc != null) a.add(ArchiveFile.bytes('doc.json', doc!));
     return Uint8List.fromList(ZipEncoder().encode(a));
   }
 
@@ -71,21 +62,13 @@ class WorkBundle {
       ink: zip.findFile('ink.nots')?.content,
       prefs: zip.findFile('prefs.json')?.content,
       link: link == null ? null : utf8.decode(link.content),
-      doc: zip.findFile('doc.json')?.content,
     );
   }
 
   /// Tells apart two states of the work.
   String get hash {
     final all = BytesBuilder(copy: false);
-    // The text joins the fingerprint only when there is one: the books
-    // that have none keep the fingerprints they were agreed with.
-    for (final part in [
-      ink,
-      prefs,
-      if (link != null) utf8.encode(link!),
-      ?doc,
-    ]) {
+    for (final part in [ink, prefs, if (link != null) utf8.encode(link!)]) {
       all
         ..add(part ?? const [])
         ..add(const [0xFF, 0x00, 0xFF]);
@@ -486,20 +469,12 @@ class SyncEngine extends ChangeNotifier {
     };
   }
 
-  /// Time spent reading the work of books and fingerprinting it, during a
-  /// pass (for the speed log).
-  final _readClock = Stopwatch(), _hashClock = Stopwatch();
-
   Future<void> _pass() async {
     if (await otherAccountsData()) return;
-    final log = SpeedLog.instance;
-    final passClock = Stopwatch()..start();
-    _readClock.reset();
-    _hashClock.reset();
     _owner ??= accountEmail?.call();
     final drive = _newDrive();
     _doing('جارٍ فحص درايف…');
-    await log.span('sync: list Drive', () => _fetchRemote(drive));
+    await _fetchRemote(drive);
     driveFull = false;
     for (final id in _forgetting.toList()) {
       await _forgetNow(drive, id);
@@ -509,13 +484,11 @@ class SyncEngine extends ChangeNotifier {
     Object? failed;
     final books = _library.books;
     _workDirs = null;
-    var read = 0;
     for (var i = 0; i < books.length; i++) {
       // Telling every book would rebuild what listens many times a second.
       if (i % 20 == 0) _doing('جارٍ المزامنة ${i + 1} من ${books.length}…');
       try {
         if (await _syncBook(drive, books[i])) {
-          read++;
           await _saveState();
         }
       } on DriveException catch (e) {
@@ -536,12 +509,6 @@ class SyncEngine extends ChangeNotifier {
       if (e.storageFull) driveFull = true;
     }
     await _saveState();
-    log.took(
-      'sync pass',
-      passClock.elapsedMilliseconds,
-      '${books.length} books, $read read · reading work ${_readClock.elapsedMilliseconds}ms · '
-          'fingerprints ${_hashClock.elapsedMilliseconds}ms',
-    );
     try {
       quota = await drive.quota();
       if (quota?.full ?? false) driveFull = true;
@@ -597,66 +564,32 @@ class SyncEngine extends ChangeNotifier {
     }
   }
 
-  /// A text note changed on two devices: the side that changed alone wins;
-  /// when both changed, the later text stays whole and the other is put
-  /// under it, marked, so nothing is lost.
-  static Uint8List? _mergeDoc(
-    Uint8List? base,
-    Uint8List? mine,
-    Uint8List? theirs,
-    bool theirsNewer,
-  ) {
-    if (mine == null) return theirs;
-    if (theirs == null) return mine;
-    bool same(Uint8List? a, Uint8List? b) =>
-        a != null && b != null && listEquals(a, b);
-    if (same(mine, theirs)) return mine;
-    if (same(mine, base)) return theirs;
-    if (same(theirs, base)) return mine;
-    return theirsNewer
-        ? TextNoteStore.mergeBoth(theirs, mine)
-        : TextNoteStore.mergeBoth(mine, theirs);
-  }
-
   /// The work on [b] on this device.
   Future<WorkBundle> _localWork(BookEntry b) async {
-    final running = _readClock.isRunning;
-    _readClock.start();
-    try {
-      final raw = await InkStore.rawBytes(b.id);
-      return WorkBundle(
-        ink: raw != null && StrokeCodec.hasContent(raw) ? raw : null,
-        prefs: await ReaderPrefs.rawBytes(b.id),
-        link: await BookLinkStore.handLinkedJson(b.id),
-        doc: isTextNote(b) ? await TextNoteStore.rawBytes(b.id) : null,
-      );
-    } finally {
-      if (!running) _readClock.stop();
-    }
+    final raw = await InkStore.rawBytes(b.id);
+    return WorkBundle(
+      ink: raw != null && StrokeCodec.hasContent(raw) ? raw : null,
+      prefs: await ReaderPrefs.rawBytes(b.id),
+      link: await BookLinkStore.handLinkedJson(b.id),
+    );
   }
 
   /// A book's state as agreed with Drive: its work and its name.
   Future<String> _hashOf(BookEntry b, WorkBundle w) async {
-    final running = _hashClock.isRunning;
-    _hashClock.start();
-    try {
-      final title = b.title;
-      final size = (w.ink?.length ?? 0) + (w.prefs?.length ?? 0);
-      // A large book's writing takes a while to fingerprint: not on the
-      // thread that draws the screen.
-      return size > 64 * 1024
-          ? await Isolate.run(() => _bundleHash(w, title))
-          : _bundleHash(w, title);
-    } finally {
-      if (!running) _hashClock.stop();
-    }
+    final title = b.title;
+    final size = (w.ink?.length ?? 0) + (w.prefs?.length ?? 0);
+    // A large book's writing takes a while to fingerprint: not on the
+    // thread that draws the screen.
+    return size > 64 * 1024
+        ? await Isolate.run(() => _bundleHash(w, title))
+        : _bundleHash(w, title);
   }
 
   static String _bundleHash(WorkBundle w, String title) =>
       sha256.convert(utf8.encode('${w.hash}|$title')).toString();
 
   /// Folders of the work's files, looked up once per pass.
-  ({String ink, String prefs, String links, String docs})? _workDirs;
+  ({String ink, String prefs, String links})? _workDirs;
 
   /// How the files of [b]'s work look on disk (size and time of each) and
   /// its title. The same as when last agreed means nothing changed here,
@@ -666,7 +599,6 @@ class SyncEngine extends ChangeNotifier {
       ink: (await InkStore.dirProvider()).path,
       prefs: (await ReaderPrefs.dirProvider()).path,
       links: (await BookLinkStore.dirProvider()).path,
-      docs: (await TextNoteStore.dirProvider()).path,
     );
     Future<String> one(String dir, String ext) async {
       final st = await FileStat.stat(p.join(dir, '${b.id}$ext'));
@@ -676,7 +608,7 @@ class SyncEngine extends ChangeNotifier {
     }
 
     return '${await one(d.ink, '.nots')}|${await one(d.prefs, '.json')}|'
-        '${await one(d.links, '.json')}|${await one(d.docs, '.json')}|${b.title}';
+        '${await one(d.links, '.json')}|${b.title}';
   }
 
   Future<void> _agree(
@@ -823,11 +755,6 @@ class SyncEngine extends ChangeNotifier {
     if (prefs != null) await ReaderPrefs.writeRaw(b.id, prefs);
     final link = w.link;
     if (link != null) await BookLinkStore.saveRawIfMissing(b.id, link);
-    final doc = w.doc;
-    if (doc != null) {
-      await TextNoteStore.writeRaw(b.id, doc);
-      TextNoteStore.forgetPreview(b.id);
-    }
   }
 
   /// Takes the state of Drive: nothing changed here since the last agreement.
@@ -862,7 +789,6 @@ class SyncEngine extends ChangeNotifier {
           theirsNewer: theirsNewer,
         ),
         link: mine.link ?? theirs.link,
-        doc: _mergeDoc(base.doc, mine.doc, theirs.doc, theirsNewer),
       ),
     );
     if (ink.sides.isNotEmpty) {

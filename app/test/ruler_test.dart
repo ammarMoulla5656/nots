@@ -6,7 +6,12 @@ import 'package:nots/ink/ruler.dart';
 import 'package:nots/ink/words.dart';
 
 void main() {
-  const r = Ruler(page: 1, center: Offset(200, 300), length: 400, thickness: 50);
+  const r = Ruler(
+    page: 1,
+    center: Offset(200, 300),
+    length: 400,
+    thickness: 50,
+  );
 
   test('contains: body only, with optional slack', () {
     expect(r.contains(const Offset(200, 300)), isTrue);
@@ -39,23 +44,39 @@ void main() {
   });
 
   test('two fingers rotate and move it', () {
-    final moved = r.twoFingers(const Offset(100, 100), const Offset(200, 100),
-        const Offset(110, 120), const Offset(110, 220));
+    final moved = r.twoFingers(
+      const Offset(100, 100),
+      const Offset(200, 100),
+      const Offset(110, 120),
+      const Offset(110, 220),
+    );
     expect(moved.angle, closeTo(math.pi / 2, 1e-9));
     expect(moved.center.dx, closeTo(200 + (110 - 150), 1e-9));
     expect(moved.center.dy, closeTo(300 + (170 - 100), 1e-9));
   });
 
   test('spreading two fingers makes the ruler longer, within limits', () {
-    final longer = r.twoFingers(const Offset(100, 100), const Offset(200, 100),
-        const Offset(50, 100), const Offset(250, 100));
+    final longer = r.twoFingers(
+      const Offset(100, 100),
+      const Offset(200, 100),
+      const Offset(50, 100),
+      const Offset(250, 100),
+    );
     expect(longer.length, closeTo(800, 1e-9));
     expect(longer.angle, closeTo(0, 1e-9));
-    final huge = r.twoFingers(const Offset(100, 100), const Offset(110, 100),
-        const Offset(0, 100), const Offset(900, 100));
+    final huge = r.twoFingers(
+      const Offset(100, 100),
+      const Offset(110, 100),
+      const Offset(0, 100),
+      const Offset(900, 100),
+    );
     expect(huge.length, Ruler.maxLength);
-    final tiny = r.twoFingers(const Offset(0, 0), const Offset(400, 0),
-        const Offset(0, 0), const Offset(5, 0));
+    final tiny = r.twoFingers(
+      const Offset(0, 0),
+      const Offset(400, 0),
+      const Offset(0, 0),
+      const Offset(5, 0),
+    );
     expect(tiny.length, Ruler.minLength);
   });
 
@@ -84,15 +105,24 @@ void main() {
     ];
 
     test('a stroke along a line catches the words on it, in order', () {
-      expect(wordsAlongPath(words, const [Offset(5, 16), Offset(120, 16)]), [0, 1]);
+      expect(wordsAlongPath(words, const [Offset(5, 16), Offset(120, 16)]), [
+        0,
+        1,
+      ]);
     });
 
     test('a stroke over empty space catches nothing', () {
-      expect(wordsAlongPath(words, const [Offset(5, 100), Offset(120, 100)]), isEmpty);
+      expect(
+        wordsAlongPath(words, const [Offset(5, 100), Offset(120, 100)]),
+        isEmpty,
+      );
     });
 
     test('a fast stroke with few points still catches words between them', () {
-      expect(wordsAlongPath(words, const [Offset(0, 16), Offset(200, 16)]), [0, 1]);
+      expect(wordsAlongPath(words, const [Offset(0, 16), Offset(200, 16)]), [
+        0,
+        1,
+      ]);
     });
   });
 }

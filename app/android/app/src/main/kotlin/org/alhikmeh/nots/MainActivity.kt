@@ -1,10 +1,15 @@
 package org.alhikmeh.nots
 
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.StatFs
+import java.util.Locale
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -18,6 +23,74 @@ class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         pendingLink = linkOf(intent)
+        useFastestScreen()
+    }
+
+    /// The screen's fastest refresh rate (90, 120, 144 Hz) at its present
+    /// resolution: Flutter then draws at that rate. Many phones keep apps at
+    /// 60 Hz unless they ask.
+    private fun useFastestScreen() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        try {
+            @Suppress("DEPRECATION")
+            val d = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display else windowManager.defaultDisplay
+            d ?: return
+            val now = d.mode
+            val best = d.supportedModes
+                .filter { it.physicalWidth == now.physicalWidth && it.physicalHeight == now.physicalHeight }
+                .maxByOrNull { it.refreshRate } ?: return
+            if (best.modeId == now.modeId) return
+            val attrs = window.attributes
+            attrs.preferredDisplayModeId = best.modeId
+            window.attributes = attrs
+        } catch (_: Exception) {
+            // The phone's own choice stays.
+        }
+    }
+
+    /// 'wifi' (or a cable), 'mobile', or 'none'. A metered Wi-Fi (a phone's
+    /// hotspot) counts as mobile: the reports are sent only on 'wifi'.
+    private fun network(): String {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return "none"
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            @Suppress("DEPRECATION")
+            val info = cm.activeNetworkInfo ?: return "none"
+            @Suppress("DEPRECATION")
+            return if (info.type == ConnectivityManager.TYPE_WIFI && !cm.isActiveNetworkMetered) "wifi" else "mobile"
+        }
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return "none") ?: return "none"
+        if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return "none"
+        val wifi = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+        return if (wifi && !cm.isActiveNetworkMetered) "wifi" else "mobile"
+    }
+
+    private fun deviceInfo(): Map<String, Any?> {
+        val stat = StatFs(filesDir.path)
+        val pkg = packageManager.getPackageInfo(packageName, 0)
+        @Suppress("DEPRECATION")
+        val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) pkg.longVersionCode else pkg.versionCode.toLong()
+        val hz = try {
+            @Suppress("DEPRECATION")
+            val d = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display else windowManager.defaultDisplay
+            d?.refreshRate?.toDouble()
+        } catch (_: Exception) { null }
+        val m = resources.displayMetrics
+        return mapOf(
+            "os" to "android",
+            "maker" to Build.MANUFACTURER,
+            "model" to Build.MODEL,
+            "android" to Build.VERSION.RELEASE,
+            "sdk" to Build.VERSION.SDK_INT,
+            "app" to pkg.versionName,
+            "build" to code,
+            "hz" to hz,
+            "screen" to "${m.widthPixels}x${m.heightPixels}",
+            "dpi" to m.densityDpi,
+            "lang" to Locale.getDefault().toLanguageTag(),
+            "free" to stat.availableBytes,
+            "total" to stat.totalBytes,
+        )
     }
 
     /// A link opened or shared while the app is already running.
@@ -74,6 +147,8 @@ class MainActivity : FlutterActivity() {
                     "hasGoogleServices" -> result.success(hasGoogleServices())
                     "hasCustomTabs" -> result.success(hasCustomTabs())
                     "deviceName" -> result.success(Build.MODEL)
+                    "network" -> result.success(network())
+                    "deviceInfo" -> result.success(deviceInfo())
                     "bringToFront" -> {
                         // Closes the sign-in tab, which sits above this
                         // activity in the app's task.

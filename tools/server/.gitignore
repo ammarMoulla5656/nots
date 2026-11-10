@@ -1,0 +1,2 @@
+api/data/*.sqlite
+api/data/*.sqlite-*

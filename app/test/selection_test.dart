@@ -3,17 +3,27 @@ import 'package:nots/ink/ink_document.dart';
 import 'package:nots/ink/selection.dart';
 import 'package:nots/ink/stroke.dart';
 
-Stroke _line(int id, double x0, double y0, double x1, double y1,
-        {int color = 0xFF000000}) =>
-    Stroke(
-      id: id,
-      tool: InkTool.pen,
-      color: color,
-      width: 2,
-      points: [StrokePoint(x0, y0, 0.5, 0), StrokePoint(x1, y1, 0.5, 5)],
-    );
+Stroke _line(
+  int id,
+  double x0,
+  double y0,
+  double x1,
+  double y1, {
+  int color = 0xFF000000,
+}) => Stroke(
+  id: id,
+  tool: InkTool.pen,
+  color: color,
+  width: 2,
+  points: [StrokePoint(x0, y0, 0.5, 0), StrokePoint(x1, y1, 0.5, 5)],
+);
 
-const _square = [Offset(0, 0), Offset(100, 0), Offset(100, 100), Offset(0, 100)];
+const _square = [
+  Offset(0, 0),
+  Offset(100, 0),
+  Offset(100, 100),
+  Offset(0, 100),
+];
 
 void main() {
   test('pointInPolygon', () {
@@ -21,7 +31,14 @@ void main() {
     expect(pointInPolygon(150, 50, _square), isFalse);
     expect(pointInPolygon(-1, 50, _square), isFalse);
     // concave "L" shape: the notch is outside
-    const l = [Offset(0, 0), Offset(100, 0), Offset(100, 40), Offset(40, 40), Offset(40, 100), Offset(0, 100)];
+    const l = [
+      Offset(0, 0),
+      Offset(100, 0),
+      Offset(100, 40),
+      Offset(40, 40),
+      Offset(40, 100),
+      Offset(0, 100),
+    ];
     expect(pointInPolygon(20, 80, l), isTrue);
     expect(pointInPolygon(80, 80, l), isFalse);
   });
@@ -32,7 +49,10 @@ void main() {
     final half = _line(3, 50, 50, 150, 50); // 1 of 2 points inside
     final ids = strokesInLasso([inside, outside, half], _square);
     expect(ids, {1, 3});
-    expect(strokesInLasso([inside], const [Offset(0, 0), Offset(1, 1)]), isEmpty);
+    expect(
+      strokesInLasso([inside], const [Offset(0, 0), Offset(1, 1)]),
+      isEmpty,
+    );
   });
 
   group('SelectionController', () {

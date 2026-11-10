@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../catalog/book_cover.dart';
 import '../reader/reader_prefs.dart';
-import '../ui/speed_log.dart';
 import '../ui/theme.dart';
 import 'library_store.dart';
 
@@ -22,11 +21,8 @@ class ReadProgress extends ChangeNotifier {
   ({int page, int count})? of(String id) => _shares[id];
 
   Future<void> load(Iterable<String> ids) async {
-    final sw = Stopwatch()..start();
-    var n = 0;
     var changed = false;
     for (final id in ids) {
-      n++;
       final p = await ReaderPrefs.peekProgress(id);
       if (p == null) continue;
       final old = _shares[id];
@@ -34,9 +30,6 @@ class ReadProgress extends ChangeNotifier {
         _shares[id] = p;
         changed = true;
       }
-    }
-    if (n > 1) {
-      SpeedLog.instance.took('progress: read $n files', sw.elapsedMilliseconds);
     }
     if (changed) notifyListeners();
   }

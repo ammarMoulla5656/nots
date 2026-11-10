@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../library/book_widgets.dart';
 import '../library/books_tab.dart' show ChoiceSheet;
 import '../library/library_store.dart';
+import '../stats/usage.dart';
 import '../sync/google_account.dart';
 import '../ui/brand_widgets.dart';
 import '../ui/theme.dart';
@@ -171,7 +172,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
         const SizedBox(height: 10),
         HeroSearch(
           hint: 'ابحث بالعنوان أو المؤلف أو المحقق',
-          onChanged: (v) => _ask(_query.copyWith(text: v)),
+          onChanged: (v) {
+            if (_query.text.isEmpty && v.isNotEmpty) {
+              Usage.instance.feature('catalog_search');
+            }
+            _ask(_query.copyWith(text: v));
+          },
         ),
       ],
     ),
@@ -373,7 +379,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         Text(
-                                          'عرض الكل (${shelf.value.length})',
+                                          'عرض الكل',
                                           style: TextStyle(
                                             fontSize: 12.5,
                                             fontWeight: FontWeight.w700,

@@ -1,4 +1,7 @@
 import 'dart:convert';
+
+import '../stats/usage.dart';
+
 import 'dart:io';
 
 import 'dart:math' as math;
@@ -97,6 +100,7 @@ class Collections extends ChangeNotifier {
   }
 
   Collection create(String name) {
+    Usage.instance.feature('collection');
     final c = Collection(
       // The time, and a random part: two made in one instant differ.
       id: 'c${DateTime.now().microsecondsSinceEpoch}-${_random.nextInt(1 << 30)}',

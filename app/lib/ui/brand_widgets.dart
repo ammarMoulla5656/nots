@@ -328,34 +328,18 @@ class _StarPainter extends CustomPainter {
 
 /// A section title with an optional action on the other side.
 class SectionTitle extends StatelessWidget {
-  const SectionTitle(this.title, {super.key, this.count, this.top = 22});
+  const SectionTitle(this.title, {super.key, this.top = 22});
 
   final String title;
-  final int? count;
   final double top;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsets.only(top: top, bottom: 12),
-      child: Text.rich(
-        TextSpan(
-          children: [
-            TextSpan(
-              text: title,
-              style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
-            ),
-            if (count != null)
-              TextSpan(
-                text: '  ($count)',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Brand.muted,
-                  fontWeight: FontWeight.w400,
-                ),
-              ),
-          ],
-        ),
+      child: Text(
+        title,
+        style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
       ),
     );
   }

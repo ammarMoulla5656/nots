@@ -6,15 +6,15 @@ import 'package:nots/ink/note_items.dart';
 import 'package:nots/ink/stroke.dart';
 
 NoteItem _text(int id, String text) => NoteItem(
-      id: id,
-      kind: ItemKind.text,
-      x: 12.34,
-      y: 56.78,
-      w: 220,
-      text: text,
-      color: 0xFF1565C0,
-      fontSize: 14,
-    );
+  id: id,
+  kind: ItemKind.text,
+  x: 12.34,
+  y: 56.78,
+  w: 220,
+  text: text,
+  color: 0xFF1565C0,
+  fontSize: 14,
+);
 
 void main() {
   test('items survive a save/load round trip, including Arabic text', () {
@@ -22,16 +22,23 @@ void main() {
       3: [
         _text(1, 'قال الشيخ: هذا هو الصحيح — and some English'),
         const NoteItem(
-            id: 2, kind: ItemKind.pin, x: 100, y: 200, text: 'ملاحظة', color: 0xFFEF6C00),
+          id: 2,
+          kind: ItemKind.pin,
+          x: 100,
+          y: 200,
+          text: 'ملاحظة',
+          color: 0xFFEF6C00,
+        ),
         const NoteItem(
-            id: 4,
-            kind: ItemKind.tape,
-            x: 10,
-            y: 20,
-            w: 150.5,
-            h: 18.25,
-            color: 0xFF333333,
-            revealed: true),
+          id: 4,
+          kind: ItemKind.tape,
+          x: 10,
+          y: 20,
+          w: 150.5,
+          h: 18.25,
+          color: 0xFF333333,
+          revealed: true,
+        ),
       ],
     };
     final bytes = StrokeCodec.encodeDocument({}, 5, items: items);
@@ -69,11 +76,16 @@ void main() {
             tool: t,
             color: 0xFF000000,
             width: 2,
-            points: const [StrokePoint(1, 1, 0.5, 0), StrokePoint(5, 5, 0.5, 4)],
+            points: const [
+              StrokePoint(1, 1, 0.5, 0),
+              StrokePoint(5, 5, 0.5, 4),
+            ],
           ),
       ],
     };
-    final back = StrokeCodec.decodeDocument(StrokeCodec.encodeDocument(pages, 9));
+    final back = StrokeCodec.decodeDocument(
+      StrokeCodec.encodeDocument(pages, 9),
+    );
     expect(back.pages[1]!.map((s) => s.tool), InkTool.values);
   });
 
@@ -103,8 +115,16 @@ void main() {
 
     test('items and strokes share one undo history', () {
       final d = InkDocument();
-      d.add(1, Stroke(id: d.takeStrokeId(), tool: InkTool.pen, color: 0xFF000000, width: 1,
-          points: const [StrokePoint(0, 0, 0.5, 0)]));
+      d.add(
+        1,
+        Stroke(
+          id: d.takeStrokeId(),
+          tool: InkTool.pen,
+          color: 0xFF000000,
+          width: 1,
+          points: const [StrokePoint(0, 0, 0.5, 0)],
+        ),
+      );
       d.addItem(1, _text(d.takeStrokeId(), 'x'));
       d.undo();
       expect(d.itemsOf(1), isEmpty);

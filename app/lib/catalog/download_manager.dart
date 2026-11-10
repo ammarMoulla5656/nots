@@ -3,6 +3,9 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+
+import '../stats/usage.dart';
+
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 
@@ -68,6 +71,7 @@ class DownloadManager extends ChangeNotifier {
     final have = _library.byCatalog(book.id, part.number);
     if (have != null && _library.isOnDevice(have)) return;
     if (old != null && old.state != DownloadState.failed) return;
+    Usage.instance.catalog(book.id, 'dl');
     _tasks[key] = DownloadTask(book, part);
     notifyListeners();
     unawaited(_pump());

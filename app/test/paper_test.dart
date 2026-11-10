@@ -35,7 +35,11 @@ void main() {
 
     test('the PDF is made of lines, not a picture, and every page shares one drawing', () {
       final bytes = buildNotePdf(
-        style: const PaperStyle(kind: PaperKind.lined, paper: 0xFFFBF8F1, line: 0xFFD6CFBE),
+        style: const PaperStyle(
+          kind: PaperKind.lined,
+          paper: 0xFFFBF8F1,
+          line: 0xFFD6CFBE,
+        ),
         pages: 50,
         title: 'ملاحظة',
         stamp: 'x1',
@@ -57,7 +61,9 @@ void main() {
         stamp: 'x2',
       );
       final text = latin1.decode(bytes);
-      final start = int.parse(RegExp(r'startxref\n(\d+)').firstMatch(text)!.group(1)!);
+      final start = int.parse(
+        RegExp(r'startxref\n(\d+)').firstMatch(text)!.group(1)!,
+      );
       expect(text.substring(start).startsWith('xref'), isTrue);
       final rows = RegExp(r'(\d{10}) 00000 n').allMatches(text).toList();
       expect(rows.length, 4 + 5);
@@ -98,8 +104,14 @@ void main() {
   group('the tools', () {
     test('every tool is in the bar or the box, once', () {
       final l = ToolLayout();
-      expect({...l.bar, ...l.box}.length, ReaderTool.values.where((t) => t.offered).length);
-      expect(l.bar.length + l.box.length, ReaderTool.values.where((t) => t.offered).length);
+      expect(
+        {...l.bar, ...l.box}.length,
+        ReaderTool.values.where((t) => t.offered).length,
+      );
+      expect(
+        l.bar.length + l.box.length,
+        ReaderTool.values.where((t) => t.offered).length,
+      );
     });
 
     test('a tool moves between the bar and the box, and back', () {
@@ -114,28 +126,37 @@ void main() {
       expect(l.box, ToolLayout.defaultBox);
     });
 
-    test('the arrangement is kept, and a tool added later lands in the box', () async {
-      final dir = await Directory.systemTemp.createTemp('nots_tools_');
-      addTearDown(() => dir.delete(recursive: true));
-      ToolLayout.dirProvider = () async => dir;
-      final a = ToolLayout();
-      await a.load();
-      a.place(ReaderTool.laser, bar: true);
-      a.place(ReaderTool.eraser, bar: false);
-      final b = ToolLayout();
-      await b.load();
-      expect(b.bar.last, ReaderTool.laser);
-      expect(b.inBar(ReaderTool.eraser), isFalse);
-      // A file from an older version that did not know every tool.
-      await File(p.join(dir.path, 'tools.json')).writeAsString(
-        jsonEncode({'bar': ['pen', 'hand'], 'box': ['shape']}),
-      );
-      final c = ToolLayout();
-      await c.load();
-      expect(c.bar, [ReaderTool.pen, ReaderTool.hand]);
-      expect(c.box.length + c.bar.length, ReaderTool.values.where((t) => t.offered).length);
-      expect(c.box.first, ReaderTool.shape);
-    });
+    test(
+      'the arrangement is kept, and a tool added later lands in the box',
+      () async {
+        final dir = await Directory.systemTemp.createTemp('nots_tools_');
+        addTearDown(() => dir.delete(recursive: true));
+        ToolLayout.dirProvider = () async => dir;
+        final a = ToolLayout();
+        await a.load();
+        a.place(ReaderTool.laser, bar: true);
+        a.place(ReaderTool.eraser, bar: false);
+        final b = ToolLayout();
+        await b.load();
+        expect(b.bar.last, ReaderTool.laser);
+        expect(b.inBar(ReaderTool.eraser), isFalse);
+        // A file from an older version that did not know every tool.
+        await File(p.join(dir.path, 'tools.json')).writeAsString(
+          jsonEncode({
+            'bar': ['pen', 'hand'],
+            'box': ['shape'],
+          }),
+        );
+        final c = ToolLayout();
+        await c.load();
+        expect(c.bar, [ReaderTool.pen, ReaderTool.hand]);
+        expect(
+          c.box.length + c.bar.length,
+          ReaderTool.values.where((t) => t.offered).length,
+        );
+        expect(c.box.first, ReaderTool.shape);
+      },
+    );
   });
 }
 
@@ -148,6 +169,9 @@ Future<BookEntry> _note(LibraryStore lib, Directory root, String name) async {
   );
   final f = File(p.join(root.path, '$name.pdf'))..writeAsBytesSync(bytes);
   final e = await lib.importPdf(f.path, title: name);
-  await lib.markNote(e, template: const PaperStyle(kind: PaperKind.lined).encode());
+  await lib.markNote(
+    e,
+    template: const PaperStyle(kind: PaperKind.lined).encode(),
+  );
   return e;
 }

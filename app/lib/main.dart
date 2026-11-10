@@ -1,25 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:flutter_quill/flutter_quill.dart'
-    show FlutterQuillLocalizations;
 import 'package:pdfrx/pdfrx.dart';
 
 import 'library/home_screen.dart';
+import 'stats/usage.dart';
 import 'ui/app_settings.dart';
-import 'ui/speed_log.dart';
 import 'ui/theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await pdfrxFlutterInitialize();
   await AppSettings.instance.load();
-  await SpeedLog.instance.load();
-  SpeedLog.instance.note('app started');
+  // Small, and read before anything is recorded.
+  await Usage.instance.load();
   Brand.dark = false;
   runApp(const NotsApp());
-  WidgetsBinding.instance.addPostFrameCallback(
-    (_) => SpeedLog.instance.note('first frame'),
-  );
 }
 
 class NotsApp extends StatefulWidget {
@@ -60,16 +55,7 @@ class _NotsAppState extends State<NotsApp> {
 
   @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: SpeedLog.instance,
-      builder: (context, _) => _app(SpeedLog.instance.enabled),
-    );
-  }
-
-  Widget _app(bool measuring) {
     return MaterialApp(
-      // While measuring: the time of every frame, drawn over the screen.
-      showPerformanceOverlay: measuring,
       title: 'قلم المصدر',
       debugShowCheckedModeBanner: false,
       locale: const Locale('ar'),
@@ -78,8 +64,6 @@ class _NotsAppState extends State<NotsApp> {
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
-        // The text notes' editor and its toolbar.
-        FlutterQuillLocalizations.delegate,
       ],
       theme: buildTheme(),
       home: const HomeScreen(),

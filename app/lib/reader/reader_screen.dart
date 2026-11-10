@@ -33,9 +33,9 @@ import '../ink/tool_controller.dart';
 import '../ink/words.dart';
 import '../library/home_sheets.dart' show ActionRow, ActionRows, HistorySheet;
 import '../library/book_widgets.dart' show ReadProgress;
+import '../stats/usage.dart';
 import '../ui/app_settings.dart';
 import '../ui/brand_widgets.dart';
-import '../ui/speed_log.dart';
 import '../ui/color_palette.dart';
 import '../ui/theme.dart';
 import 'conflict_bar.dart';
@@ -222,6 +222,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// A blank page after the page in view (after the book page an added
   /// page follows).
   Future<void> _addExtraPage() async {
+    Usage.instance.feature('add_page');
     final pr = _prefs;
     if (pr == null || !_viewer.isReady || widget.book.isNote) return;
     final key = _keyNow;
@@ -383,10 +384,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
     return quote == null ? '$where\n$link' : '«$quote»\n\n$where\n$link';
   }
 
-  Future<void> _shareText(String text) =>
-      SharePlus.instance.share(ShareParams(text: text));
+  Future<void> _shareText(String text) {
+    Usage.instance.feature('share');
+    return SharePlus.instance.share(ShareParams(text: text));
+  }
 
   void _toggleRuler() {
+    Usage.instance.feature('ruler');
     if (_tools.ruler.value != null) {
       _tools.ruler.value = null;
       return;
@@ -475,12 +479,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// "The clean screen" from the menu: the bars go at once, and the phone's
   /// own status and navigation bars with them, until the page is tapped.
   void _cleanScreen() {
+    Usage.instance.clean(true);
     if (_pop != ReaderPop.none) setState(() => _pop = ReaderPop.none);
     _hideTools();
     _systemBars(false);
   }
 
   void _systemBars(bool shown) {
+    if (shown && _immersive) Usage.instance.clean(false);
     _immersive = !shown;
     SystemChrome.setEnabledSystemUIMode(
       shown ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky,
@@ -497,13 +503,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// Word boxes already loaded, per page, for instant taps.
   final _wordsReady = <int, List<WordBox>>{};
 
-  /// From the reader's start to its first page, for the speed log.
-  final _openClock = Stopwatch()..start();
-
   @override
   void initState() {
     super.initState();
-    SpeedLog.instance.screen = 'reader';
+    Usage.instance.bookOpened(widget.book);
     _tools.addListener(_onToolChanged);
     _showTools();
     _palette.load();
@@ -782,6 +785,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   ToolMode _lastMode = ToolMode.hand;
 
   void _onToolChanged() {
+    Usage.instance.activity();
     if (_toolsShown) _showTools(); // using a tool keeps the tools in view
     // Switching tool drops the selection; other changes (colour, size,
     // fingers on the screen) keep it.
@@ -793,6 +797,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   @override
   void dispose() {
+    Usage.instance.bookClosed();
     _hideTimer?.cancel();
     _pageNow.dispose();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -868,6 +873,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   final _pageNow = ValueNotifier<int>(1);
 
   void _onViewMoved() {
+    Usage.instance.activity();
     _pageNow.value = _viewer.pageNumber ?? _pageNow.value;
     _placeTimer?.cancel();
     _placeTimer = Timer(const Duration(milliseconds: 500), _capturePlace);
@@ -878,6 +884,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (pr == null || !_restored || !_viewer.isReady) return;
     final n = _viewer.pageNumber;
     if (n == null) return;
+    Usage.instance.page(_keyOf(n), _bookPageCount);
     pr.setPosition(
       ReadingPosition.capture(
         page: _keyOf(n),
@@ -908,6 +915,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Future<void> _openPages(PagesMode mode) async {
+    Usage.instance.feature('pages');
     if (!_viewer.isReady) return;
     final page = await showNotsSheet<int>(
       context,
@@ -1209,6 +1217,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   /// Puts [text] on the clipboard and says so.
   void _copy(String text) {
+    Usage.instance.feature('copy');
     Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1226,6 +1235,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   // ---- export ----
 
   Future<void> _export() async {
+    Usage.instance.feature('export');
     final store = _store;
     if (store == null || !_viewer.isReady) return;
     final marked = annotatedPages(store.document).length;
@@ -1490,6 +1500,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
     // The words chosen, with the link to their page in Masdar.
     Future<void> share() async {
+      Usage.instance.feature('share_text');
       final ranges = await delegate.getSelectedTextRanges();
       if (ranges.isEmpty) return;
       final text =
@@ -1655,6 +1666,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   void _toggleBookmark() {
+    Usage.instance.feature('bookmark');
     if (!_viewer.isReady) return;
     _prefs?.toggleBookmark(_keyNow);
     setState(() {});
@@ -1735,6 +1747,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Future<void> _linkDocx() async {
+    Usage.instance.feature('link_word');
     final messenger = ScaffoldMessenger.of(context);
     final files = await FilePicker.pickFiles(
       type: FileType.custom,
@@ -1812,6 +1825,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Future<void> _openSearch() async {
+    Usage.instance.feature('search');
     final book = _book;
     if (book == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1962,6 +1976,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   /// A tool was chosen, in the bar or in the box.
   void _onTool(ReaderTool t) {
+    Usage.instance.tool(t.id);
     if (t == ReaderTool.ruler) {
       _toggleRuler();
       setState(() => _pop = ReaderPop.none);
@@ -2085,6 +2100,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// The last books opened, from inside a book: choosing one opens it in
   /// place of this one.
   Future<void> _showRecent() async {
+    Usage.instance.feature('recent');
     final lib = widget.library;
     final books = lib.recentlyRead();
     final progress = ReadProgress();
@@ -2114,6 +2130,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Future<void> _openToc() async {
+    Usage.instance.feature('toc');
     final page = await showNotsSheet<int>(
       context,
       builder: (_) => TocSheet(
@@ -2172,6 +2189,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// Opens the page in view in the Masdar app (in the browser when the app
   /// is not on this phone).
   Future<void> _openMasdar() async {
+    Usage.instance.feature('masdar');
     final ref = _masdar;
     if (ref == null || !_viewer.isReady) return;
     String? how;
@@ -2190,6 +2208,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// Asks for a picture and puts it on the page in view, selected, ready to
   /// be moved and resized.
   Future<void> _addPicture() async {
+    Usage.instance.feature('picture');
     final src = await showNotsSheet<ImageSource>(
       context,
       builder: (context) => SafeArea(
@@ -2430,14 +2449,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 // Momentum scrolling: flicks carry on.
                 scrollPhysics: PdfViewerParams.getScrollPhysics(context),
                 onViewerReady: (doc, _) {
-                  if (_openClock.isRunning) {
-                    _openClock.stop();
-                    SpeedLog.instance.took(
-                      'reader: open to first page',
-                      _openClock.elapsedMilliseconds,
-                      '${doc.pages.length} pages',
-                    );
-                  }
                   if (_mixed == null) _loadOutline(doc);
                   _restorePage();
                   final go = _goAfterLoad;

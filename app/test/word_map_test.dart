@@ -32,7 +32,11 @@ Map<String, Object?> sampleMap() => {
       // as differences from the previous placed word.
       'b': [1000, 500, 1400, 620, null, -400, 0, -500, 0, 2400, 300, 2500, 300],
     },
-    {'k': 'text', 't': 'الأعلم', 'b': [500, 500, 900, 620]},
+    {
+      'k': 'text',
+      't': 'الأعلم',
+      'b': [500, 500, 900, 620],
+    },
   ],
   'headings': [
     {'t': 'التقليد', 'l': 1, 'p': 1, 'w': 0},
@@ -63,7 +67,10 @@ void main() {
     });
 
     test('a PDF without a map gives null', () {
-      expect(findWordMapJson(Uint8List.fromList(latin1.encode('%PDF-1.4\n%%EOF'))), isNull);
+      expect(
+        findWordMapJson(Uint8List.fromList(latin1.encode('%PDF-1.4\n%%EOF'))),
+        isNull,
+      );
     });
 
     test('words, places and indices in the whole book', () {
@@ -81,12 +88,15 @@ void main() {
       expect(book.layoutOf(2)!.rectOf(0), const Rect.fromLTRB(50, 50, 90, 62));
     });
 
-    test('a map that does not fit its text gives no places, not wrong ones', () {
-      final m = sampleMap();
-      ((m['pages'] as List)[1] as Map)['b'] = [1, 2, 3];
-      final l = BookText.fromWordMap(m).layoutOf(2)!;
-      expect(l.rectOf(0), isNull);
-    });
+    test(
+      'a map that does not fit its text gives no places, not wrong ones',
+      () {
+        final m = sampleMap();
+        ((m['pages'] as List)[1] as Map)['b'] = [1, 2, 3];
+        final l = BookText.fromWordMap(m).layoutOf(2)!;
+        expect(l.rectOf(0), isNull);
+      },
+    );
 
     test('search hits are marked on the words they cover', () {
       final book = BookText.fromWordMap(sampleMap());
@@ -123,9 +133,13 @@ void main() {
         wordFrom: 51234,
         wordTo: 51235,
       );
-      final bytes = StrokeCodec.encodeDocument({}, 4, items: {
-        7: [mark],
-      });
+      final bytes = StrokeCodec.encodeDocument(
+        {},
+        4,
+        items: {
+          7: [mark],
+        },
+      );
       final back = StrokeCodec.decodeDocument(bytes).items[7]!.single;
       expect(back.wordFrom, 51234);
       expect(back.wordTo, 51235);
@@ -135,9 +149,13 @@ void main() {
 
     test('files of version 3 (no word indices) still open', () {
       const mark = NoteItem(id: 1, kind: ItemKind.mark, x: 1, y: 2, w: 3, h: 4);
-      final v4 = StrokeCodec.encodeDocument({}, 2, items: {
-        1: [mark],
-      });
+      final v4 = StrokeCodec.encodeDocument(
+        {},
+        2,
+        items: {
+          1: [mark],
+        },
+      );
       // Version 3 is version 4 without the two trailing word varints.
       final v3 = Uint8List.fromList(v4.sublist(0, v4.length - 2));
       v3[4] = 3;
@@ -152,13 +170,15 @@ void main() {
         final json = jsonEncode(sampleMap());
         final pdf = File(p.join(dir.path, 'book.pdf'))
           ..writeAsBytesSync(fakePdf(json));
-        final pkg = NotsPackage.read(await exportPackage(
-          title: 'كتاب',
-          bookId: 'x',
-          pdf: pdf,
-          ink: InkDocument(),
-          linkJson: json,
-        ));
+        final pkg = NotsPackage.read(
+          await exportPackage(
+            title: 'كتاب',
+            bookId: 'x',
+            pdf: pdf,
+            ink: InkDocument(),
+            linkJson: json,
+          ),
+        );
         expect(pkg.linkJson, json);
         expect(BookText.fromJson(pkg.linkJson!).embedded, isTrue);
         expect(findWordMapJson(pkg.pdf), json);
@@ -199,12 +219,16 @@ void main() {
         expect(sameLine(x, r.first), isTrue); // one line
       }
       // ignore: avoid_print
-      print('map found in $found ms, parsed in ${parsed - found} ms, '
-          '${hits.length} hits in $searchMs ms');
+      print(
+        'map found in $found ms, parsed in ${parsed - found} ms, '
+        '${hits.length} hits in $searchMs ms',
+      );
     }, skip: !cooked.existsSync());
 
     test('the map names the original PDF by its book id', () async {
-      final book = BookText.fromJson(findWordMapJson(cooked.readAsBytesSync())!);
+      final book = BookText.fromJson(
+        findWordMapJson(cooked.readAsBytesSync())!,
+      );
       expect(book.sourceId, await fingerprintFile(original));
     }, skip: !cooked.existsSync() || !original.existsSync());
   });

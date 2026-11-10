@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../book/book_text.dart' show normalizeForSearch;
-import '../library/book_widgets.dart' show CoverGridSliver;
+import '../library/book_widgets.dart' show CoverGridSliver, SearchBox;
 import '../library/library_store.dart';
 import '../ui/brand_widgets.dart';
 import '../ui/theme.dart';
@@ -61,6 +61,9 @@ class AuthorScreen extends StatefulWidget {
 class _AuthorScreenState extends State<AuthorScreen> {
   /// The category shown; 'الكل' shows every category, each under its title.
   String _category = 'الكل';
+
+  /// What is typed in the search: a part of a title.
+  String _query = '';
 
   bool _owned(CatalogBook b) => b.parts.any(
     (p) => widget.library.installedCatalog(b.id, p.number) != null,
@@ -139,10 +142,19 @@ class _AuthorScreenState extends State<AuthorScreen> {
           widget.downloads,
         ]),
         builder: (context, _) {
-          final books = [
+          final all = [
             for (final b in widget.store.books)
               if (AuthorScreen.sameAuthor(b.author, widget.author)) b,
           ]..sort((a, b) => a.title.compareTo(b.title));
+          final q = normalizeForSearch(_query).text.trim();
+          final books = q.isEmpty
+              ? all
+              : [
+                  for (final b in all)
+                    if (normalizeForSearch('${b.title} ${b.subject}').text
+                        .contains(q))
+                      b,
+                ];
           // The categories, in the order the library sets (as in «الكتب»).
           final bySubject = <String, List<CatalogBook>>{};
           for (final b in books) {
@@ -158,7 +170,18 @@ class _AuthorScreenState extends State<AuthorScreen> {
               ? subjects
               : [_category];
           return CustomScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             slivers: [
+              if (all.length > 1)
+                SliverPadding(
+                  padding: EdgeInsets.fromLTRB(side, 12, side, 0),
+                  sliver: SliverToBoxAdapter(
+                    child: SearchBox(
+                      hint: 'ابحث في مؤلفات ${widget.author}',
+                      onChanged: (v) => setState(() => _query = v),
+                    ),
+                  ),
+                ),
               if (subjects.length > 1)
                 SliverPadding(
                   padding: EdgeInsets.fromLTRB(side, 12, side, 0),
@@ -175,7 +198,9 @@ class _AuthorScreenState extends State<AuthorScreen> {
                   child: Padding(
                     padding: const EdgeInsets.all(28),
                     child: Text(
-                      'لا توجد كتب لهذا المؤلف في المكتبة.',
+                      all.isEmpty
+                          ? 'لا توجد كتب لهذا المؤلف في المكتبة.'
+                          : 'لا يوجد كتاب بهذا البحث.',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: Brand.muted),
                     ),

@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import '../library/library_store.dart';
+import '../stats/usage.dart';
 import '../ui/brand_widgets.dart';
 import '../ui/theme.dart';
 import 'author_screen.dart';
@@ -195,8 +196,15 @@ class BookDetailScreen extends StatelessWidget {
     );
   }
 
+  /// The pages shown once each (a page is built again as things change).
+  static final _counted = Expando<bool>();
+
   @override
   Widget build(BuildContext context) {
+    if (_counted[this] == null) {
+      _counted[this] = true;
+      Usage.instance.catalog(book.id, 'view');
+    }
     final common = _common;
     final missing = book.partsCount - book.parts.length;
     return Scaffold(

@@ -22,9 +22,6 @@ class NewPaperSheet extends StatefulWidget {
   /// Popped when the user asked to add a book instead.
   static const addBook = 'book';
 
-  /// Popped when the user asked for a text note (typing, not paper).
-  static const textNote = 'text';
-
   @override
   State<NewPaperSheet> createState() => _NewPaperSheetState();
 }
@@ -233,18 +230,6 @@ class _NewPaperSheetState extends State<NewPaperSheet> {
               label: Text(widget.forPage ? 'إضافة الصفحة' : 'إنشاء الورقة'),
             ),
             const SizedBox(height: 12),
-            if (!widget.forPage)
-              Card(
-                clipBehavior: Clip.antiAlias,
-                child: ListTile(
-                  leading: const Icon(Icons.text_fields),
-                  title: const Text('ملف نصي'),
-                  subtitle: const Text(
-                    'اكتب بخطوط وألوان وعناوين وفهرس، وارسم عليه، وصدّره Word أو PDF',
-                  ),
-                  onTap: () => Navigator.pop(context, NewPaperSheet.textNote),
-                ),
-              ),
             if (!widget.forPage)
               Card(
                 clipBehavior: Clip.antiAlias,

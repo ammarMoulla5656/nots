@@ -28,27 +28,29 @@ class _Harness {
   final edited = <NoteItem>[];
 
   Future<void> pump() async {
-    await tester.pumpWidget(MaterialApp(
-      home: Align(
-        alignment: Alignment.topLeft,
-        child: SizedBox(
-          width: 400,
-          height: 400,
-          child: PageInkOverlay(
-            document: doc,
-            tools: tools,
-            selection: selection,
-            pageNumber: 1,
-            pageWidthPt: 400,
-            pageWidthPx: 400,
-            viewChanged: viewChanged,
-            onCreateItem: (page, kind, pt) async => created.add((kind, pt)),
-            onEditItem: (page, item) async => edited.add(item),
-            loadWords: () async => words,
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Align(
+          alignment: Alignment.topLeft,
+          child: SizedBox(
+            width: 400,
+            height: 400,
+            child: PageInkOverlay(
+              document: doc,
+              tools: tools,
+              selection: selection,
+              pageNumber: 1,
+              pageWidthPt: 400,
+              pageWidthPx: 400,
+              viewChanged: viewChanged,
+              onCreateItem: (page, kind, pt) async => created.add((kind, pt)),
+              onEditItem: (page, item) async => edited.add(item),
+              loadWords: () async => words,
+            ),
           ),
         ),
       ),
-    ));
+    );
   }
 
   Offset get origin => tester.getTopLeft(find.byType(PageInkOverlay));
@@ -67,21 +69,28 @@ class _Harness {
 }
 
 void main() {
-  testWidgets('pen: a drag becomes one stroke with the chosen tool and colour',
-      (tester) async {
-    final h = _Harness(tester);
-    h.tools
-      ..setMode(ToolMode.pen)
-      ..setPenKind(InkTool.calligraphy)
-      ..setColor(0xFFD32F2F);
-    await h.pump();
-    await h.drag(const [Offset(50, 50), Offset(90, 60), Offset(140, 90), Offset(200, 90)]);
-    final s = h.doc.strokesOf(1).single;
-    expect(s.tool, InkTool.calligraphy);
-    expect(s.color, 0xFFD32F2F);
-    expect(s.points.length, greaterThanOrEqualTo(4));
-    expect(s.points.first.x, closeTo(50, 0.01));
-  });
+  testWidgets(
+    'pen: a drag becomes one stroke with the chosen tool and colour',
+    (tester) async {
+      final h = _Harness(tester);
+      h.tools
+        ..setMode(ToolMode.pen)
+        ..setPenKind(InkTool.calligraphy)
+        ..setColor(0xFFD32F2F);
+      await h.pump();
+      await h.drag(const [
+        Offset(50, 50),
+        Offset(90, 60),
+        Offset(140, 90),
+        Offset(200, 90),
+      ]);
+      final s = h.doc.strokesOf(1).single;
+      expect(s.tool, InkTool.calligraphy);
+      expect(s.color, 0xFFD32F2F);
+      expect(s.points.length, greaterThanOrEqualTo(4));
+      expect(s.points.first.x, closeTo(50, 0.01));
+    },
+  );
 
   testWidgets('hand tool draws nothing', (tester) async {
     final h = _Harness(tester);
@@ -90,29 +99,38 @@ void main() {
     expect(h.doc.strokeCount, 0);
   });
 
-  testWidgets('holding still at the end snaps a wobbly line straight',
-      (tester) async {
-    final h = _Harness(tester);
-    h.tools.setMode(ToolMode.pen);
-    await h.pump();
-    await h.drag(
-      const [
-        Offset(50, 100), Offset(80, 101), Offset(110, 99), Offset(140, 101),
-        Offset(170, 100), Offset(200, 102), Offset(250, 100),
-      ],
-      hold: const Duration(milliseconds: 700),
-    );
-    expect(h.doc.strokesOf(1).single.points.length, 2);
-  });
-
-  testWidgets('moving on before the delay keeps the freehand stroke',
-      (tester) async {
+  testWidgets('holding still at the end snaps a wobbly line straight', (
+    tester,
+  ) async {
     final h = _Harness(tester);
     h.tools.setMode(ToolMode.pen);
     await h.pump();
     await h.drag(const [
-      Offset(50, 100), Offset(80, 101), Offset(110, 99), Offset(140, 101),
-      Offset(170, 100), Offset(200, 102), Offset(250, 100),
+      Offset(50, 100),
+      Offset(80, 101),
+      Offset(110, 99),
+      Offset(140, 101),
+      Offset(170, 100),
+      Offset(200, 102),
+      Offset(250, 100),
+    ], hold: const Duration(milliseconds: 700));
+    expect(h.doc.strokesOf(1).single.points.length, 2);
+  });
+
+  testWidgets('moving on before the delay keeps the freehand stroke', (
+    tester,
+  ) async {
+    final h = _Harness(tester);
+    h.tools.setMode(ToolMode.pen);
+    await h.pump();
+    await h.drag(const [
+      Offset(50, 100),
+      Offset(80, 101),
+      Offset(110, 99),
+      Offset(140, 101),
+      Offset(170, 100),
+      Offset(200, 102),
+      Offset(250, 100),
     ]);
     expect(h.doc.strokesOf(1).single.points.length, 7);
   });
@@ -123,15 +141,18 @@ void main() {
       ..setMode(ToolMode.pen)
       ..setSnapShapes(false);
     await h.pump();
-    await h.drag(
-      const [Offset(50, 100), Offset(100, 101), Offset(150, 99), Offset(250, 100)],
-      hold: const Duration(milliseconds: 700),
-    );
+    await h.drag(const [
+      Offset(50, 100),
+      Offset(100, 101),
+      Offset(150, 99),
+      Offset(250, 100),
+    ], hold: const Duration(milliseconds: 700));
     expect(h.doc.strokesOf(1).single.points.length, 4);
   });
 
-  testWidgets('shape tool drags out a rectangle and ignores a bare tap',
-      (tester) async {
+  testWidgets('shape tool drags out a rectangle and ignores a bare tap', (
+    tester,
+  ) async {
     final h = _Harness(tester);
     h.tools
       ..setMode(ToolMode.shape)
@@ -161,8 +182,9 @@ void main() {
     expect(h.doc.strokeCount, 1);
   });
 
-  testWidgets('normal eraser cuts a stroke in two and undo restores it',
-      (tester) async {
+  testWidgets('normal eraser cuts a stroke in two and undo restores it', (
+    tester,
+  ) async {
     final h = _Harness(tester);
     h.tools.setMode(ToolMode.pen);
     await h.pump();
@@ -184,7 +206,13 @@ void main() {
     h.doc.addItem(
       1,
       const NoteItem(
-          id: 1, kind: ItemKind.text, x: 100, y: 100, w: 80, text: 'hello'),
+        id: 1,
+        kind: ItemKind.text,
+        x: 100,
+        y: 100,
+        w: 80,
+        text: 'hello',
+      ),
     );
     h.tools.setMode(ToolMode.pen);
     await h.pump();
@@ -193,8 +221,9 @@ void main() {
     expect(h.doc.strokeCount, 0);
   });
 
-  testWidgets('text and pin tools ask to create an item on a tap',
-      (tester) async {
+  testWidgets('text and pin tools ask to create an item on a tap', (
+    tester,
+  ) async {
     final h = _Harness(tester);
     h.tools.setMode(ToolMode.text);
     await h.pump();
@@ -214,8 +243,9 @@ void main() {
     expect(h.created.length, 2);
   });
 
-  testWidgets('first tap selects an item, tapping it again edits it',
-      (tester) async {
+  testWidgets('first tap selects an item, tapping it again edits it', (
+    tester,
+  ) async {
     final h = _Harness(tester);
     h.doc.addItem(
       1,
@@ -232,8 +262,9 @@ void main() {
     expect(h.edited.single.id, 1);
   });
 
-  testWidgets('dragging an item moves it and keeps it selected',
-      (tester) async {
+  testWidgets('dragging an item moves it and keeps it selected', (
+    tester,
+  ) async {
     final h = _Harness(tester);
     h.doc.addItem(
       1,
@@ -252,21 +283,32 @@ void main() {
     expect(h.doc.itemsOf(1).single.x, closeTo(200, 0.01));
   });
 
-  testWidgets('the X button deletes the selected item, undo brings it back',
-      (tester) async {
+  testWidgets('the X button deletes the selected item, undo brings it back', (
+    tester,
+  ) async {
     final h = _Harness(tester);
     h.doc.addItem(
       1,
       const NoteItem(
-          id: 1, kind: ItemKind.text, x: 100, y: 100, w: 220, text: 'hello'),
+        id: 1,
+        kind: ItemKind.text,
+        x: 100,
+        y: 100,
+        w: 220,
+        text: 'hello',
+      ),
     );
     h.tools.setMode(ToolMode.text);
     await h.pump();
     await h.drag(const [Offset(150, 105)]);
     expect(h.selection.itemId, 1);
 
-    final geo = SelectionGeometry(h.selection.bounds!, 1,
-        canEdit: true, canResize: true);
+    final geo = SelectionGeometry(
+      h.selection.bounds!,
+      1,
+      canEdit: true,
+      canResize: true,
+    );
     await h.drag([geo.closeCenter]);
     expect(h.doc.itemsOf(1), isEmpty);
     expect(h.selection.active, isFalse);
@@ -274,43 +316,58 @@ void main() {
     expect(h.doc.itemsOf(1).single.id, 1);
   });
 
-  testWidgets('the pencil button asks to edit the selected text',
-      (tester) async {
+  testWidgets('the pencil button asks to edit the selected text', (
+    tester,
+  ) async {
     final h = _Harness(tester);
     h.doc.addItem(
       1,
       const NoteItem(
-          id: 1, kind: ItemKind.text, x: 100, y: 100, w: 220, text: 'hello'),
+        id: 1,
+        kind: ItemKind.text,
+        x: 100,
+        y: 100,
+        w: 220,
+        text: 'hello',
+      ),
     );
     h.tools.setMode(ToolMode.text);
     await h.pump();
     await h.drag(const [Offset(150, 105)]);
-    final geo = SelectionGeometry(h.selection.bounds!, 1,
-        canEdit: true, canResize: true);
+    final geo = SelectionGeometry(
+      h.selection.bounds!,
+      1,
+      canEdit: true,
+      canResize: true,
+    );
     await h.drag([geo.editCenter]);
     expect(h.edited.single.id, 1);
   });
 
-  testWidgets('dragging a corner handle scales the text size',
-      (tester) async {
+  testWidgets('dragging a corner handle scales the text size', (tester) async {
     final h = _Harness(tester);
     h.doc.addItem(
       1,
       const NoteItem(
-          id: 1,
-          kind: ItemKind.text,
-          x: 100,
-          y: 100,
-          w: 120,
-          text: 'hello',
-          fontSize: 14),
+        id: 1,
+        kind: ItemKind.text,
+        x: 100,
+        y: 100,
+        w: 120,
+        text: 'hello',
+        fontSize: 14,
+      ),
     );
     h.tools.setMode(ToolMode.text);
     await h.pump();
     await h.drag(const [Offset(150, 105)]);
 
-    final geo = SelectionGeometry(h.selection.bounds!, 1,
-        canEdit: true, canResize: true);
+    final geo = SelectionGeometry(
+      h.selection.bounds!,
+      1,
+      canEdit: true,
+      canResize: true,
+    );
     final grab = geo.corners[2]; // bottom-right
     final anchor = geo.anchorFor(2); // top-left of the text
     await h.drag([grab, anchor + (grab - anchor) * 1.5]);
@@ -322,8 +379,12 @@ void main() {
     expect(it.y, closeTo(100, 0.01));
 
     // and back down again
-    final geo2 = SelectionGeometry(h.selection.bounds!, 1,
-        canEdit: true, canResize: true);
+    final geo2 = SelectionGeometry(
+      h.selection.bounds!,
+      1,
+      canEdit: true,
+      canResize: true,
+    );
     final grab2 = geo2.corners[2];
     await h.drag([grab2, anchor + (grab2 - anchor) / 1.5]);
     expect(h.doc.itemsOf(1).single.fontSize, closeTo(14, 0.2));
@@ -336,15 +397,26 @@ void main() {
     h.doc.addItem(
       1,
       const NoteItem(
-          id: 1, kind: ItemKind.tape, x: 50, y: 50, w: 100, h: 20, color: 0xFF333333),
+        id: 1,
+        kind: ItemKind.tape,
+        x: 50,
+        y: 50,
+        w: 100,
+        h: 20,
+        color: 0xFF333333,
+      ),
     );
     h.tools.setMode(ToolMode.lasso);
     await h.pump();
     await h.drag(const [Offset(100, 60)]); // tap picks the tape
     expect(h.selection.itemId, 1);
 
-    final geo = SelectionGeometry(h.selection.bounds!, 1,
-        canEdit: false, canResize: true);
+    final geo = SelectionGeometry(
+      h.selection.bounds!,
+      1,
+      canEdit: false,
+      canResize: true,
+    );
     await h.drag([geo.corners[2], const Offset(250, 120)]);
     final t = h.doc.itemsOf(1).single;
     expect(t.x, closeTo(50, 0.01));
@@ -352,8 +424,9 @@ void main() {
     expect(t.h, closeTo(70, 0.01));
   });
 
-  testWidgets('lasso tap picks a stroke; X deletes it; handle resizes it',
-      (tester) async {
+  testWidgets('lasso tap picks a stroke; X deletes it; handle resizes it', (
+    tester,
+  ) async {
     final h = _Harness(tester);
     h.tools
       ..setMode(ToolMode.pen)
@@ -368,27 +441,39 @@ void main() {
     expect(h.selection.ids.length, 1);
 
     // resize to 2x from the bottom-right handle
-    final geo = SelectionGeometry(h.selection.bounds!, 1,
-        canEdit: false, canResize: true);
+    final geo = SelectionGeometry(
+      h.selection.bounds!,
+      1,
+      canEdit: false,
+      canResize: true,
+    );
     final grab = geo.corners[2];
     final anchor = geo.anchorFor(2);
     await h.drag([grab, anchor + (grab - anchor) * 2]);
     final s = h.doc.strokesOf(1).single;
     expect(s.width, closeTo(width0 * 2, 0.01));
-    expect(s.points.first.x, closeTo(100 - (anchor.dx - 100) * 0 + (100 - anchor.dx), 0.5));
+    expect(
+      s.points.first.x,
+      closeTo(100 - (anchor.dx - 100) * 0 + (100 - anchor.dx), 0.5),
+    );
     expect(s.bounds.width, greaterThan(100));
     h.doc.undo();
     expect(h.doc.strokesOf(1).single.width, closeTo(width0, 0.001));
     h.doc.redo();
 
-    final geo2 = SelectionGeometry(h.selection.bounds!, 1,
-        canEdit: false, canResize: false);
+    final geo2 = SelectionGeometry(
+      h.selection.bounds!,
+      1,
+      canEdit: false,
+      canResize: false,
+    );
     await h.drag([geo2.closeCenter]);
     expect(h.doc.strokeCount, 0);
   });
 
-  testWidgets('a finger landing on another page cancels the stroke here',
-      (tester) async {
+  testWidgets('a finger landing on another page cancels the stroke here', (
+    tester,
+  ) async {
     final h = _Harness(tester);
     h.tools.setMode(ToolMode.pen);
     await h.pump();
@@ -426,8 +511,10 @@ void main() {
     expect(h.doc.strokeCount, 0);
     expect(h.tools.fingerScrolls, isTrue);
 
-    final pen = await tester.startGesture(o + const Offset(50, 50),
-        kind: PointerDeviceKind.stylus);
+    final pen = await tester.startGesture(
+      o + const Offset(50, 50),
+      kind: PointerDeviceKind.stylus,
+    );
     await pen.moveTo(o + const Offset(150, 50));
     await pen.up();
     await tester.pump();
@@ -442,30 +529,63 @@ void main() {
     expect(h.doc.strokeCount, 2);
   });
 
-  testWidgets('a pen button erases; notes and commented words survive',
-      (tester) async {
+  testWidgets('a pen button erases; notes and commented words survive', (
+    tester,
+  ) async {
     final h = _Harness(tester);
-    h.doc.addItem(1, const NoteItem(id: 1, kind: ItemKind.pin, x: 100, y: 100, text: 'n'));
-    h.doc.addItem(1, const NoteItem(id: 2, kind: ItemKind.tape, x: 100, y: 150, w: 100, h: 20));
-    h.doc.addItem(1, NoteItem.mark(
-        id: 3, lineRects: const [Rect.fromLTWH(100, 200, 60, 14)],
-        style: MarkStyle.comment, color: 0xFFEF6C00, comment: 'تعليق'));
-    h.doc.addItem(1, NoteItem.mark(
-        id: 4, lineRects: const [Rect.fromLTWH(100, 250, 60, 14)],
-        style: MarkStyle.highlight, color: 0xFFFFEB3B));
+    h.doc.addItem(
+      1,
+      const NoteItem(id: 1, kind: ItemKind.pin, x: 100, y: 100, text: 'n'),
+    );
+    h.doc.addItem(
+      1,
+      const NoteItem(id: 2, kind: ItemKind.tape, x: 100, y: 150, w: 100, h: 20),
+    );
+    h.doc.addItem(
+      1,
+      NoteItem.mark(
+        id: 3,
+        lineRects: const [Rect.fromLTWH(100, 200, 60, 14)],
+        style: MarkStyle.comment,
+        color: 0xFFEF6C00,
+        comment: 'تعليق',
+      ),
+    );
+    h.doc.addItem(
+      1,
+      NoteItem.mark(
+        id: 4,
+        lineRects: const [Rect.fromLTWH(100, 250, 60, 14)],
+        style: MarkStyle.highlight,
+        color: 0xFFFFEB3B,
+      ),
+    );
     h.tools.setMode(ToolMode.eraser);
     await h.pump();
     // Swipe the eraser across everything.
-    await h.drag(const [Offset(90, 90), Offset(90, 300), Offset(180, 300),
-        Offset(180, 90)]);
-    await h.drag(const [Offset(95, 105), Offset(210, 105), Offset(210, 160),
-        Offset(95, 160), Offset(95, 210), Offset(170, 210), Offset(170, 258), Offset(95, 258)]);
+    await h.drag(const [
+      Offset(90, 90),
+      Offset(90, 300),
+      Offset(180, 300),
+      Offset(180, 90),
+    ]);
+    await h.drag(const [
+      Offset(95, 105),
+      Offset(210, 105),
+      Offset(210, 160),
+      Offset(95, 160),
+      Offset(95, 210),
+      Offset(170, 210),
+      Offset(170, 258),
+      Offset(95, 258),
+    ]);
     final left = h.doc.itemsOf(1).map((e) => e.id).toSet();
     expect(left, {1, 3}); // pin and commented word stay; tape and plain mark go
   });
 
-  testWidgets('word tool: tap marks one word, drag marks a range of words',
-      (tester) async {
+  testWidgets('word tool: tap marks one word, drag marks a range of words', (
+    tester,
+  ) async {
     final h = _Harness(tester);
     h.words = const [
       // two words on line 1 (right to left), one on line 2
@@ -505,8 +625,9 @@ void main() {
     expect(h.doc.itemsOf(1).last.x, range.x);
   });
 
-  testWidgets('tape: drag adds a strip, tap toggles it, eraser removes it',
-      (tester) async {
+  testWidgets('tape: drag adds a strip, tap toggles it, eraser removes it', (
+    tester,
+  ) async {
     final h = _Harness(tester);
     h.tools.setMode(ToolMode.tape);
     await h.pump();
@@ -528,8 +649,9 @@ void main() {
     expect(h.doc.itemsOf(1), isEmpty);
   });
 
-  testWidgets('a second finger cancels the stroke the first one started',
-      (tester) async {
+  testWidgets('a second finger cancels the stroke the first one started', (
+    tester,
+  ) async {
     final h = _Harness(tester);
     h.tools.setMode(ToolMode.pen);
     await h.pump();
@@ -548,8 +670,9 @@ void main() {
     expect(h.doc.strokeCount, 1);
   });
 
-  testWidgets('lasso selects, moves and recolours what it surrounds',
-      (tester) async {
+  testWidgets('lasso selects, moves and recolours what it surrounds', (
+    tester,
+  ) async {
     final h = _Harness(tester);
     h.tools.setMode(ToolMode.pen);
     await h.pump();
@@ -558,7 +681,11 @@ void main() {
     h.tools.setMode(ToolMode.lasso);
     await tester.pump();
     await h.drag(const [
-      Offset(80, 80), Offset(170, 80), Offset(170, 130), Offset(80, 130), Offset(80, 82),
+      Offset(80, 80),
+      Offset(170, 80),
+      Offset(170, 130),
+      Offset(80, 130),
+      Offset(80, 82),
     ]);
     expect(h.selection.active, isTrue);
 
@@ -576,50 +703,80 @@ void main() {
   // children). Anything hit-testable in the overlay therefore steals the
   // touch from the viewer: in the hand tool the page could not be moved or
   // zoomed inside the page, only outside it.
-  testWidgets('hand tool: touches pass through the overlay to the viewer',
-      (tester) async {
+  testWidgets('hand tool: touches pass through the overlay to the viewer', (
+    tester,
+  ) async {
     final doc = InkDocument();
-    doc.addItem(1, const NoteItem(id: 1, kind: ItemKind.text, x: 10, y: 10, w: 200, text: 'نص'));
-    doc.add(1, Stroke(id: 2, tool: InkTool.pen, color: 0xFF000000, width: 3,
-        points: const [StrokePoint(50, 100, 0.5, 0), StrokePoint(300, 100, 0.5, 9)]));
+    doc.addItem(
+      1,
+      const NoteItem(
+        id: 1,
+        kind: ItemKind.text,
+        x: 10,
+        y: 10,
+        w: 200,
+        text: 'نص',
+      ),
+    );
+    doc.add(
+      1,
+      Stroke(
+        id: 2,
+        tool: InkTool.pen,
+        color: 0xFF000000,
+        width: 3,
+        points: const [
+          StrokePoint(50, 100, 0.5, 0),
+          StrokePoint(300, 100, 0.5, 9),
+        ],
+      ),
+    );
     final tools = ToolController();
     final selection = SelectionController(doc);
     var viewerDrags = 0;
-    await tester.pumpWidget(MaterialApp(
-      home: Align(
-        alignment: Alignment.topLeft,
-        child: SizedBox(
-          width: 400,
-          height: 400,
-          child: Stack(children: [
-            // stands in for pdfrx's InteractiveViewer
-            Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onPanUpdate: (_) => viewerDrags++,
-                child: const SizedBox.expand(),
-              ),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Align(
+          alignment: Alignment.topLeft,
+          child: SizedBox(
+            width: 400,
+            height: 400,
+            child: Stack(
+              children: [
+                // stands in for pdfrx's InteractiveViewer
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onPanUpdate: (_) => viewerDrags++,
+                    child: const SizedBox.expand(),
+                  ),
+                ),
+                Positioned.fill(
+                  child: PageInkOverlay(
+                    document: doc,
+                    tools: tools,
+                    selection: selection,
+                    pageNumber: 1,
+                    pageWidthPt: 400,
+                    pageWidthPx: 400,
+                    viewChanged: ChangeNotifier(),
+                    onCreateItem: (_, _, _) async {},
+                    onEditItem: (_, _) async {},
+                  ),
+                ),
+              ],
             ),
-            Positioned.fill(
-              child: PageInkOverlay(
-                document: doc,
-                tools: tools,
-                selection: selection,
-                pageNumber: 1,
-                pageWidthPt: 400,
-                pageWidthPx: 400,
-                viewChanged: ChangeNotifier(),
-                onCreateItem: (_, _, _) async {},
-                onEditItem: (_, _) async {},
-              ),
-            ),
-          ]),
+          ),
         ),
       ),
-    ));
+    );
 
     // On the text box, on the stroke, and on empty page: the viewer moves.
-    for (final at in const [Offset(30, 20), Offset(150, 100), Offset(200, 300)]) {
+    for (final at in const [
+      Offset(30, 20),
+      Offset(150, 100),
+      Offset(200, 300),
+    ]) {
       final before = viewerDrags;
       await tester.dragFrom(at, const Offset(0, -120));
       await tester.pump();
@@ -659,34 +816,46 @@ void main() {
     expect(h.doc.strokeCount, 1);
   });
 
-  testWidgets('ruler: a stroke along its edge is a straight line; the body moves it',
-      (tester) async {
-    final h = _Harness(tester);
-    h.tools.ruler.value =
-        const Ruler(page: 1, center: Offset(200, 200), length: 300, thickness: 50);
-    h.tools
-      ..setMode(ToolMode.pen)
-      ..setSnapShapes(false);
-    await h.pump();
+  testWidgets(
+    'ruler: a stroke along its edge is a straight line; the body moves it',
+    (tester) async {
+      final h = _Harness(tester);
+      h.tools.ruler.value = const Ruler(
+        page: 1,
+        center: Offset(200, 200),
+        length: 300,
+        thickness: 50,
+      );
+      h.tools
+        ..setMode(ToolMode.pen)
+        ..setSnapShapes(false);
+      await h.pump();
 
-    // bottom edge is y = 225; start close to it and wobble
-    await h.drag(const [Offset(100, 227), Offset(150, 240), Offset(220, 215), Offset(300, 223)]);
-    final s = h.doc.strokesOf(1).single;
-    expect(s.points.length, 2);
-    expect(s.points.first.y, closeTo(225, 1e-6));
-    expect(s.points.last.y, closeTo(225, 1e-6));
-    expect(s.points.last.x, closeTo(300, 1e-6));
+      // bottom edge is y = 225; start close to it and wobble
+      await h.drag(const [
+        Offset(100, 227),
+        Offset(150, 240),
+        Offset(220, 215),
+        Offset(300, 223),
+      ]);
+      final s = h.doc.strokesOf(1).single;
+      expect(s.points.length, 2);
+      expect(s.points.first.y, closeTo(225, 1e-6));
+      expect(s.points.last.y, closeTo(225, 1e-6));
+      expect(s.points.last.x, closeTo(300, 1e-6));
 
-    // dragging the middle of the ruler moves it and draws nothing
-    await h.drag(const [Offset(200, 200), Offset(230, 260)]);
-    final r = h.tools.ruler.value!;
-    expect(r.center.dx, closeTo(230, 1e-6));
-    expect(r.center.dy, closeTo(260, 1e-6));
-    expect(h.doc.strokeCount, 1);
-  });
+      // dragging the middle of the ruler moves it and draws nothing
+      await h.drag(const [Offset(200, 200), Offset(230, 260)]);
+      final r = h.tools.ruler.value!;
+      expect(r.center.dx, closeTo(230, 1e-6));
+      expect(r.center.dy, closeTo(260, 1e-6));
+      expect(h.doc.strokeCount, 1);
+    },
+  );
 
-  testWidgets('ruler: one finger holds it, a second finger anywhere turns it',
-      (tester) async {
+  testWidgets('ruler: one finger holds it, a second finger anywhere turns it', (
+    tester,
+  ) async {
     final h = _Harness(tester);
     h.tools.ruler.value = const Ruler(
       page: 1,
@@ -713,29 +882,35 @@ void main() {
     expect(h.doc.strokeCount, 0);
   });
 
-  testWidgets('ruler: a finger near an edge writes along it, in the middle moves it',
-      (tester) async {
-    final h = _Harness(tester);
-    h.tools.ruler.value = const Ruler(
-      page: 1,
-      center: Offset(200, 200),
-      length: 300,
-      thickness: 80,
-    );
-    h.tools
-      ..setMode(ToolMode.pen)
-      ..setSnapShapes(false);
-    await h.pump();
-    // Top edge is y = 160: start just above it.
-    await h.drag(const [Offset(100, 150), Offset(200, 140), Offset(280, 152)]);
-    final s = h.doc.strokesOf(1).single;
-    expect(s.points.first.y, closeTo(160, 1e-6));
-    expect(s.points.last.y, closeTo(160, 1e-6));
-    // 15 px inside the edge is already the ruler's body: it moves.
-    await h.drag(const [Offset(200, 175), Offset(200, 195)]);
-    expect(h.tools.ruler.value!.center.dy, closeTo(220, 1e-6));
-    expect(h.doc.strokeCount, 1);
-  });
+  testWidgets(
+    'ruler: a finger near an edge writes along it, in the middle moves it',
+    (tester) async {
+      final h = _Harness(tester);
+      h.tools.ruler.value = const Ruler(
+        page: 1,
+        center: Offset(200, 200),
+        length: 300,
+        thickness: 80,
+      );
+      h.tools
+        ..setMode(ToolMode.pen)
+        ..setSnapShapes(false);
+      await h.pump();
+      // Top edge is y = 160: start just above it.
+      await h.drag(const [
+        Offset(100, 150),
+        Offset(200, 140),
+        Offset(280, 152),
+      ]);
+      final s = h.doc.strokesOf(1).single;
+      expect(s.points.first.y, closeTo(160, 1e-6));
+      expect(s.points.last.y, closeTo(160, 1e-6));
+      // 15 px inside the edge is already the ruler's body: it moves.
+      await h.drag(const [Offset(200, 175), Offset(200, 195)]);
+      expect(h.tools.ruler.value!.center.dy, closeTo(220, 1e-6));
+      expect(h.doc.strokeCount, 1);
+    },
+  );
 
   testWidgets('ruler: with the hand tool it still moves', (tester) async {
     final h = _Harness(tester);
@@ -765,13 +940,21 @@ void main() {
     expect(onIt.path.any((e) => mine.contains(e.target)), isTrue);
   });
 
-  testWidgets('two fingers inside the selection frame scale it, not the page',
-      (tester) async {
+  testWidgets('two fingers inside the selection frame scale it, not the page', (
+    tester,
+  ) async {
     final h = _Harness(tester);
     h.doc.addItem(
       1,
       const NoteItem(
-          id: 1, kind: ItemKind.text, x: 100, y: 100, w: 120, text: 'hello world', fontSize: 14),
+        id: 1,
+        kind: ItemKind.text,
+        x: 100,
+        y: 100,
+        w: 120,
+        text: 'hello world',
+        fontSize: 14,
+      ),
     );
     h.tools.setMode(ToolMode.text);
     await h.pump();
@@ -795,10 +978,14 @@ void main() {
     expect(h.tools.selectionPinch, isFalse);
   });
 
-  testWidgets('eraser: a tap does not delete a tape strip, a drag does',
-      (tester) async {
+  testWidgets('eraser: a tap does not delete a tape strip, a drag does', (
+    tester,
+  ) async {
     final h = _Harness(tester);
-    h.doc.addItem(1, const NoteItem(id: 1, kind: ItemKind.tape, x: 100, y: 100, w: 150, h: 20));
+    h.doc.addItem(
+      1,
+      const NoteItem(id: 1, kind: ItemKind.tape, x: 100, y: 100, w: 150, h: 20),
+    );
     h.tools.setMode(ToolMode.eraser);
     await h.pump();
     await h.drag(const [Offset(150, 110)]);
@@ -813,28 +1000,30 @@ void main() {
       WordBox(5, 9, 'ثانية', Rect.fromLTWH(120, 100, 70, 14)),
     ];
 
-    testWidgets('a tap marks the word in the chosen way; a second tap removes it',
-        (tester) async {
-      final h = _Harness(tester);
-      h.words = words;
-      h.tools
-        ..setMode(ToolMode.highlighter)
-        ..setMarkStyle(MarkStyle.strike);
-      await h.pump();
-      await tester.pump();
+    testWidgets(
+      'a tap marks the word in the chosen way; a second tap removes it',
+      (tester) async {
+        final h = _Harness(tester);
+        h.words = words;
+        h.tools
+          ..setMode(ToolMode.highlighter)
+          ..setMarkStyle(MarkStyle.strike);
+        await h.pump();
+        await tester.pump();
 
-      await h.drag(const [Offset(230, 107)]);
-      var m = h.doc.itemsOf(1).single;
-      expect(m.style, MarkStyle.strike);
-      expect(m.quote, 'كلمة');
+        await h.drag(const [Offset(230, 107)]);
+        var m = h.doc.itemsOf(1).single;
+        expect(m.style, MarkStyle.strike);
+        expect(m.quote, 'كلمة');
 
-      await h.drag(const [Offset(230, 107)]); // the same word again
-      expect(h.doc.itemsOf(1), isEmpty);
+        await h.drag(const [Offset(230, 107)]); // the same word again
+        expect(h.doc.itemsOf(1), isEmpty);
 
-      // and it can be undone
-      h.doc.undo();
-      expect(h.doc.itemsOf(1), hasLength(1));
-    });
+        // and it can be undone
+        h.doc.undo();
+        expect(h.doc.itemsOf(1), hasLength(1));
+      },
+    );
 
     testWidgets('a tap on blank page draws nothing; underline over blank page '
         'leaves no stroke', (tester) async {
@@ -851,8 +1040,9 @@ void main() {
       expect(h.doc.strokeCount, 0);
     });
 
-    testWidgets('a drag over words marks all of them with the style',
-        (tester) async {
+    testWidgets('a drag over words marks all of them with the style', (
+      tester,
+    ) async {
       final h = _Harness(tester);
       h.words = words;
       h.tools
@@ -860,15 +1050,20 @@ void main() {
         ..setMarkStyle(MarkStyle.textColor);
       await h.pump();
       await tester.pump();
-      await h.drag(const [Offset(270, 107), Offset(150, 107), Offset(110, 107)]);
+      await h.drag(const [
+        Offset(270, 107),
+        Offset(150, 107),
+        Offset(110, 107),
+      ]);
       final m = h.doc.itemsOf(1).single;
       expect(m.style, MarkStyle.textColor);
       expect(m.quote, 'كلمة ثانية');
       expect(m.color, 0xFFD32F2F);
     });
 
-    testWidgets('comment style asks for the comment through the callback',
-        (tester) async {
+    testWidgets('comment style asks for the comment through the callback', (
+      tester,
+    ) async {
       final h = _Harness(tester);
       h.words = words;
       h.tools
@@ -881,19 +1076,28 @@ void main() {
       expect(h.doc.itemsOf(1).single.style, MarkStyle.comment);
     });
 
-    testWidgets('a tap on a mark that has a comment opens it instead of removing it',
-        (tester) async {
-      final h = _Harness(tester);
-      h.words = words;
-      h.doc.addItem(1, NoteItem.mark(
-          id: 9, lineRects: const [Rect.fromLTWH(200, 100, 60, 14)],
-          style: MarkStyle.comment, color: 0xFFEF6C00, comment: 'ملاحظة'));
-      h.tools.setMode(ToolMode.highlighter);
-      await h.pump();
-      await tester.pump();
-      await h.drag(const [Offset(230, 107)]);
-      expect(h.doc.itemsOf(1), hasLength(1));
-      expect(h.edited.single.id, 9);
-    });
+    testWidgets(
+      'a tap on a mark that has a comment opens it instead of removing it',
+      (tester) async {
+        final h = _Harness(tester);
+        h.words = words;
+        h.doc.addItem(
+          1,
+          NoteItem.mark(
+            id: 9,
+            lineRects: const [Rect.fromLTWH(200, 100, 60, 14)],
+            style: MarkStyle.comment,
+            color: 0xFFEF6C00,
+            comment: 'ملاحظة',
+          ),
+        );
+        h.tools.setMode(ToolMode.highlighter);
+        await h.pump();
+        await tester.pump();
+        await h.drag(const [Offset(230, 107)]);
+        expect(h.doc.itemsOf(1), hasLength(1));
+        expect(h.edited.single.id, 9);
+      },
+    );
   });
 }

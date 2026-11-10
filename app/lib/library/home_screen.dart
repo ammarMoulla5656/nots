@@ -16,10 +16,7 @@ import '../catalog/catalog_store.dart';
 import '../catalog/download_manager.dart';
 import '../catalog/own_covers.dart';
 import '../ink/ink_store.dart';
-import '../export/share_file.dart' show isTextNotePackage;
 import '../notes/note_pdf.dart';
-import '../notes/text_note.dart';
-import '../notes/text_note_screen.dart';
 import '../notes/paper_templates.dart';
 import '../notes/paper.dart';
 import '../reader/reader_prefs.dart';
@@ -29,9 +26,10 @@ import '../sync/drive_client.dart';
 import '../sync/google_account.dart';
 import '../sync/sync_engine.dart';
 import '../sync/sync_sheet.dart';
+import '../stats/usage.dart';
+import '../stats/usage_upload.dart';
 import '../ui/app_settings.dart';
 import '../ui/brand_widgets.dart';
-import '../ui/speed_log.dart';
 import '../ui/theme.dart';
 import 'book_widgets.dart';
 import 'books_tab.dart';
@@ -47,7 +45,6 @@ import 'package_import.dart';
 const historyCount = 10;
 
 /// Names of the tabs in the speed log.
-const _screens = ['my-books', 'catalog', 'notes'];
 
 /// The main screen: three tabs (my books, the books to download, my notes),
 /// a floating bar to move between them and the star that starts a new paper.
@@ -67,6 +64,9 @@ class _HomeScreenState extends State<HomeScreen> {
   late final AppLifecycleListener _lifecycle;
   final _progress = ReadProgress();
   int _tab = 0;
+
+  /// A book is open in the reader (the statistics wait meanwhile).
+  bool _reading = false;
   bool _busy = false;
 
   /// Tabs shown at least once. The others are not built: at start only
@@ -78,8 +78,10 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _lifecycle = AppLifecycleListener(
       onHide: () {
+        Usage.instance.foreground(false);
         if (_library != null) _sync.requestSoon();
       },
+      onShow: () => Usage.instance.foreground(true),
       // What another device did since shows up when coming back.
       onResume: () {
         if (_library != null) _sync.requestSoon();
@@ -174,9 +176,6 @@ class _HomeScreenState extends State<HomeScreen> {
     // The reader asks here which books are in Masdar, and at which volume.
     MasdarRef.resolve = _masdarOf;
     unawaited(_listenForLinks());
-    SpeedLog.instance
-      ..screen = _screens[_tab]
-      ..note('library ready: ${lib.books.length} items');
     // A book with no cover gets a picture of its first page, now and
     // whenever one arrives (added, or brought from the account).
     // Not on every change of the library (a sync makes many): once it has
@@ -193,10 +192,54 @@ class _HomeScreenState extends State<HomeScreen> {
       const Duration(seconds: 4),
       () => unawaited(OwnCovers.instance.fillMissing(lib)),
     );
+    unawaited(_dropTextNotes(lib));
+    unawaited(_startUsage(lib));
     unawaited(PaperTemplates.instance.load());
     unawaited(catalog.refresh());
     // Not while the first screen is being shown and scrolled.
     sync.requestSoon(after: const Duration(seconds: 8));
+  }
+
+  /// The statistics: recorded on this device, sent now and then over
+  /// Wi-Fi in a quiet moment.
+  Future<void> _startUsage(LibraryStore lib) async {
+    await Usage.instance.load();
+    await FeedbackOutbox.instance.load();
+    final up = UsageUploader(
+      library: lib,
+      account: () =>
+          (email: _account.email, name: _account.name, linked: _account.linked),
+      reading: () => _reading,
+    );
+    Usage.instance.onMinute = () => unawaited(up.tick());
+  }
+
+  /// A test version had typed text notes (paper code `text|…`); they were
+  /// taken out of the app. Any made then leave this device and the account.
+  Future<void> _dropTextNotes(LibraryStore lib) async {
+    final gone = [
+      for (final b in lib.books)
+        if (b.isNote && b.author.startsWith('text|')) b,
+    ];
+    for (final b in gone) {
+      await lib.remove(b, deleteWriting: true);
+      Collections.instance.forget(b.id);
+      try {
+        await _sync.forget(b.id);
+      } on Exception {
+        // Without a connection: the next sync of the account removes it.
+      }
+    }
+    // The speed test's generated library (files named speed-test-…, kept
+    // on this device only): its panel left the app, so does the library.
+    for (final b in [...lib.books.where((b) => b.isSpeedTest)]) {
+      await lib.remove(b, deleteWriting: true);
+      Collections.instance.forget(b.id);
+    }
+    final docs = Directory(
+      p.join((await getApplicationSupportDirectory()).path, 'docs'),
+    );
+    if (await docs.exists()) await docs.delete(recursive: true);
   }
 
   /// Older versions kept a list of opened file paths and keyed writing by
@@ -339,18 +382,15 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     await lib.touch(b);
     if (!mounted) return;
-    SpeedLog.instance.note('open: ${b.isNote ? 'note' : 'book'} ${b.id}');
     _sync.openBook = b.id;
+    _reading = true;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        // A text note has its own screen (typing); the rest are read.
-        builder: (_) => isTextNote(b)
-            ? TextNoteScreen(library: lib, book: b)
-            : ReaderScreen(library: lib, book: b, openAtPage: page),
+        builder: (_) => ReaderScreen(library: lib, book: b, openAtPage: page),
       ),
     );
     _sync.openBook = null;
-    SpeedLog.instance.screen = _screens[_tab];
+    _reading = false;
     // Leaving a book or a note saves everything to Drive at once.
     if (_library != null) unawaited(_sync.syncNow());
     unawaited(_progress.load([b.id]));
@@ -395,35 +435,14 @@ class _HomeScreenState extends State<HomeScreen> {
       await _makeNote(r.code);
     } else if (r == NewPaperSheet.addBook) {
       await _add();
-    } else if (r == NewPaperSheet.textNote) {
-      await _makeTextNote();
-    }
-  }
-
-  Future<void> _makeTextNote() async {
-    setState(() => _busy = true);
-    try {
-      final entry = await createTextNote(_library!);
-      _sync.requestSoon();
-      if (!mounted) return;
-      setState(() => _tab = 2);
-      await _open(entry);
-    } catch (e) {
-      _say('تعذّر إنشاء الملف: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
     }
   }
 
   Future<void> _makeNote(String paper) async {
     setState(() => _busy = true);
-    final log = SpeedLog.instance;
+    Usage.instance.feature('new_note');
     try {
-      log.note('new note: start');
-      final entry = await log.span(
-        'new note: make PDF + add',
-        () => createNoteOn(_library!, paper),
-      );
+      final entry = await createNoteOn(_library!, paper);
       // It opens at once; the next sync takes it to Drive meanwhile (it
       // used to be sent first, which took seconds before the page showed).
       _sync.requestSoon();
@@ -447,6 +466,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final path = files.isEmpty ? null : files.first.path;
     if (path == null || !mounted) return;
     final ext = p.extension(files.first.name).toLowerCase();
+    Usage.instance.feature('add_file');
     if (ext != '.pdf' && ext != '.nots') {
       _say('اختر ملف PDF أو ملف نوتس (.nots).');
       return;
@@ -455,14 +475,11 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final BookEntry entry;
       if (ext == '.nots') {
-        final bytes = await File(path).readAsBytes();
-        entry = isTextNotePackage(bytes)
-            ? await importTextNote(_library!, bytes)
-            : await importPackage(
-                _library!,
-                bytes,
-                confirmReplace: _confirmReplace,
-              );
+        entry = await importPackage(
+          _library!,
+          await File(path).readAsBytes(),
+          confirmReplace: _confirmReplace,
+        );
       } else {
         entry = await _library!.importPdf(
           path,
@@ -881,10 +898,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   HomeBar(
                     tab: _tab,
                     busy: _busy,
-                    onTab: (i) {
-                      SpeedLog.instance.screen = _screens[i];
-                      setState(() => _tab = i);
-                    },
+                    onTab: (i) => setState(() => _tab = i),
                     onNew: _showNew,
                   ),
                 ],

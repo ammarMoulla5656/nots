@@ -4,9 +4,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nots/ink/ink_document.dart';
 import 'package:nots/ink/stroke.dart';
 
-Stroke _stroke(int id, List<StrokePoint> pts,
-        {InkTool tool = InkTool.pen, int color = 0xFFD32F2F, double width = 1.6}) =>
-    Stroke(id: id, tool: tool, color: color, width: width, points: pts);
+Stroke _stroke(
+  int id,
+  List<StrokePoint> pts, {
+  InkTool tool = InkTool.pen,
+  int color = 0xFFD32F2F,
+  double width = 1.6,
+}) => Stroke(id: id, tool: tool, color: color, width: width, points: pts);
 
 void main() {
   group('StrokeCodec', () {
@@ -22,8 +26,13 @@ void main() {
           ]),
         ],
         7: [
-          _stroke(2, const [StrokePoint(5, 5, 0.5, 0)],
-              tool: InkTool.highlighter, color: 0xFFFFEB3B, width: 14),
+          _stroke(
+            2,
+            const [StrokePoint(5, 5, 0.5, 0)],
+            tool: InkTool.highlighter,
+            color: 0xFFFFEB3B,
+            width: 14,
+          ),
         ],
       };
       final bytes = StrokeCodec.encodeDocument(original, 3);
@@ -56,23 +65,34 @@ void main() {
         for (var i = 0; i < 1000; i++)
           StrokePoint(100 + i * 0.37, 200 + (i % 17) * 0.21, 0.5, i * 8),
       ];
-      final bytes = StrokeCodec.encodeDocument({1: [_stroke(1, pts)]}, 2);
+      final bytes = StrokeCodec.encodeDocument({
+        1: [_stroke(1, pts)],
+      }, 2);
       expect(bytes.length / 1000, lessThan(7));
     });
 
     test('rejects data that is not a NOTS file', () {
-      expect(() => StrokeCodec.decodeDocument(Uint8List.fromList([1, 2, 3, 4, 5])),
-          throwsFormatException);
+      expect(
+        () => StrokeCodec.decodeDocument(Uint8List.fromList([1, 2, 3, 4, 5])),
+        throwsFormatException,
+      );
     });
 
     test('rejects truncated data', () {
       final bytes = StrokeCodec.encodeDocument({
-        1: [_stroke(1, const [StrokePoint(1, 1, 0.5, 0), StrokePoint(2, 2, 0.5, 5)])]
+        1: [
+          _stroke(1, const [
+            StrokePoint(1, 1, 0.5, 0),
+            StrokePoint(2, 2, 0.5, 5),
+          ]),
+        ],
       }, 2);
       expect(
-          () => StrokeCodec.decodeDocument(
-              Uint8List.sublistView(bytes, 0, bytes.length - 3)),
-          throwsFormatException);
+        () => StrokeCodec.decodeDocument(
+          Uint8List.sublistView(bytes, 0, bytes.length - 3),
+        ),
+        throwsFormatException,
+      );
     });
   });
 
@@ -92,10 +112,20 @@ void main() {
   group('InkDocument', () {
     InkDocument docWithTwoStrokes() {
       final d = InkDocument();
-      d.add(1, _stroke(d.takeStrokeId(),
-          const [StrokePoint(0, 0, 0.5, 0), StrokePoint(10, 0, 0.5, 1)]));
-      d.add(1, _stroke(d.takeStrokeId(),
-          const [StrokePoint(0, 20, 0.5, 0), StrokePoint(10, 20, 0.5, 1)]));
+      d.add(
+        1,
+        _stroke(d.takeStrokeId(), const [
+          StrokePoint(0, 0, 0.5, 0),
+          StrokePoint(10, 0, 0.5, 1),
+        ]),
+      );
+      d.add(
+        1,
+        _stroke(d.takeStrokeId(), const [
+          StrokePoint(0, 20, 0.5, 0),
+          StrokePoint(10, 20, 0.5, 1),
+        ]),
+      );
       return d;
     }
 

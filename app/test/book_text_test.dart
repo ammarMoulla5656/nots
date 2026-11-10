@@ -8,7 +8,8 @@ import 'package:nots/book/book_text.dart';
 
 /// A minimal .docx with the given document.xml body and heading styles.
 Uint8List _docx(String body) {
-  const styles = '<w:styles>'
+  const styles =
+      '<w:styles>'
       '<w:style w:type="paragraph" w:styleId="1"><w:name w:val="heading 1"/></w:style>'
       '<w:style w:type="paragraph" w:styleId="Sub"><w:name w:val="Heading 2"/></w:style>'
       '</w:styles>';
@@ -46,34 +47,43 @@ void main() {
 
   group('parseDocx', () {
     test('pages from page breaks, headings from heading styles', () {
-      final book = parseDocx(_docx([
-        _p('غلاف الكتاب'),
-        _pageBreak,
-        _p('أحكام الطهارة', style: '1'),
-        _p('الوضوء', style: 'Sub'),
-        _p('يجب الوضوء للصلاة &amp; غيرها'),
-        _pageBreak,
-        _p('شروط الوضوء', style: 'Heading2'),
-        _p('النص الثالث'),
-      ].join()));
+      final book = parseDocx(
+        _docx(
+          [
+            _p('غلاف الكتاب'),
+            _pageBreak,
+            _p('أحكام الطهارة', style: '1'),
+            _p('الوضوء', style: 'Sub'),
+            _p('يجب الوضوء للصلاة &amp; غيرها'),
+            _pageBreak,
+            _p('شروط الوضوء', style: 'Heading2'),
+            _p('النص الثالث'),
+          ].join(),
+        ),
+      );
 
       expect(book.pageCount, 3);
       expect(book.pages[0], 'غلاف الكتاب');
       expect(book.pages[1], contains('يجب الوضوء للصلاة & غيرها'));
-      expect(
-        book.headings.map((h) => (h.title, h.level, h.page)).toList(),
-        [('أحكام الطهارة', 1, 2), ('الوضوء', 2, 2), ('شروط الوضوء', 2, 3)],
-      );
+      expect(book.headings.map((h) => (h.title, h.level, h.page)).toList(), [
+        ('أحكام الطهارة', 1, 2),
+        ('الوضوء', 2, 2),
+        ('شروط الوضوء', 2, 3),
+      ]);
       expect(book.sectionOf(3)?.title, 'شروط الوضوء');
       expect(book.sectionOf(1), isNull);
     });
 
     test('search finds every match with page and snippet', () {
-      final book = parseDocx(_docx([
-        _p('الصَّلاة واجبة'),
-        _pageBreak,
-        _p('لا تصح الصلاة بلا طهارة، والصلاه عمود الدين'),
-      ].join()));
+      final book = parseDocx(
+        _docx(
+          [
+            _p('الصَّلاة واجبة'),
+            _pageBreak,
+            _p('لا تصح الصلاة بلا طهارة، والصلاه عمود الدين'),
+          ].join(),
+        ),
+      );
       final hits = book.search('الصلاة');
       expect(hits.map((h) => h.page), [1, 2, 2]);
       final s = book.snippet(hits[1]);
@@ -82,8 +92,10 @@ void main() {
     });
 
     test('survives a JSON round trip', () {
-      final book = parseDocx(_docx([_p('أ', style: '1'), _pageBreak, _p('ب')].join()),
-          source: 'x.docx');
+      final book = parseDocx(
+        _docx([_p('أ', style: '1'), _pageBreak, _p('ب')].join()),
+        source: 'x.docx',
+      );
       final back = BookText.fromJson(book.toJson());
       expect(back.pages, book.pages);
       expect(back.headings.single.title, 'أ');
@@ -92,14 +104,17 @@ void main() {
 
     test('rejects a file that is not Word', () {
       final a = Archive()..add(ArchiveFile.bytes('x.txt', [1, 2, 3]));
-      expect(() => parseDocx(Uint8List.fromList(ZipEncoder().encode(a))),
-          throwsFormatException);
+      expect(
+        () => parseDocx(Uint8List.fromList(ZipEncoder().encode(a))),
+        throwsFormatException,
+      );
     });
   });
 
   // The sample files the user provided: المسائل المنتخبة (docx + PDF).
   final sample = File(
-      'docs/المسائل المنتخبة - (الطبعة الجديدة المنقحة) - مطابق للأصل.docx');
+    'docs/المسائل المنتخبة - (الطبعة الجديدة المنقحة) - مطابق للأصل.docx',
+  );
   group('sample book (المسائل المنتخبة)', () {
     late BookText book;
     setUpAll(() {
@@ -123,7 +138,9 @@ void main() {
       expect(hits.length, greaterThan(50));
       expect(hits.any((h) => h.page == 35), isTrue);
       // ignore: avoid_print
-      print('search "الوضوء": ${hits.length} hits in ${sw.elapsedMicroseconds} µs');
+      print(
+        'search "الوضوء": ${hits.length} hits in ${sw.elapsedMicroseconds} µs',
+      );
       expect(sw.elapsedMilliseconds, lessThan(200));
     });
   }, skip: sample.existsSync() ? false : 'sample docx not present');

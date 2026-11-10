@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../catalog/cover_image.dart';
 import '../notes/paper.dart';
 import '../notes/paper_templates.dart';
-import '../notes/text_note.dart';
 import '../sync/google_account.dart';
 import '../ui/brand_widgets.dart';
 import '../ui/theme.dart';
@@ -179,9 +178,7 @@ class NoteGridItem extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-            child: isTextNote(note)
-                ? _TextPreview(note: note)
-                : Paper.isTemplate(note.author)
+            child: Paper.isTemplate(note.author)
                 ? LayoutBuilder(
                     builder: (context, c) => ClipRRect(
                       borderRadius: BorderRadius.circular(12),
@@ -212,43 +209,6 @@ class NoteGridItem extends StatelessWidget {
             style: TextStyle(fontSize: 12, color: Brand.muted),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// A text note's card: the first lines of its text on white paper.
-class _TextPreview extends StatelessWidget {
-  const _TextPreview({required this.note});
-
-  final BookEntry note;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Brand.line),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: FutureBuilder<String>(
-          future: TextNoteStore.preview(note.id),
-          builder: (context, snap) => Text(
-            snap.data == null || snap.data!.isEmpty ? 'ملف نصي' : snap.data!,
-            maxLines: 9,
-            overflow: TextOverflow.fade,
-            style: TextStyle(
-              fontFamily: 'Muna',
-              fontSize: 11.5,
-              height: 1.7,
-              color: snap.data == null || snap.data!.isEmpty
-                  ? Brand.muted
-                  : Colors.black87,
-            ),
-          ),
-        ),
       ),
     );
   }
