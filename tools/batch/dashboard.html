@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>مراقبة طبخ الكتب</title>
+<style>
+:root{--bg:#f4f6f9;--card:#fff;--ink:#1d2733;--mute:#6b7785;--line:#e3e8ee;--acc:#1f6feb;--ok:#1a7f37;--warn:#bf8700;--bad:#cf222e;--bar:#e8edf3}
+@media (prefers-color-scheme:dark){:root{--bg:#0f141a;--card:#171e26;--ink:#e6edf3;--mute:#8b98a5;--line:#26313d;--acc:#4493f8;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--bar:#232d38}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 "Segoe UI",Tahoma,sans-serif}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:14px 18px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:2}
+h1{font-size:18px;margin:0}
+.badge{padding:3px 10px;border-radius:12px;font-weight:600;font-size:13px;background:var(--bar)}
+.badge.hot{background:#cf222e22;color:var(--bad)}
+.badge.run{background:#1a7f3722;color:var(--ok)}.badge.wait{background:#bf870022;color:var(--warn)}.badge.done{background:#1f6feb22;color:var(--acc)}
+.sp{flex:1}
+button,a.btn{border:1px solid var(--line);background:var(--card);color:var(--ink);padding:7px 14px;border-radius:8px;font:inherit;cursor:pointer;text-decoration:none}
+button.primary{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+button:disabled{opacity:.45;cursor:default}
+main{padding:16px;display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));max-width:1500px;margin:auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+.card h2{font-size:14px;margin:0 0 10px;color:var(--mute);font-weight:600}
+.wide{grid-column:1/-1}
+.big{font-size:30px;font-weight:700}
+.row{display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-bottom:1px dashed var(--line)}
+.row:last-child{border-bottom:0}.row span:first-child{color:var(--mute)}
+.bar{height:10px;background:var(--bar);border-radius:6px;overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--acc);border-radius:6px;transition:width .6s}
+.bar.thick{height:16px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.kpi{background:var(--bg);border-radius:10px;padding:10px}
+.kpi b{display:block;font-size:20px}.kpi small{color:var(--mute)}
+.cores{display:grid;grid-template-columns:repeat(10,1fr);gap:3px;margin-top:8px}
+.core{height:34px;background:var(--bar);border-radius:3px;position:relative;overflow:hidden}
+.core>i{position:absolute;bottom:0;left:0;right:0;background:var(--acc)}
+.job{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:10px}
+.job .t{font-weight:600}.job small{color:var(--mute)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:5px 6px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th{color:var(--mute);font-weight:600}
+td.name{white-space:normal}
+.good{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+canvas{width:100%;height:120px;display:block}
+.legend{display:flex;gap:12px;flex-wrap:wrap;color:var(--mute);font-size:12px;margin-top:4px}
+.legend i{display:inline-block;width:10px;height:3px;vertical-align:middle;margin-left:4px}
+.ev{font-size:13px;padding:3px 0;border-bottom:1px dashed var(--line)}.ev small{color:var(--mute);margin-left:6px}
+#off{display:none;background:var(--bad);color:#fff;padding:6px 18px;text-align:center}
+.scroll{max-height:420px;overflow:auto}
+.dlbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.dlbar input{flex:1;min-width:180px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+td button{padding:2px 10px}
+input[type=checkbox]{width:18px;height:18px}
+</style>
+</head>
+<body>
+<div id="off">لا اتصال بالخادم الآن، وما زال يعمل وحده. ستعود البيانات حين يعود الاتصال.</div>
+<header>
+  <h1>طبخ كتب مساحة حرة</h1>
+  <span id="state" class="badge">…</span>
+  <span id="hCpu" class="badge" title="حرارة المعالج (الأسخن بين أنويته)">المعالج –</span>
+  <span id="hGpu" class="badge" title="حرارة كرت الشاشة">الكرت –</span>
+  <small id="upd" style="color:var(--mute)"></small>
+  <span class="sp"></span>
+  <button id="bStart" class="primary" onclick="act('start')">▶ ابدأ العمل</button>
+  <button id="bPause" onclick="act('pause')">⏸ إيقاف مؤقت</button>
+  <button id="bResume" onclick="act('resume')">⏵ استئناف</button>
+  <button id="bRetry" onclick="act('retry_failed')">↻ إعادة الفاشلة</button>
+  <button id="bRedo" style="display:none" onclick="act('redo_bad')" title="يعيد طبخ المجلدات التي خرجت بموضعة أقل من 90%، والفاشلة">↻ إعادة الضعيفة والفاشلة</button>
+  <a class="btn" id="bExport" href="/api/export.xlsx">⬇ تصدير Excel</a>
+</header>
+<main>
+  <section class="card wide">
+    <h2>الحرارة الآن</h2>
+    <div class="kpis">
+      <div class="kpi"><small>حرارة المعالج (الأسخن)</small><b class="big" id="tCpu">–</b><small id="tCpuSub"></small></div>
+      <div class="kpi"><small>حرارة كرت الشاشة</small><b class="big" id="tGpu">–</b><small id="tGpuSub"></small></div>
+    </div>
+  </section>
+
+  <section class="card wide">
+    <h2>التقدم</h2>
+    <div class="kpis">
+      <div class="kpi"><small>المجلدات المنجزة</small><b id="kDone">–</b></div>
+      <div class="kpi"><small>الصفحات</small><b id="kPages">–</b></div>
+      <div class="kpi"><small>الوقت المتبقي المتوقع</small><b id="kEta">–</b></div>
+      <div class="kpi"><small>الانتهاء المتوقع</small><b id="kFinish">–</b></div>
+      <div class="kpi"><small>مدة العمل</small><b id="kActive">–</b></div>
+      <div class="kpi"><small>السرعة</small><b id="kRate">–</b></div>
+      <div class="kpi"><small>متوسط المجلد</small><b id="kAvg">–</b></div>
+      <div class="kpi"><small>متوسط موضعة الكلمات</small><b id="kPlaced">–</b></div>
+      <div class="kpi"><small>فشل</small><b id="kFailed">–</b></div>
+      <div class="kpi"><small>وصل إلى الخادم</small><b id="kReady">–</b></div>
+      <div class="kpi"><small>حجم الملفات الناتجة</small><b id="kSize">–</b><small id="kSizeSub"></small></div>
+    </div>
+    <div style="margin-top:12px" class="bar thick"><i id="pAll" style="width:0"></i></div>
+    <div class="legend"><span id="pText"></span><span id="srcText"></span></div>
+  </section>
+
+  <section class="card">
+    <h2>الكتب الجارية الآن</h2>
+    <div id="jobs"><small>لا شيء الآن</small></div>
+  </section>
+
+  <section class="card">
+    <h2>المعالج والذاكرة</h2>
+    <div class="row"><span>الاستخدام</span><b id="cpu">–</b></div>
+    <div class="bar"><i id="cpuBar" style="width:0"></i></div>
+    <div class="cores" id="cores"></div>
+    <div class="row"><span>التردد</span><span id="freq">–</span></div>
+    <div class="row"><span>الذاكرة</span><span id="ram">–</span></div>
+    <div class="row"><span>القرص (مساحة حرة)</span><span id="disk">–</span></div>
+    <div class="row"><span>عمليات القراءة الجارية</span><span id="procs">–</span></div>
+    <div id="cpuSensors"></div>
+  </section>
+
+  <section class="card">
+    <h2>كرت الشاشة</h2>
+    <div class="row"><span>الكرت</span><span id="gName">–</span></div>
+    <div class="row"><span>الاستخدام</span><b id="gUtil">–</b></div>
+    <div class="bar"><i id="gBar" style="width:0"></i></div>
+    <div class="row"><span>الحرارة</span><b id="gTemp">–</b></div>
+    <div class="row"><span>سحب الطاقة</span><b id="gPow">–</b></div>
+    <div class="row"><span>ذاكرة الكرت</span><span id="gMem">–</span></div>
+    <div class="row"><span>المروحة</span><span id="gFan">–</span></div>
+    <div class="row"><span>التردد (معالج / ذاكرة)</span><span id="gClk">–</span></div>
+    <div class="row"><span>حالة الطاقة</span><span id="gPs">–</span></div>
+  </section>
+
+  <section class="card">
+    <h2>الطاقة الكهربائية (تقدير)</h2>
+    <div class="row"><span>ما يسحبه الجهاز من الحائط</span><b id="wWall">–</b></div>
+    <div class="row"><span>التيار عند <span id="wVolts">220</span> فولت</span><b id="wAmp">–</b></div>
+    <div class="bar"><i id="wBar" style="width:0"></i></div>
+    <div class="row"><span>المعالج</span><span id="wCpu">–</span></div>
+    <div class="row"><span>ذاكرة المعالج</span><span id="wMem">–</span></div>
+    <div class="row"><span>كرت الشاشة</span><span id="wGpu">–</span></div>
+    <div class="row"><span>اللوحة والأقراص والمراوح (مُقدَّر)</span><span id="wBase">–</span></div>
+    <div class="row"><span>مجموع الأحمال قبل المزوّد</span><span id="wDc">–</span></div>
+    <div id="wLog" style="display:none">
+      <h2 style="margin:12px 0 6px">منذ <span id="wSince">–</span></h2>
+      <div class="row"><span>متوسط ما سحبه</span><b id="wAvg">–</b></div>
+      <div class="row"><span>أعلى ما سحبه</span><span id="wPeak">–</span></div>
+      <div class="row"><span>الطاقة المستهلكة</span><b id="wKwh">–</b></div>
+      <div class="row"><span>الطاقة لكل كتاب</span><span id="wBook">–</span></div>
+    </div>
+    <small id="wNote" style="color:var(--mute);display:block;margin-top:8px"></small>
+  </section>
+
+  <section class="card wide">
+    <h2>آخر 30 دقيقة</h2>
+    <canvas id="chart" height="120"></canvas>
+    <div class="legend">
+      <span><i style="background:#1f6feb"></i>المعالج %</span>
+      <span><i style="background:#1a7f37"></i>الكرت %</span>
+      <span><i style="background:#cf222e"></i>حرارة الكرت °م</span>
+      <span><i style="background:#bf8700"></i>طاقة الكرت (واط)</span>
+      <span><i style="background:#8250df"></i>الذاكرة %</span>
+    </div>
+  </section>
+
+  <section class="card wide">
+    <h2>آخر ما انتهى</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>#</th><th>الكتاب</th><th>الجزء</th><th>الصفحات</th><th>الوقت</th><th>الموضعة</th><th>المصدر</th><th>الإشارات</th><th>مضاف</th></tr></thead>
+      <tbody id="recent"></tbody>
+    </table></div>
+  </section>
+
+  <section class="card wide">
+    <h2>الكتب الجاهزة للتنزيل <span id="dlCount"></span></h2>
+    <div class="dlbar">
+      <input id="dlFilter" type="search" placeholder="ابحث باسم الكتاب أو رقمه…" oninput="renderDone()">
+      <button onclick="selectShown()">تحديد الظاهر</button>
+      <button onclick="clearSel()">إلغاء التحديد</button>
+      <button id="dlGo" class="primary" onclick="downloadSelected()" disabled>⬇ تنزيل المحدد (0)</button>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th></th><th>#</th><th>الكتاب</th><th>الجزء</th><th>الصفحات</th><th>الحجم</th><th>الموضعة</th><th>الحالة</th><th></th></tr></thead>
+      <tbody id="dlRows"><tr><td colspan="9"><small>لا كتب منتهية بعد</small></td></tr></tbody>
+    </table></div>
+    <div class="legend"><span id="dlNote"></span><span id="dlHow"></span></div>
+  </section>
+
+  <section class="card">
+    <h2>الأحداث</h2>
+    <div id="events" class="scroll"></div>
+  </section>
+
+  <section class="card">
+    <h2>ما فشل</h2>
+    <div id="failed" class="scroll"><small>لا شيء</small></div>
+  </section>
+</main>
+<script>
+// On the Xeon the page talks to the server itself; on the public site
+// (nots/monitor/index.php) it reads what the Xeon sent there.
+const API = window.NOTS_API || {status: '/api/status', cmd: a => '/api/' + a, exportUrl: '/api/export.xlsx',
+                                 done: '/api/done', file: s => '/api/download/' + s};
+const $ = id => document.getElementById(id);
+const fmtT = s => { if (s == null) return '–'; s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return h ? `${h} س ${m} د` : m ? `${m} د ${s % 60} ث` : `${s} ث`; };
+const n0 = x => x == null ? '–' : Number(x).toLocaleString('ar-EG');
+const pct = x => x == null ? '–' : (100 * x).toFixed(1) + '%';
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function act(a) {
+  if (a === 'retry_failed' && !confirm('إعادة كل الكتب التي فشلت؟')) return;
+  if (a === 'redo_bad' && !confirm('إعادة طبخ كل المجلدات التي خرجت بموضعة أقل من 90%، والفاشلة؟ تُستبدل ملفاتها القديمة حين تنتهي.')) return;
+  const r = await fetch(API.cmd(a), {method: 'POST'});
+  if (window.NOTS_API) alert(r.ok ? 'أُرسل الأمر، وينفّذه الخادم في تحديثه القادم (خلال 30 ثانية).' : 'لم يُرسل الأمر');
+  tick();
+}
+function draw(h) {
+  const c = $('chart'), w = c.clientWidth, H = 120, dpr = devicePixelRatio || 1;
+  c.width = w * dpr; c.height = H * dpr; const g = c.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, w, H);
+  g.strokeStyle = getComputedStyle(document.body).getPropertyValue('--line'); g.lineWidth = 1;
+  for (const y of [0, .25, .5, .75, 1]) { g.beginPath(); g.moveTo(0, H * y); g.lineTo(w, H * y); g.stroke(); }
+  if (h.length < 2) return;
+  const t0 = h[0][0], t1 = h[h.length - 1][0], span = Math.max(t1 - t0, 1);
+  const series = [[1, '#1f6feb', 100], [2, '#1a7f37', 100], [3, '#cf222e', 100], [4, '#bf8700', 130], [5, '#8250df', 100]];
+  for (const [i, col, max] of series) {
+    g.strokeStyle = col; g.lineWidth = 1.6; g.beginPath(); let started = false;
+    for (const r of h) { if (r[i] == null) continue; const x = w - (t1 - r[0]) / span * w, y = H - Math.min(r[i], max) / max * H;
+      started ? g.lineTo(x, y) : g.moveTo(x, y); started = true; }
+    g.stroke();
+  }
+}
+// ---- downloads: several books at once ----
+let doneList = [], doneCount = -1;
+const selected = new Set(), dlState = {};
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let lastS = null;
+async function loadDone(count) {
+  if (count === doneCount) return;
+  try {
+    doneList = await (await fetch(API.done, {cache: 'no-store'})).json();
+    doneCount = doneList.length === count ? count : -1;   // the list may be a moment behind the count
+    renderDone(); showSize();
+  } catch (e) {}
+}
+// The size of what has been cooked, and what the whole batch will come to at the same size per page.
+function showSize() {
+  const mb = doneList.reduce((a, r) => a + (r.size || 0), 0);
+  const pages = doneList.reduce((a, r) => a + (r.pages || 0), 0);
+  $('kSize').textContent = `${(mb / 1000).toFixed(2)} GB`;
+  const total = lastS && lastS.pages_total;
+  $('kSizeSub').textContent = doneList.length && pages && total
+    ? `المتوقع عند الانتهاء ≈ ${(mb / pages * total / 1000).toFixed(1)} GB · متوسط الملف ${(mb / doneList.length).toFixed(1)} MB`
+    : 'لا كتب منتهية بعد';
+}
+function stateHtml(s) { const x = dlState[s]; return x ? `<span class="${x[1] || ''}">${esc(x[0])}</span>` : ''; }
+function setState(s, text, cls) {
+  dlState[s] = [text, cls];
+  const el = document.getElementById('st-' + s); if (el) el.innerHTML = stateHtml(s);
+}
+function renderDone() {
+  const q = $('dlFilter').value.trim();
+  const rows = doneList.filter(r => !q || `${r.serial} ${r.title} ${r.volume}`.includes(q));
+  $('dlCount').textContent = `(${n0(doneList.length)})`;
+  if (!doneList.length) { $('dlRows').innerHTML = '<tr><td colspan="9"><small>لا كتب منتهية بعد</small></td></tr>'; updateGo(); return; }
+  $('dlRows').innerHTML = rows.slice(0, 150).map(r => `<tr>
+    <td><input type="checkbox" ${selected.has(r.serial) ? 'checked' : ''} onchange="toggleSel('${r.serial}', this.checked)"></td>
+    <td>${esc(r.serial)}</td><td class="name">${esc(r.title)}</td><td>${esc(r.volume)}</td><td>${n0(r.pages)}</td><td>${r.size} MB</td>
+    <td class="${r.placed >= .95 ? 'good' : r.placed >= .9 ? 'warn' : 'bad'}">${pct(r.placed)}</td>
+    <td id="st-${r.serial}">${stateHtml(r.serial)}</td>
+    <td><button onclick="downloadMany(['${r.serial}'])">⬇</button></td></tr>`).join('');
+  $('dlNote').textContent = rows.length > 150 ? `يظهر 150 من ${n0(rows.length)}: ضيّق البحث` : '';
+  $('dlHow').textContent = API.relay ? 'يُرفع الكتاب إلى الموقع للحظات ثم يُحذف منه فور تنزيله.' : '';
+  updateGo();
+}
+function updateGo() { const n = selected.size; $('dlGo').textContent = `⬇ تنزيل المحدد (${n})`; $('dlGo').disabled = !n; }
+function toggleSel(s, on) { on ? selected.add(s) : selected.delete(s); updateGo(); }
+function selectShown() {
+  const q = $('dlFilter').value.trim();
+  doneList.filter(r => !q || `${r.serial} ${r.title} ${r.volume}`.includes(q)).slice(0, 150).forEach(r => selected.add(r.serial));
+  renderDone();
+}
+function clearSel() { selected.clear(); renderDone(); }
+function downloadSelected() { const list = [...selected]; selected.clear(); renderDone(); downloadMany(list); }
+function trigger(url) { const a = document.createElement('a'); a.href = url; a.download = ''; document.body.appendChild(a); a.click(); a.remove(); }
+function downloadMany(list) { return Promise.all(list.map((s, i) => downloadOne(s, i))); }
+async function downloadOne(s, i) {
+  await sleep(i * 700);
+  if (!API.relay) { setState(s, 'يبدأ التنزيل…', 'good'); trigger(API.file(s)); return; }
+  setState(s, 'يطلب من الخادم…');
+  let r, t;
+  try { r = await fetch(API.fetch(s), {method: 'POST'}); t = await r.text(); } catch (e) { setState(s, 'تعذّر الاتصال', 'bad'); return; }
+  if (!r.ok) { setState(s, t, 'bad'); return; }
+  const t0 = Date.now();
+  while (Date.now() - t0 < 12 * 60000) {
+    let c;
+    try { c = await (await fetch(API.check(s), {cache: 'no-store'})).json(); } catch (e) { await sleep(3000); continue; }
+    if (c.state === 'ready') {
+      setState(s, 'ينزّل…', 'good'); trigger(API.file(s));
+      setTimeout(() => setState(s, 'نُزّل، وحُذف من الوسيط', 'good'), 5000); return;
+    }
+    if (c.state === 'error') { setState(s, c.message || 'فشل', 'bad'); return; }
+    if (c.state === 'none') { setState(s, 'لم يعد في الوسيط (نُزّل؟)'); return; }
+    setState(s, c.note || 'يُرفع من الخادم…', c.note ? 'warn' : '');
+    await sleep(2500);
+  }
+  setState(s, 'انتهت المهلة', 'bad');
+}
+
+// ---- temperatures, up front ----
+// The Xeon E5-2690 v2 is rated to 86 °C at the case; the RTX 3050 throttles near 83.
+const CPU_WARN = 75, CPU_BAD = 85, GPU_WARN = 72, GPU_BAD = 82;
+function cpuTemps(m) {
+  const t = ((m.sensors || {}).temps || []).filter(x => !/nvidia|amd radeon/i.test(x.device));
+  const get = name => { const x = t.find(y => y.name === name); return x ? num(x.value) : null; };
+  const cores = t.filter(x => /^CPU Core #\d+$/.test(x.name)).map(x => num(x.value)).filter(v => v != null);
+  const max = get('Core Max') ?? (cores.length ? Math.max(...cores) : get('CPU Package'));
+  const avg = get('Core Average') ?? (cores.length ? cores.reduce((a, b) => a + b, 0) / cores.length : null);
+  return {max, avg, cores: cores.length};
+}
+function showTemps(m) {
+  const level = (v, warn, bad) => v == null ? '' : v >= bad ? 'bad' : v >= warn ? 'warn' : 'good';
+  const badge = c => 'badge ' + ({bad: 'hot', warn: 'wait', good: 'run'}[c] || '');
+  const c = cpuTemps(m), g = (m.gpu || {}).temp;
+  const cl = level(c.max, CPU_WARN, CPU_BAD), gl = level(g, GPU_WARN, GPU_BAD);
+  $('tCpu').textContent = c.max != null ? `${c.max.toFixed(0)} °م` : '–'; $('tCpu').className = 'big ' + cl;
+  $('tGpu').textContent = g != null ? `${Number(g).toFixed(0)} °م` : '–'; $('tGpu').className = 'big ' + gl;
+  $('tCpuSub').textContent = c.avg != null ? `متوسط الأنوية ${c.avg.toFixed(0)} °م · ${c.cores} نواة` : 'الحساس غير متاح';
+  $('tGpuSub').textContent = g != null ? `استخدام ${(m.gpu || {}).util ?? '–'}% · ${(m.gpu || {}).power ?? '–'} واط` : '';
+  $('hCpu').textContent = `المعالج ${c.max != null ? c.max.toFixed(0) + '°' : '–'}`; $('hCpu').className = badge(cl);
+  $('hGpu').textContent = `الكرت ${g != null ? Number(g).toFixed(0) + '°' : '–'}`; $('hGpu').className = badge(gl);
+}
+
+// ---- electrical power ----
+// There is no meter on the wall: the machine's draw is estimated from what the
+// chips report (CPU package and its memory from the sensors, the card from
+// nvidia-smi), plus a fixed share for the board, disks and fans, over the power
+// supply's efficiency. Change these three if the machine's are known.
+const BASE_WATTS = 45, PSU_EFFICIENCY = 0.85, MAINS_VOLTS = 220;
+const num = v => { const x = parseFloat(String(v ?? '').replace(/[^\d.\-]/g, '')); return isFinite(x) ? x : null; };
+function powerEstimate(m) {
+  const powers = (m.sensors || {}).powers || [];
+  const find = name => { const x = powers.find(p => p.name === name && !/nvidia|amd radeon/i.test(p.device)); return x ? num(x.value) : null; };
+  let cpu = find('CPU Package'), fromLoad = false;
+  if (cpu == null && m.cpu != null) { cpu = 30 + 100 * m.cpu / 100; fromLoad = true; }   // Xeon E5-2690 v2: 130 W at full load
+  if (cpu == null) return null;
+  const mem = find('CPU Memory') || 0, gpu = num((m.gpu || {}).power) || 0;
+  const dc = cpu + mem + gpu + BASE_WATTS, wall = dc / PSU_EFFICIENCY;
+  return {cpu, mem, gpu, base: BASE_WATTS, dc, wall, amps: wall / MAINS_VOLTS, fromLoad};
+}
+function showPower(m) {
+  const p = powerEstimate(m), f1 = x => x.toFixed(1);
+  $('wVolts').textContent = MAINS_VOLTS;
+  if (!p) { for (const id of ['wWall', 'wAmp', 'wCpu', 'wMem', 'wGpu', 'wBase', 'wDc']) $(id).textContent = '–'; return; }
+  $('wWall').textContent = `≈ ${Math.round(p.wall)} واط`;
+  $('wAmp').textContent = `≈ ${p.amps.toFixed(2)} أمبير`;
+  $('wBar').style.width = Math.min(100, p.wall / 4).toFixed(0) + '%';
+  $('wCpu').textContent = `${f1(p.cpu)} واط${p.fromLoad ? ' (من الاستخدام)' : ''}`;
+  $('wMem').textContent = `${f1(p.mem)} واط`;
+  $('wGpu').textContent = `${f1(p.gpu)} واط`;
+  $('wBase').textContent = `${p.base} واط`;
+  $('wDc').textContent = `${f1(p.dc)} واط`;
+  $('wNote').textContent = `تقدير لا قياس: لا يوجد عدّاد على الحائط. الحساب = (معالج + ذاكرة + كرت + ${BASE_WATTS} واط) ÷ كفاءة المزوّد ${PSU_EFFICIENCY}، والتيار = الواط ÷ ${MAINS_VOLTS}. الشريط على مقياس 400 واط.`;
+}
+
+// What power_logger.py on the Xeon has added up since it started (public page only).
+let lastPower = 0;
+async function loadPower() {
+  if (!API.power || Date.now() - lastPower < 25000) return;
+  lastPower = Date.now();
+  let p; try { p = await (await fetch(API.power, {cache: 'no-store'})).json(); } catch (e) { return; }
+  const box = $('wLog');
+  if (!p || p.kwh == null) { box.style.display = 'none'; return; }
+  box.style.display = '';
+  const when = x => new Date(x * 1000).toLocaleString('ar-EG', {weekday: 'short', hour: '2-digit', minute: '2-digit'});
+  $('wSince').textContent = `${when(p.since)} (${p.hours.toFixed(1)} ساعة)`;
+  $('wAvg').textContent = p.avg != null ? `≈ ${Math.round(p.avg)} واط · ${(p.avg / (p.assume.volts || MAINS_VOLTS)).toFixed(2)} أمبير` : '–';
+  $('wPeak').textContent = p.peak ? `≈ ${Math.round(p.peak)} واط · ${(p.peak / (p.assume.volts || MAINS_VOLTS)).toFixed(2)} أمبير (${when(p.peak_t)})` : '–';
+  $('wKwh').textContent = `${p.kwh.toFixed(2)} كيلوواط·ساعة`;
+  $('wBook').textContent = p.wh_per_book ? `${Math.round(p.wh_per_book)} واط·ساعة (${p.books} كتاب)` : 'لم ينتهِ كتاب بعد';
+}
+
+let failures = 0;
+async function tick() {
+  let s;
+  try {
+    const r = await fetch(API.status, {cache: 'no-store'});
+    if (r.status === 401) { location.reload(); return; }
+    s = await r.json(); failures = 0;
+  } catch (e) { if (++failures > 1) { $('off').style.display = 'block'; } return; }
+  // How old the news is: on the public site the Xeon sends it every 30 s.
+  const age = s.age ?? (Date.now() / 1000 - s.now);
+  $('off').style.display = age > 120 ? 'block' : 'none';
+  if (age > 120) $('off').textContent = `آخر تحديث من الخادم قبل ${fmtT(age)}: الخادم لا يرسل الآن (مطفأ أو بلا إنترنت).`;
+  $('upd').textContent = s.age != null ? `آخر تحديث قبل ${fmtT(s.age)}` : 'آخر تحديث: ' + new Date(s.now * 1000).toLocaleTimeString('ar-EG');
+  const st = $('state'); st.textContent = s.state;
+  st.className = 'badge ' + ({'يعمل': 'run', 'ينتظر البدء': 'wait', 'متوقف مؤقتاً': 'wait', 'انتهى': 'done'}[s.state] || '');
+  $('bStart').disabled = s.started; $('bPause').disabled = !s.started || s.paused; $('bResume').disabled = !s.paused; $('bRetry').disabled = !s.failed;
+  $('bRedo').style.display = s.skipped === undefined ? 'none' : '';   // only a server that knows the command
+  $('kDone').textContent = `${n0(s.done)} / ${n0(s.total)}`;
+  $('kPages').textContent = `${n0(s.pages_done)} / ${n0(s.pages_total)}`;
+  $('kEta').textContent = fmtT(s.eta_seconds);
+  $('kFinish').textContent = s.eta_seconds ? new Date(Date.now() + (s.eta_seconds - (s.age || 0)) * 1000).toLocaleString('ar-EG', {weekday: 'short', hour: '2-digit', minute: '2-digit'}) : '–';
+  $('kActive').textContent = fmtT(s.active_seconds);
+  $('kRate').textContent = s.pages_per_min ? `${n0(Math.round(s.pages_per_min))} ص/د` : '–';
+  $('kAvg').textContent = s.avg_seconds ? fmtT(s.avg_seconds) : '–';
+  $('kPlaced').textContent = pct(s.avg_placed);
+  $('kFailed').textContent = n0(s.failed); $('kFailed').className = s.failed ? 'bad' : '';
+  $('kReady').textContent = `${n0(s.ready)} / ${n0(s.total)}`;
+  lastS = s;
+  loadDone(s.done);
+  showSize();
+  const p = s.pages_total ? s.pages_done / s.pages_total : 0;
+  $('pAll').style.width = (100 * p).toFixed(2) + '%';
+  $('pText').textContent = `${(100 * p).toFixed(2)}% من الصفحات · ${s.workers} كتاب في وقت واحد`;
+  $('srcText').textContent = s.done ? `النص من الحكمة: ${n0(s.from_hikmah)} · من EPUB: ${n0(s.from_epub)}` : '';
+  $('jobs').innerHTML = s.running.length ? s.running.map(r => `
+    <div class="job"><div class="t">${esc(r.serial)} · ${esc(r.title)}${r.volume ? ' ج' + esc(r.volume) : ''}</div>
+    <small>${esc(r.author)} · ${n0(r.pages)} صفحة · منذ ${fmtT(r.elapsed)}${r.source ? ' · النص: ' + esc(r.source) : ''}</small>
+    <div class="row"><span>${esc(r.stage)}</span><b>${(100 * r.share).toFixed(0)}%</b></div>
+    <div class="bar"><i style="width:${(100 * r.share).toFixed(1)}%"></i></div>
+    <small style="direction:ltr;display:block;text-align:left">${esc(r.detail)}</small></div>`).join('') : '<small>لا شيء الآن</small>';
+  const m = s.metrics || {}, g = m.gpu || {};
+  $('cpu').textContent = m.cpu != null ? m.cpu + '%' : '–'; $('cpuBar').style.width = (m.cpu || 0) + '%';
+  $('cores').innerHTML = (m.cores || []).map(c => `<div class="core" title="${c}%"><i style="height:${c}%"></i></div>`).join('');
+  $('freq').textContent = m.freq ? m.freq + ' MHz' : '–';
+  $('ram').textContent = m.ram_total ? `${m.ram_used} / ${m.ram_total} GB` : '–';
+  $('disk').textContent = m.disk_free != null ? `${m.disk_free} من ${m.disk_total} GB` : '–';
+  $('procs').textContent = m.procs ?? '–';
+  const sens = m.sensors || {};
+  const pick = (arr, re) => (arr || []).filter(x => re.test(x.device + ' ' + x.name));
+  const rows = [...pick(sens.temps, /cpu|core|package|xeon/i).slice(0, 12).map(x => ['حرارة ' + x.name, x.value]),
+                ...pick(sens.powers, /cpu|package|core|xeon/i).slice(0, 4).map(x => ['طاقة ' + x.name, x.value]),
+                ...pick(sens.volts, /cpu|core|xeon|vcore/i).slice(0, 4).map(x => ['جهد ' + x.name, x.value]),
+                ...(sens.fans || []).slice(0, 4).map(x => ['مروحة ' + x.name, x.value])];
+  $('cpuSensors').innerHTML = rows.length ? rows.map(r => `<div class="row"><span>${esc(r[0])}</span><span>${esc(r[1])}</span></div>`).join('')
+    : '<div class="row"><span>حرارة المعالج وطاقته</span><span>غير متاحة</span></div>';
+  $('gName').textContent = g.name || '–';
+  $('gUtil').textContent = g.util != null ? g.util + '%' : '–'; $('gBar').style.width = (g.util || 0) + '%';
+  $('gTemp').textContent = g.temp != null ? g.temp + ' °م' : '–'; $('gTemp').className = g.temp > 82 ? 'bad' : g.temp > 72 ? 'warn' : '';
+  $('gPow').textContent = g.power != null ? `${g.power} / ${g.power_limit} واط` : '–';
+  $('gMem').textContent = g.vram_total ? `${n0(g.vram_used)} / ${n0(g.vram_total)} MB` : '–';
+  $('gFan').textContent = g.fan != null ? g.fan + '%' : '–';
+  $('gClk').textContent = g.clock_sm ? `${g.clock_sm} / ${g.clock_mem} MHz` : '–';
+  $('gPs').textContent = g.pstate || '–';
+  showTemps(m);
+  showPower(m);
+  loadPower();
+  draw(s.history || []);
+  $('recent').innerHTML = s.recent.map(r => `<tr><td>${esc(r.serial)}</td><td class="name">${esc(r.title)}</td><td>${esc(r.volume)}</td>
+    <td>${n0(r.pages)}</td><td>${fmtT(r.total_seconds)}</td><td class="${r.placed >= .95 ? 'good' : r.placed >= .9 ? 'warn' : 'bad'}">${pct(r.placed)}</td>
+    <td>${esc(r.source)}</td><td>${n0(r.bookmarks)}</td><td>${n0(r.added_words)}</td></tr>`).join('');
+  $('events').innerHTML = s.events.map(e => `<div class="ev"><small>${new Date(e.t * 1000).toLocaleTimeString('ar-EG')}</small>${esc(e.text)}</div>`).join('') || '<small>لا شيء بعد</small>';
+  $('failed').innerHTML = s.failed_list.length ? s.failed_list.map(f => `<div class="ev"><b>${esc(f.serial)} ${esc(f.title)} ${/^\d+$/.test(String(f.volume)) ? 'ج' + esc(f.volume) : esc(f.volume)}</b><br><small style="direction:ltr;display:block;text-align:left">${esc(f.error)}</small></div>`).join('') : '<small>لا شيء</small>';
+}
+$('bExport').href = API.exportUrl;
+tick(); setInterval(tick, window.NOTS_API ? 10000 : 3000);
+</script>
+</body>
+</html>

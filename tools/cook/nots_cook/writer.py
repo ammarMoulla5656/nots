@@ -9,11 +9,12 @@ catalog's language and one attachment are written.
 from __future__ import annotations
 
 import collections
+import re
 
 import pymupdf
 
 from . import wordmap
-from .align import Decoder
+from .align import Decoder, skeleton
 from .fonts import PdfFont, tounicode_cmap
 
 
@@ -22,11 +23,15 @@ def final_tounicode(pf: PdfFont, dec: Decoder) -> dict[int, str]:
     tables, else what the PDF said."""
     out = dict(pf.tounicode)
     learned = {g for (f, g) in dec.learned if f == pf.name}
-    for gid in set(pf.tounicode) | set(dec.family_maps.get(pf.name, {})) | learned:
+    zeros = {g for (f, g) in dec.zero_marks if f == pf.name}
+    for gid in set(pf.tounicode) | set(dec.family_maps.get(pf.name, {})) | learned | zeros:
         k = (pf.name, gid)
         s = dec.learned.get(k) or dec.from_font(pf.name, gid)
         if s:
-            out[gid] = s
+            if skeleton(out.get(gid, '')) != s:
+                out[gid] = s
+        elif k in dec.zero_marks:
+            out[gid] = '\u064e'
     return out
 
 
@@ -53,9 +58,22 @@ def fix_text_layer(doc: pymupdf.Document, fonts: dict[int, PdfFont], dec: Decode
     return changes
 
 
+def real_outline_entries(toc: list) -> int:
+    """How many of the PDF's own bookmarks name something. Scanned books often
+    carry one bookmark per scanned image ('الغدير_ج5_Page_001', ...), or bare
+    numbers: those name no chapter. Titles that differ only in their digits
+    are counted as such a run once there are five or more of them."""
+    shapes = collections.Counter(re.sub(r'[\d\W_]+', '', t[1]) for t in toc)
+    junk = sum(n for s, n in shapes.items() if not s or n >= 5)
+    return len(toc) - junk
+
+
 def add_outline(doc: pymupdf.Document, headings: list[dict]) -> int:
-    """Bookmarks from the source headings, when the PDF has none."""
-    if doc.get_toc() or not headings:
+    """Bookmarks from the source headings, replacing the PDF's own outline
+    only when it names fewer places (some PDFs ship with a token one- or
+    two-entry outline, or one bookmark per scanned page named after the
+    image file, that is not worth keeping)."""
+    if not headings or real_outline_entries(doc.get_toc()) >= len(headings):
         return 0
     top = min(h['l'] for h in headings)
     toc = []

@@ -13,7 +13,7 @@ import datetime
 import json
 import os
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 FORMAT = 'nots-words'
 VERSION = 1
@@ -86,6 +86,7 @@ class MapPage:
     text: str                     # paragraphs separated by '\n'
     boxes: list[tuple[float, float, float, float] | None]
     size: tuple[float, float]
+    added: list[list[int]] = field(default_factory=list)  # word ranges not from the source text
 
 
 def build(*, title: str, pages: list[MapPage], headings: list[dict], source_pdf: str,
@@ -104,6 +105,7 @@ def build(*, title: str, pages: list[MapPage], headings: list[dict], source_pdf:
             's': [round(p.size[0], 2), round(p.size[1], 2)],
             't': text,
             'b': encode_boxes(p.boxes),
+            **({'o': p.added} if p.added else {}),
         })
     return {
         'format': FORMAT,

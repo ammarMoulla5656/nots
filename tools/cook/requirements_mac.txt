@@ -1,0 +1,5 @@
+pymupdf>=1.24
+fonttools>=4.40
+pypdfium2>=4.0
+pyobjc-framework-Vision>=10
+psutil>=5.9

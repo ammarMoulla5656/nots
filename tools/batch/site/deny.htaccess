@@ -1,0 +1,8 @@
+# _data and _app are read only by the PHP pages, never over the web.
+<IfModule mod_authz_core.c>
+Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+Order allow,deny
+Deny from all
+</IfModule>

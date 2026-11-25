@@ -12,3 +12,31 @@ __pycache__/
 # Google OAuth client files: never pushed
 client_secret_*.json
 app/google_defines.json
+
+# Batch cooking: server-side secrets, never pushed
+tools/batch/publish.json
+tools/batch/site/_config.php
+
+# Samples and old archives: never pushed
+samples/
+archive/
+
+# Large local data, installers and downloaded books: never pushed
+*.db
+*.exe
+*.xlsx
+.cache_ketab/
+des/
+app/test/failures/
+export_progress.txt
+matching_database.json
+tools/*_catalog.json
+كتب مساحة حرة/
+كتب_المكتبة_PDF/
+نوتس/
+مجلدات_pdf/
+كتب_مطابقة_docx/
+كتب_مساحة_حرة_المتشابهة/
+كتب_محملة_docx/
+كتب_المكتبة_docx/
+*.docx

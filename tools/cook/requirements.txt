@@ -2,3 +2,13 @@ pymupdf>=1.24
 fonttools>=4.40
 # Optional: checks the result with PDFium, the engine of the app.
 pypdfium2>=4.0
+# Optional, faster: the same algorithm as difflib, compiled (11x).
+cydifflib>=1.0
+# Optional, Windows: its OCR called in-process, twice as fast as through PowerShell.
+winrt-runtime; sys_platform == "win32"
+winrt-Windows.Media.Ocr; sys_platform == "win32"
+winrt-Windows.Graphics.Imaging; sys_platform == "win32"
+winrt-Windows.Globalization; sys_platform == "win32"
+winrt-Windows.Storage.Streams; sys_platform == "win32"
+winrt-Windows.Foundation; sys_platform == "win32"
+winrt-Windows.Foundation.Collections; sys_platform == "win32"

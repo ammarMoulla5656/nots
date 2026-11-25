@@ -1,0 +1,14 @@
+# What Qari-OCR runs on, as tested. PyTorch is installed apart: nots_cook/setup_gpu.py.
+# transformers must stay at 4.51.3: from 5.x the adapter silently fails to load.
+transformers==4.51.3
+tokenizers==0.21.4
+peft==0.21.2
+accelerate==1.15.0
+bitsandbytes==0.50.2
+huggingface_hub==0.36.2
+safetensors==0.8.0
+qwen-vl-utils==0.0.14
+av==19.0.2
+pillow==13.0.0
+numpy==2.5.4
+psutil==7.2.2

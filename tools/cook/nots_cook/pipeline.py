@@ -9,9 +9,10 @@ from dataclasses import dataclass, field
 import pymupdf
 
 from .align import (Decoder, DecodedPage, PageAlignment, SourceSkeleton, Votes,
-                    WordBox, align, decode_page, source_skeleton, word_boxes)
+                    WordBox, align, decode_page, detect_running_lines,
+                    source_skeleton, word_boxes)
 from .fonts import PdfFont, family_mark_ink, family_maps, read_fonts
-from .glyphs import Glyph, page_glyphs
+from .glyphs import Glyph, page_glyphs, page_lines
 from .source_text import SourceText
 
 
@@ -26,7 +27,6 @@ class PageResult:
     boxes: list[WordBox] = field(default_factory=list)
     kind: str = 'text'          # text | image | blank | ocr
     ratio: float = 0.0          # skeleton similarity with the source page
-    ocr_words: list | None = None  # (word, box) read by OCR when there is no source text
 
 
 @dataclass
@@ -44,7 +44,7 @@ def log(msg: str):
     print(msg, flush=True)
 
 
-def analyze(doc: pymupdf.Document, source: SourceText | None, rounds: int = 4,
+def analyze(doc: pymupdf.Document, source: SourceText | None, rounds: int = 10,
             verbose: bool = True) -> Analysis:
     t0 = time.time()
     fonts = read_fonts(doc)
@@ -53,34 +53,59 @@ def analyze(doc: pymupdf.Document, source: SourceText | None, rounds: int = 4,
     for p in doc:
         pages.append(PageResult(number=p.number + 1, glyphs=page_glyphs(p),
                                 images=len(p.get_images(full=False))))
+    total_glyphs = sum(len(p.glyphs) for p in pages)
     if verbose:
-        log(f'  {len(pages)} pages, {sum(len(p.glyphs) for p in pages):,} glyphs, '
+        log(f'  {len(pages)} pages, {total_glyphs:,} glyphs, '
             f'{len(fonts)} fonts ({time.time() - t0:.1f}s)')
 
     learned_rounds = []
     if source is not None:
         n = min(len(pages), len(source.pages))
         srcs = [source_skeleton(source.pages[i]) for i in range(n)]
-        for r in range(rounds):
-            votes = Votes()
-            for i in range(n):
-                pr = pages[i]
-                pr.decoded = decode_page(pr.glyphs, dec)
-                pr.src = srcs[i]
-                pr.alignment = align(pr.decoded, pr.src)
-                votes.collect(pr.decoded, pr.src, pr.alignment)
-            fixes = votes.corrections(dec)
-            learned_rounds.append(len(fixes))
-            if verbose:
-                total = sum(p.alignment.matched for p in pages[:n])
-                size = sum(len(p.src.skel) for p in pages[:n])
-                log(f'  round {r + 1}: {total / max(size, 1):.4%} of source letters matched, '
-                    f'{len(fixes)} glyph corrections learned')
-            if not fixes:
-                break
-            dec.learned.update(fixes)
+        if total_glyphs > 0:
+            # A running header or footer repeats on most pages and has no
+            # counterpart in the source (body-only) text; found once, up front,
+            # from the raw (not yet corrected) glyphs, since the same wrong
+            # glyphs decode to the same wrong text everywhere they repeat.
+            for g in (g for pr in pages[:n] for g in pr.glyphs):
+                g.text = dec.text(g)
+            dec.running, dec.dotted_edges = detect_running_lines(
+                [page_lines(pr.glyphs, dec.ink) for pr in pages[:n]])
+            if verbose and (dec.running or dec.dotted_edges):
+                log(f'  running headers/footers found: {len(dec.running)} fixed'
+                    + (f', dot-leader {sorted(dec.dotted_edges)}' if dec.dotted_edges else '')
+                    + (' — e.g. ' + '; '.join(repr(s) for s in list(dec.running)[:3]) if dec.running else ''))
+            for r in range(rounds):
+                votes = Votes()
+                for i in range(n):
+                    pr = pages[i]
+                    pr.decoded = decode_page(pr.glyphs, dec)
+                    pr.src = srcs[i]
+                    pr.alignment = align(pr.decoded, pr.src, refine=False)
+                    votes.collect(pr.decoded, pr.src, pr.alignment)
+                fixes = votes.corrections(dec)
+                learned_rounds.append(len(fixes))
+                if verbose:
+                    total = sum(p.alignment.matched for p in pages[:n])
+                    size = sum(len(p.src.skel) for p in pages[:n])
+                    log(f'  round {r + 1}: {total / max(size, 1):.4%} of source letters matched, '
+                        f'{len(fixes)} glyph corrections learned'
+                        + (' (blind from here)' if r == 0 and not dec.blind_unresolved else ''))
+                if not fixes and dec.blind_unresolved:
+                    break
+                dec.learned.update(fixes)
+                # From the second pass on, a glyph still unresolved shows as
+                # nothing rather than its (likely wrong) guess: lucky
+                # coincidences with the wrong guess can no longer be mistaken
+                # for a match, so later passes learn from clean word-length
+                # blocks instead of stalling around the noise.
+                dec.blind_unresolved = True
         for i in range(n):
             pr = pages[i]
+            if pr.decoded is None:
+                pr.decoded = decode_page(pr.glyphs, dec)
+            pr.src = srcs[i]
+            pr.alignment = align(pr.decoded, pr.src, refine=True)
             pr.boxes = word_boxes(pr.decoded, pr.src, pr.alignment)
             pr.ratio = pr.alignment.ratio(len(pr.decoded.skel), len(pr.src.skel))
     else:

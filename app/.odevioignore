@@ -1,0 +1,5 @@
+build/
+windows/
+android/
+docs/
+integration_test/

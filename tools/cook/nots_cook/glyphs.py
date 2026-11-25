@@ -95,9 +95,15 @@ def attach_marks(glyphs: list[Glyph], ink=None) -> list[Glyph]:
     the neighbour whose box holds the middle of the diacritic's ink.
     [ink] gives a glyph's ink extent as fractions of the font size from its
     origin (from the font outline); without it the origin is used."""
-    is_base = [not is_mark(g.text) for g in glyphs]
-    bases: list[Glyph] = []
     n = len(glyphs)
+    zero_dx = [False] * n
+    for k in range(n - 1):
+        a, b = glyphs[k], glyphs[k + 1]
+        if abs(b.y - a.y) < max(a.size, 1) and abs(b.x - a.x) < 0.4 and a.font == b.font:
+            ha, hb = a.bbox[3] - a.bbox[1], b.bbox[3] - b.bbox[1]
+            zero_dx[k if ha <= hb * 1.1 else k + 1] = True
+    is_base = [not (is_mark(g.text) or zero_dx[k]) for k, g in enumerate(glyphs)]
+    bases: list[Glyph] = []
     for k, g in enumerate(glyphs):
         if is_base[k]:
             bases.append(g)

@@ -53,10 +53,12 @@ and inflate it when the dictionary says `/FlateDecode`. The app does this in
 - `k`: `text` (words placed from the PDF's glyphs), `ocr` (placed by OCR),
   `image` (a picture: its text is known, its places are not), `blank`.
 - `s`: page width and height in points.
-- `t`: the page's text, **exactly** as in the source (Word) file: words
-  separated by one space, paragraphs by one line break (`\n`). No other
-  white space occurs. Editorial notes of the transcriber
-  ("[صفحة بصورة مطابق للأصل]", "بياض مطابق للأصل") are not part of it.
+- `t`: the page's text: the source file's, **exactly**, with what only the
+  PDF has written in its place (see `o`). Words separated by one space,
+  paragraphs by one line break (`\n`). No other white space occurs.
+  Editorial notes of the transcriber
+  ("[صفحة بصورة مطابق للأصل]", "بياض مطابق للأصل") are not part of it,
+  nor are running headers, footers and page numbers.
 - `b`: the place of each word of `t`, in order. Per word either four
   integers or one `null`:
   - four integers: `x0, y0, x1, y1` of the word's box in tenths of a point,
@@ -65,12 +67,21 @@ and inflate it when the dictionary says `/FlateDecode`. The app does this in
     (the first placed word counts from 0). Decode with a running sum.
   - `null`: the word's place is unknown (picture pages, words the PDF does
     not draw).
+- `o` (only when there are some): `[[from, to], ...]`, inclusive ranges of
+  the page's word indices that are **not from the source text**: the tool
+  read them from the PDF (its glyphs or OCR) because the source lacks them:
+  a footnote, front matter, an index. Their spelling and diacritics are as
+  good as the reading; the rest of the page is the source's, exactly.
 
 ### Words and their ids
 
 A word is a run of characters between separators in `t`. Its **id** is its
 index in the whole book: page 1's words are 0, 1, 2, …, page 2 continues
 where page 1 stopped, and so on (`wordCount` words in all).
+Added words (`o`) count like any other, so a book cooked again with a
+different source text, or with other added passages, numbers its words
+differently: `source.pdfId` says which PDF a map belongs to, not which
+cooking.
 
 The id is the link between apps. A mark or a comment made in Nots stores
 the ids of its first and last word (`NoteItem.wordFrom`/`wordTo`, ink file

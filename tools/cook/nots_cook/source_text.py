@@ -18,6 +18,9 @@ from pathlib import Path
 DEFAULT_DROP = [
     r'\[[^\[\]]*مطابق\s+للأصل[^\[\]]*\]',
     r'^\s*بياض\s+مطابق\s+للأصل\s*$',
+    # A page marker some synced copies insert for their own page-matching
+    # ("[صفحة 21]", "[ص5]"): metadata about the copy, not book text.
+    r'\[\s*ص(?:فحة)?\s*\d+\s*\]',
 ]
 
 INVISIBLE = dict.fromkeys(map(ord, '‎‏‪‫‬‭‮﻿­'), None)
@@ -51,6 +54,9 @@ class SourceText:
     pages: list[SourcePage]
     headings: list[Heading]
     name: str = ''
+    # Set when the source's own page 1 is not the PDF's page 1 (an EPUB
+    # whose first numbered page is, say, 3): see pagematch.py.
+    first_page_number: int = 1
 
 
 def _heading_styles(styles_xml: str | None) -> dict[str, int]:
@@ -124,7 +130,11 @@ def read_docx(path: Path, drop: list[str] = DEFAULT_DROP) -> SourceText:
                 else:
                     buf.append(' ')
             elif s.startswith('<w:pageBreakBefore'):
-                if any(pages[-1].paragraphs) or buf:
+                # Skip only when nothing at all has been flushed to the
+                # current page yet (this is the very first paragraph of the
+                # document): a page of only blank paragraphs still counts,
+                # so a run of empty paragraphs before a break is not lost.
+                if pages[-1].paragraphs or buf:
                     if buf:
                         flush()
                     pages.append(SourcePage())
@@ -167,7 +177,141 @@ def read_plain(path: Path, drop: list[str] = DEFAULT_DROP) -> SourceText:
     return SourceText(pages=pages, headings=headings, name=path.name)
 
 
+_EPUB_BLOCK = re.compile(
+    r'<(h[1-4]|p|div)\b([^>]*)>(.*?)</\1>', re.S)
+_EPUB_CLASS = re.compile(r'class="([^"]*)"')
+_EPUB_PAGEN = re.compile(r'<p\s+class="pagen"\s*>\s*(\d+)\s*</p>', re.S)
+
+
+_SHAMELA_FOOTER = re.compile(r'الجزء:\s*(\d+)\s*¦\s*الصفحة:\s*(\d+)')
+_SHAMELA_TITLE = re.compile(r'<span\b[^>]*class="title"[^>]*>(.*?)</span>', re.S)
+
+
+def _read_shamela_epub(z: zipfile.ZipFile, drop: list[re.Pattern], name: str) -> SourceText | None:
+    """The EPUB of shamela.ws: a file for each page, with no spine and with the
+    printed volume and page in a footer. Pages missing from a volume stay as
+    empty pages, for the numbering to follow the PDF."""
+    found: dict[tuple[int, int], SourcePage] = {}
+    titles: list[tuple[tuple[int, int], Heading]] = []
+    for fname in z.namelist():
+        if not fname.lower().endswith(('.xhtml', '.html')):
+            continue
+        html = z.read(fname).decode('utf-8', 'replace')
+        footer = _SHAMELA_FOOTER.search(html)
+        if not footer:
+            continue
+        key = (int(footer.group(1)), int(footer.group(2)))
+        page = found.setdefault(key, SourcePage())
+        body = html[html.find('<hr/>') + 5:footer.start()]
+        for piece in re.split(r'<br\s*/?>|<hr\s*/?>', body):
+            text, notes = _clean(_epub_text(piece), drop)
+            page.notes += notes
+            if text:
+                page.paragraphs.append(text)
+                title = _SHAMELA_TITLE.search(piece)
+                if title:
+                    titles.append((key, Heading(text, 2, 0, len(page.paragraphs) - 1)))
+    if not found:
+        return None
+    pages: list[SourcePage] = []
+    where: dict[tuple[int, int], int] = {}
+    for volume in sorted({k[0] for k in found}):
+        numbers = [k[1] for k in found if k[0] == volume]
+        for n in range(min(numbers), max(numbers) + 1):
+            pages.append(found.get((volume, n), SourcePage()))
+            where[(volume, n)] = len(pages)
+    headings = sorted((Heading(h.title, h.level, where[k], h.paragraph) for k, h in titles),
+                      key=lambda h: (h.page, h.paragraph))  # the files come in no order
+    text = SourceText(pages=pages, headings=headings, name=name)
+    text.first_page_number = min(found)[1]
+    return text
+
+
+def _epub_text(html: str) -> str:
+    html = re.sub(r'<(script|style)\b.*?</\1>', '', html, flags=re.S)
+    text = re.sub(r'<[^>]+>', '', html)
+    return re.sub(r'[ \t ]+', ' ', html_unescape(text)).strip()
+
+
+def html_unescape(s: str) -> str:
+    import html
+    return html.unescape(s)
+
+
+def read_epub(path: Path, drop: list[str] = DEFAULT_DROP) -> SourceText:
+    """Reads an EPUB built from a print edition that marks each page's
+    start with <p class="pagen">N</p> (a common convention: this is how
+    shamela.ws/turath.io-style EPUBs and Sigil-made ones keep the print
+    page numbers). [pages] is indexed from 0 for the book's own first
+    numbered page (see first_page_number): page N of the print book is
+    pages[N - first_page_number], not necessarily pages[N - 1] — text
+    before the first page marker (a cover, a title page) has no number and
+    is dropped, since nothing anchors it to a PDF page either."""
+    drop_rx = [re.compile(p, re.M) for p in drop]
+    with zipfile.ZipFile(path) as z:
+        container = z.read('META-INF/container.xml').decode('utf-8', 'replace')
+        opf_path = re.search(r'full-path="([^"]+)"', container).group(1)
+        opf_dir = opf_path.rsplit('/', 1)[0] + '/' if '/' in opf_path else ''
+        opf = z.read(opf_path).decode('utf-8', 'replace')
+        manifest = dict(re.findall(r'<item\b[^>]*\bid="([^"]+)"[^>]*\bhref="([^"]+)"', opf))
+        # id and href can appear in either order.
+        manifest.update({i: h for h, i in re.findall(
+            r'<item\b[^>]*\bhref="([^"]+)"[^>]*\bid="([^"]+)"', opf)})
+        spine = re.findall(r'<itemref\b[^>]*\bidref="([^"]+)"', opf)
+        files = [opf_dir + manifest[i] for i in spine
+                 if i in manifest and manifest[i].lower().endswith(('.xhtml', '.html', '.htm'))]
+
+        pages: dict[int, SourcePage] = {}
+        headings: list[tuple[int, Heading]] = []
+        cur_number: int | None = None
+        cur_page: SourcePage | None = None
+        for fname in files:
+            html = z.read(fname).decode('utf-8', 'replace')
+            html = re.sub(r'<mc:Fallback>.*?</mc:Fallback>', '', html, flags=re.S)
+            pos = 0
+            chunks: list[tuple[int | None, str]] = []  # (new page number or None, html)
+            for m in _EPUB_PAGEN.finditer(html):
+                chunks.append((None, html[pos:m.start()]))
+                chunks.append((int(m.group(1)), ''))
+                pos = m.end()
+            chunks.append((None, html[pos:]))
+            for number, html_piece in chunks:
+                if number is not None:
+                    cur_number = number
+                    cur_page = pages.setdefault(cur_number, SourcePage())
+                    continue
+                if cur_page is None:
+                    continue  # before the first page marker: not part of any PDF page
+                for bm in _EPUB_BLOCK.finditer(html_piece):
+                    tag, attrs, inner = bm.group(1), bm.group(2), bm.group(3)
+                    text, notes = _clean(_epub_text(inner), drop_rx)
+                    cur_page.notes += notes
+                    if not text:
+                        continue
+                    cur_page.paragraphs.append(text)
+                    cls = (_EPUB_CLASS.search(attrs) or [None, ''])[1] if attrs else ''
+                    m = re.match(r'tit(\d)$', cls or '') or re.match(r'^h([1-4])$', tag)
+                    if m:
+                        headings.append((cur_number, Heading(
+                            text, int(m.group(1)), cur_number, len(cur_page.paragraphs) - 1)))
+        if not pages:
+            shamela = _read_shamela_epub(z, drop_rx, path.name)
+            if shamela:
+                return shamela
+
+    if not pages:
+        raise ValueError(f'{path.name}: no page markers found')
+    first, last = min(pages), max(pages)
+    out_pages = [pages.get(n, SourcePage()) for n in range(first, last + 1)]
+    out_headings = [Heading(h.title, h.level, n - first + 1, h.paragraph) for n, h in headings]
+    text = SourceText(pages=out_pages, headings=out_headings, name=path.name)
+    text.first_page_number = first
+    return text
+
+
 def read_source(path: Path, drop: list[str] = DEFAULT_DROP) -> SourceText:
     if path.suffix.lower() == '.docx':
         return read_docx(path, drop)
+    if path.suffix.lower() == '.epub':
+        return read_epub(path, drop)
     return read_plain(path, drop)

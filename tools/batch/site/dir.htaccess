@@ -1,0 +1,2 @@
+# Only for nots/monitor: open index.php for the folder itself.
+DirectoryIndex index.php
