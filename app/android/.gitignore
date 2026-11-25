@@ -12,3 +12,7 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+
+# The release signing key is kept in the repository on purpose (owner's choice)
+!nots-release.jks
+!key.properties
